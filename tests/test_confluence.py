@@ -194,12 +194,17 @@ def test_resolve_oauth_credentials_refreshes_when_stale(monkeypatch):
     )
     monkeypatch.setattr(
         "ragdesk.confluence.refresh_oauth_token",
-        lambda cid, sec, rt: {"access_token": "fresh", "expires_in": 3600},
+        lambda cid, sec, rt: {
+            "access_token": "fresh",
+            "refresh_token": "rotated-rt",
+            "expires_in": 3600,
+        },
     )
     api_base, bearer = resolve_oauth_credentials()
     assert api_base == "https://api.atlassian.com/ex/confluence/cloud-1"
     assert bearer == "fresh"
     assert saved["access_token"] == "fresh"
+    assert saved["refresh_token"] == "rotated-rt"  # rotating refresh tokens persisted
 
 
 def test_sync_confluence_bearer_path(store: Store, monkeypatch):

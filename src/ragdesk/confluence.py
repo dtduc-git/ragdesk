@@ -308,13 +308,16 @@ def resolve_oauth_credentials() -> tuple[str, str] | None:
         access = str(data.get("access_token", ""))
         if not access:
             raise ConfluenceError("Atlassian token refresh failed — reconnect the site")
-        credentials.set_provider(
-            "confluence",
-            {
-                "access_token": access,
-                "expires_at": time.time() + int(data.get("expires_in", 3600)),
-            },
-        )
+        updated: dict = {
+            "access_token": access,
+            "expires_at": time.time() + int(data.get("expires_in", 3600)),
+        }
+        # Atlassian rotates refresh tokens: persist the new one or the next
+        # refresh fails (the old token is invalidated on use).
+        rotated = data.get("refresh_token")
+        if rotated:
+            updated["refresh_token"] = str(rotated)
+        credentials.set_provider("confluence", updated)
     return f"{ATLASSIAN_API}/ex/confluence/{cloud_id}", access
 
 
