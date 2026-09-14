@@ -69,6 +69,29 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return data as T;
 }
 
+// --- theme --------------------------------------------------------------------
+
+type Theme = "light" | "dark";
+
+function applyTheme(theme: Theme): void {
+  document.documentElement.dataset.theme = theme;
+  $("theme-toggle").textContent = theme === "dark" ? "Light theme" : "Dark theme";
+  window.localStorage.setItem("ragdesk-theme", theme);
+}
+
+const storedTheme = window.localStorage.getItem("ragdesk-theme");
+const initialTheme: Theme =
+  storedTheme === "dark" || storedTheme === "light"
+    ? storedTheme
+    : window.matchMedia?.("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+applyTheme(initialTheme);
+
+$("theme-toggle").addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+});
+
 // --- toast --------------------------------------------------------------------
 
 let toastTimer: number | undefined;
@@ -1001,6 +1024,46 @@ $("source-grid").addEventListener("click", async (event) => {
       setResult("github", message);
       toast(message);
     }
+  }
+});
+
+// --- eval ---------------------------------------------------------------------
+
+$("eval-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const golden = $<HTMLInputElement>("eval-golden").value.trim();
+  const results = $("eval-results");
+  if (!golden) return;
+  results.innerHTML = `<p class="muted">Running eval — embedding every query locally…</p>`;
+  try {
+    const response = await post<{
+      metrics: Record<string, number>;
+      queries: Array<Record<string, unknown>>;
+    }>("/api/eval", { golden });
+    const metrics = response.metrics;
+    const misses = response.queries.filter((row) => Number(row["recall@5"]) < 1);
+    results.innerHTML = `
+      <div class="stats-table">
+        <div class="stats-row stats-head"><span>metric</span><span>value</span><span></span><span></span></div>
+        ${["recall@5", "ndcg@10", "mrr@10"]
+          .map(
+            (key) =>
+              `<div class="stats-row"><span>${key}</span><span>${Number(metrics[key] ?? 0).toFixed(3)}</span><span></span><span></span></div>`,
+          )
+          .join("")}
+        <div class="stats-row stats-total"><span>queries</span><span>${Number(metrics.queries ?? 0)}</span><span></span><span></span></div>
+      </div>
+      ${
+        misses.length
+          ? `<p class="muted">${misses.length} miss(es): ${misses
+              .map((row) => escapeHtml(String(row.query)))
+              .join(" · ")}</p>`
+          : `<p class="source-result">all queries found their sources</p>`
+      }`;
+  } catch (error) {
+    results.innerHTML = `<p class="muted">${escapeHtml(
+      error instanceof Error ? error.message : String(error),
+    )}</p>`;
   }
 });
 

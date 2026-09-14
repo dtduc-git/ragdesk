@@ -318,6 +318,28 @@ def test_sync_gitlab_requires_project(base_url: str):
     assert excinfo.value.code == 400
 
 
+def test_eval_endpoint(base_url: str):
+    status, payload = request(
+        f"{base_url}/api/eval", {"golden": str(FIXTURES / "golden.jsonl")}
+    )
+    assert status == 200
+    assert payload["metrics"]["recall@5"] >= 0.8
+    assert payload["queries"]
+    assert payload["golden"].endswith("golden.jsonl")
+
+
+def test_eval_requires_golden(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/eval", {})
+    assert excinfo.value.code == 400
+
+
+def test_eval_rejects_missing_file(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/eval", {"golden": "/nope/golden.jsonl"})
+    assert excinfo.value.code == 400
+
+
 def test_sync_web_requires_url(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/web", {})

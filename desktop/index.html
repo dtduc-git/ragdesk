@@ -39,6 +39,7 @@
             </div>
           </div>
           <p class="rail-meta" id="rail-meta">connecting to the local index…</p>
+          <button class="btn btn-quiet theme-toggle" type="button" id="theme-toggle">Dark theme</button>
         </div>
       </aside>
 
@@ -118,6 +119,15 @@
               <code>--embedder</code>, <code>--rerank</code> and <code>--llm-model</code> override
               the preset.
             </p>
+          </div>
+          <div class="panel-note">
+            <h3>Retrieval eval</h3>
+            <p>Score the current index against a golden set (JSONL of queries + expected paths).</p>
+            <form id="eval-form" class="field-row">
+              <input id="eval-golden" name="golden" placeholder="path/to/golden.jsonl" value="fixtures/golden_repo.jsonl" />
+              <button class="btn" type="submit">Run eval</button>
+            </form>
+            <div id="eval-results"></div>
           </div>
         </section>
       </main>

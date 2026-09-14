@@ -14,6 +14,16 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", monospace;
 }
 
+[data-theme="dark"] {
+  --paper: #12171c;
+  --card: #1a2027;
+  --ink: #e7eae3;
+  --ink-soft: #9aa5a9;
+  --rule: #2b343b;
+  --stamp: #6fb598;
+  --flag: #d98b7a;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -142,6 +152,12 @@ textarea {
   font-size: 11px;
   color: var(--ink-soft);
   overflow-wrap: anywhere;
+}
+
+.theme-toggle {
+  margin-top: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
 }
 
 /* --- stage ----------------------------------------------------------------- */

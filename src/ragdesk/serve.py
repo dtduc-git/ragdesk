@@ -26,6 +26,7 @@ from ragdesk.confluence import (
 )
 from ragdesk.confluence import whoami as confluence_whoami
 from ragdesk.embed import Embedder
+from ragdesk.evaluate import evaluate, load_golden
 from ragdesk.gdrive import TOKEN_FILE as GDRIVE_TOKEN_FILE
 from ragdesk.gdrive import GdriveError, load_token_file, run_loopback_flow, sync_gdrive
 from ragdesk.gdrive import resolve_client_credentials as gdrive_client_credentials
@@ -249,6 +250,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_ask(body)
             elif self.path == "/api/ask/stream":
                 self._handle_ask_stream(body)
+            elif self.path == "/api/eval":
+                self._handle_eval(body)
             else:
                 self._send(404, {"error": f"not found: {self.path}"})
         except OllamaUnavailable as exc:
@@ -766,6 +769,27 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass
+
+    def _handle_eval(self, body: dict[str, Any]) -> None:
+        golden_path = str(body.get("golden", "")).strip()
+        if not golden_path:
+            self._send(400, {"error": "golden path required (JSONL of queries)"})
+            return
+        try:
+            golden = load_golden(golden_path)
+        except (OSError, ValueError) as exc:
+            self._send(400, {"error": f"cannot read golden set: {exc}"})
+            return
+        top_k = int(body.get("top_k") or 10)
+        with self.state.lock, Store(self.state.db) as store:
+            metrics, per_query = evaluate(
+                store,
+                self.state.embedder,
+                golden,
+                top_k=top_k,
+                reranker=self._reranker_for(body.get("rerank")),
+            )
+        self._send(200, {"golden": golden_path, "metrics": metrics, "queries": per_query})
 
     def _handle_search(self, body: dict[str, Any]) -> None:
         query = str(body.get("query", "")).strip()
