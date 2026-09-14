@@ -1,4 +1,6 @@
-const API = "http://127.0.0.1:8765";
+const API = window.location.protocol.startsWith("http")
+  ? window.location.origin
+  : "http://127.0.0.1:8765";
 const REFUSAL = "I could not find this in your indexed sources.";
 const SUGGESTIONS = [
   "how does RRF fusion rank results?",
