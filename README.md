@@ -84,7 +84,7 @@ The same UI also runs in a browser for development:
 | Works | Not yet |
 |---|---|
 | Desktop app (Tauri 2): chat, search, sources, settings, streaming answers | PyPI release (v0.1.0 pending) |
-| Indexing: local files (native picker), GitHub repos (device code / gh / token + tarball sync), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Notion (shared pages), website crawl (same-host, HTML) | GitLab connector |
+| Indexing: local files (native picker), GitHub repos (device code / gh / token + tarball sync), GitLab repos (token + archive sync), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Notion (shared pages), website crawl (same-host, HTML) | Sidecar bundling in the DMG |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Multilingual reranker (`bge-reranker-v2-m3` not in fastembed yet) |
 | Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Windows / Linux builds |
 | Grounded cited answers via local Ollama, grounding gate, token streaming | Eval badge automation per release |

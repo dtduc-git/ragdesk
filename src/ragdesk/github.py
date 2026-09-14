@@ -8,21 +8,19 @@ want to log in without the gh CLI.
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import shutil
 import subprocess
-import tarfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
 from ragdesk import credentials, defaults
+from ragdesk.archive import tar_text_files as _tar_members
 from ragdesk.embed import Embedder
-from ragdesk.index import IndexStats, index_document, is_indexable
+from ragdesk.index import IndexStats, index_document
 from ragdesk.store import Store
 
 API = "https://api.github.com"
@@ -204,31 +202,6 @@ def _download_tarball(repo: str, ref: str, token: str, *, timeout: float = 180.0
     # Signed codeload URL: no Authorization header needed (or wanted).
     with urllib.request.urlopen(redirect, timeout=timeout) as response:
         return response.read()
-
-
-def _tar_members(data: bytes, subdir: str) -> list[tuple[str, str]]:
-    """Return (relative_path, text) for indexable files in the tarball."""
-    files: list[tuple[str, str]] = []
-    prefix = Path(subdir) if subdir else None
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-        for member in tar.getmembers():
-            if not member.isfile():
-                continue
-            rel = Path(*Path(member.name).parts[1:])  # strip '<owner>-<repo>-<sha>/'
-            if not rel.parts:
-                continue
-            if prefix is not None and rel != prefix and prefix not in rel.parents:
-                continue
-            if not is_indexable(rel, member.size):
-                continue
-            extracted = tar.extractfile(member)
-            if extracted is None:
-                continue
-            raw = extracted.read()
-            if b"\x00" in raw[:1024]:
-                continue
-            files.append((str(rel), raw.decode("utf-8", errors="replace")))
-    return files
 
 
 def sync_github(

@@ -41,6 +41,9 @@ from ragdesk.github import (
     token_source,
 )
 from ragdesk.github import whoami as github_whoami
+from ragdesk.gitlab import DEFAULT_BASE_URL as GITLAB_DEFAULT_BASE
+from ragdesk.gitlab import GitLabError, sync_gitlab
+from ragdesk.gitlab import whoami as gitlab_whoami
 from ragdesk.index import index_paths
 from ragdesk.notion import NotionError, sync_notion
 from ragdesk.notion import resolve_token as notion_resolve_token
@@ -224,6 +227,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_connect_notion(body)
             elif self.path == "/api/sync/notion":
                 self._handle_sync_notion()
+            elif self.path == "/api/connections/gitlab":
+                self._handle_connect_gitlab(body)
+            elif self.path == "/api/sync/gitlab":
+                self._handle_sync_gitlab(body)
             elif self.path.endswith("/disconnect") and self.path.startswith(
                 "/api/connections/"
             ):
@@ -246,7 +253,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, {"error": f"not found: {self.path}"})
         except OllamaUnavailable as exc:
             self._send(503, {"error": str(exc)})
-        except (GitHubError, ConfluenceError, GdriveError, WebError, NotionError) as exc:
+        except (
+            GitHubError,
+            ConfluenceError,
+            GdriveError,
+            WebError,
+            NotionError,
+            GitLabError,
+        ) as exc:
             self._send(502, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface errors to the UI
             self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
@@ -324,6 +338,7 @@ class Handler(BaseHTTPRequestHandler):
             confluence_source = None
         gdrive_payload = load_token_file()
         notion_entry = credentials.get("notion")
+        gitlab_entry = credentials.get("gitlab")
         return {
             "github": {
                 "connected": gh_source is not None or bool(github_entry.get("token")),
@@ -351,6 +366,12 @@ class Handler(BaseHTTPRequestHandler):
             "notion": {
                 "connected": notion_resolve_token() is not None,
                 "name": notion_entry.get("name", ""),
+            },
+            "gitlab": {
+                "connected": bool(gitlab_entry.get("token"))
+                or bool(os.environ.get("GITLAB_TOKEN")),
+                "name": gitlab_entry.get("name", ""),
+                "base_url": gitlab_entry.get("base_url", GITLAB_DEFAULT_BASE),
             },
         }
 
@@ -522,7 +543,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"connected": True, "email": email})
 
     def _handle_disconnect(self, provider: str) -> None:
-        if provider not in ("github", "confluence", "gdrive", "notion"):
+        if provider not in ("github", "confluence", "gdrive", "notion", "gitlab"):
             self._send(404, {"error": f"unknown provider: {provider}"})
             return
         credentials.clear(provider)
@@ -574,6 +595,47 @@ class Handler(BaseHTTPRequestHandler):
             200,
             {
                 "space": space,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_connect_gitlab(self, body: dict[str, Any]) -> None:
+        token = str(body.get("token", "")).strip()
+        base_url = str(body.get("base_url", "")).strip() or GITLAB_DEFAULT_BASE
+        if not token:
+            self._send(400, {"error": "token required"})
+            return
+        name = gitlab_whoami(token, base_url=base_url)
+        credentials.set_provider(
+            "gitlab", {"token": token, "base_url": base_url, "name": name}
+        )
+        self._send(200, {"connected": True, "display_name": name})
+
+    def _handle_sync_gitlab(self, body: dict[str, Any]) -> None:
+        project = str(body.get("project", "")).strip()
+        if not project:
+            self._send(400, {"error": "project required (group/name)"})
+            return
+        base_url = str(body.get("base_url", "")).strip() or str(
+            credentials.get("gitlab").get("base_url", GITLAB_DEFAULT_BASE)
+        )
+        with self.state.lock, Store(self.state.db) as store:
+            stats = sync_gitlab(
+                store,
+                self.state.embedder,
+                project=project,
+                ref=str(body.get("ref", "")),
+                subdir=str(body.get("subdir", "")),
+                base_url=base_url,
+            )
+        self._send(
+            200,
+            {
+                "project": project,
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,

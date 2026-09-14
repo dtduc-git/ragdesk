@@ -11,6 +11,7 @@ equivalents below) and connect what you need.
 | Confluence | API token (default) or your own Atlassian OAuth app | no for API token | token / app credentials in `credentials.json` (0600) |
 | Google Drive | browser consent (OAuth, PKCE) | no (a client ID ships with the app) | refresh token in `gdrive.json` (0600) |
 | Notion | internal integration token | no (you create the integration, 1 min) | token in `credentials.json` (0600) |
+| GitLab | personal access token (`read_api`) | no | token in `credentials.json` (0600) |
 | Website | none | no | — |
 
 Credential resolution order everywhere: **explicit input → environment
@@ -124,6 +125,18 @@ apps cannot keep secrets; PKCE protects the flow), which is why the build may
 bake them into release artifacts.
 </details>
 
+## GitLab
+
+Read-only repository sync (archive download, incremental by archive digest).
+
+1. Create a personal access token with the **`read_api`** scope
+   (GitLab → *Preferences → Access tokens*).
+2. Sources → GitLab → paste the token (and a base URL if self-hosted) →
+   **Connect GitLab**.
+3. Enter `group/name` (optionally ref/subfolder) → **Sync repo**.
+
+CLI: `ragdesk gitlab group/name --ref main --base-url https://gitlab.example.com`
+
 ## Notion
 
 Indexes the pages you explicitly share with an integration — Notion never
@@ -157,4 +170,5 @@ JavaScript rendering.
 | Google warning screen | Expected while unverified: **Advanced → Go to ragdesk (unsafe)**. |
 | Google token stops working after ~7 days | The consent screen is in *Testing*; publish it to production (see above). |
 | Notion sync finds `0 pages` | The pages aren't shared with the integration — add the connection on each page. |
+| GitLab `401/403` | The token is missing the `read_api` scope, or it expired. |
 | `not HTML (...)` during crawl | The link points at a binary/JS-only asset; those are skipped by design. |

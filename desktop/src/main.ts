@@ -365,6 +365,7 @@ type Connections = {
   };
   gdrive: { connected: boolean; email: string; oauth_ready: boolean };
   notion: { connected: boolean; name: string };
+  gitlab: { connected: boolean; name: string; base_url: string };
 };
 
 type DeviceFlow = { userCode: string; verificationUri: string; interval: number };
@@ -705,6 +706,39 @@ function gdriveCard(conn: Connections["gdrive"]): string {
   </div>`;
 }
 
+function gitlabCard(conn: Connections["gitlab"]): string {
+  if (!conn.connected) {
+    return `<div class="source-card">
+      <h3>GitLab</h3>
+      <p class="source-note">Read-only repository sync. Needs a personal access token with the <code>read_api</code> scope.</p>
+      <form data-form="gitlab-connect" class="stack">
+        <div class="field-row">
+          <input name="token" type="password" placeholder="glpat-…" required />
+          <input name="base_url" placeholder="gitlab.com (or self-hosted URL)" />
+        </div>
+        <button class="btn btn-primary" type="submit">Connect GitLab</button>
+      </form>
+      <p class="source-result" data-result="gitlab"></p>
+    </div>`;
+  }
+  return `<div class="source-card is-connected">
+    <h3>GitLab <span class="conn-badge">connected</span></h3>
+    <p class="source-note">${conn.name ? escapeHtml(conn.name) : "token"} · ${escapeHtml(conn.base_url || "gitlab.com")}</p>
+    <div class="button-row">
+      <button class="btn btn-quiet" type="button" data-action="disconnect-gitlab">Disconnect</button>
+    </div>
+    <form data-form="gitlab-sync" class="stack">
+      <input name="project" placeholder="group/name" required />
+      <div class="field-row">
+        <input name="ref" placeholder="branch (optional)" />
+        <input name="subdir" placeholder="subfolder (optional)" />
+      </div>
+      <button class="btn btn-primary" type="submit">Sync repo</button>
+    </form>
+    <p class="source-result" data-result="gitlab"></p>
+  </div>`;
+}
+
 function notionCard(conn: Connections["notion"]): string {
   if (!conn.connected) {
     return `<div class="source-card">
@@ -771,9 +805,11 @@ function renderSources(): void {
   };
   const gdrive = connections?.gdrive ?? { connected: false, email: "", oauth_ready: false };
   const notion = connections?.notion ?? { connected: false, name: "" };
+  const gitlab = connections?.gitlab ?? { connected: false, name: "", base_url: "" };
   $("source-grid").innerHTML =
     localCard() +
     githubCard(github) +
+    gitlabCard(gitlab) +
     confluenceCard(confluence) +
     gdriveCard(gdrive) +
     notionCard(notion) +
@@ -840,6 +876,8 @@ $("source-grid").addEventListener("submit", async (event) => {
       "gdrive-sync": "/api/sync/gdrive",
       "notion-connect": "/api/connections/notion",
       "notion-sync": "/api/sync/notion",
+      "gitlab-connect": "/api/connections/gitlab",
+      "gitlab-sync": "/api/sync/gitlab",
       "web-sync": "/api/sync/web",
     };
     const endpoint = endpoints[kind];

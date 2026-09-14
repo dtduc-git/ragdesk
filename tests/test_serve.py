@@ -30,6 +30,7 @@ def base_url(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("ragdesk.serve.token_source", lambda: None)
     monkeypatch.setattr("ragdesk.serve.load_token_file", lambda: {})
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
     db = tmp_path / "index.db"
     embedder = HashingEmbedder()
     with Store(db) as store:
@@ -276,6 +277,45 @@ def test_sync_web_endpoint(base_url: str, monkeypatch):
     assert payload["indexed"] == 2
     assert captured["max_pages"] == 10
     assert captured["max_depth"] == 1
+
+
+def test_connect_gitlab_and_sync(base_url: str, monkeypatch):
+    from ragdesk.index import IndexStats
+
+    monkeypatch.setattr("ragdesk.serve.gitlab_whoami", lambda token, base_url="": "duke")
+    status, payload = request(
+        f"{base_url}/api/connections/gitlab", {"token": "glpat-test"}
+    )
+    assert status == 200
+    assert payload["display_name"] == "duke"
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["gitlab"]["connected"] is True
+    assert connections["gitlab"]["base_url"] == "https://gitlab.com"
+
+    captured: dict = {}
+
+    def fake_sync(store, embedder, **kwargs):
+        captured.update(kwargs)
+        return IndexStats(files_scanned=1, indexed=1, chunks=3)
+
+    monkeypatch.setattr("ragdesk.serve.sync_gitlab", fake_sync)
+    status, payload = request(
+        f"{base_url}/api/sync/gitlab", {"project": "group/repo", "ref": "main"}
+    )
+    assert status == 200
+    assert payload["indexed"] == 1
+    assert captured["project"] == "group/repo"
+    assert captured["ref"] == "main"
+    assert captured["base_url"] == "https://gitlab.com"
+
+    status, payload = request(f"{base_url}/api/connections/gitlab/disconnect", {})
+    assert payload["connected"] is False
+
+
+def test_sync_gitlab_requires_project(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/sync/gitlab", {})
+    assert excinfo.value.code == 400
 
 
 def test_sync_web_requires_url(base_url: str):

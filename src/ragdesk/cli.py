@@ -15,6 +15,7 @@ from ragdesk.envfile import load_env_file
 from ragdesk.evaluate import evaluate, format_report, load_golden
 from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
+from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.index import index_paths
 from ragdesk.notion import NotionError, sync_notion
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
@@ -110,6 +111,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gd.add_argument(
         "--no-browser", action="store_true", help="do not run the interactive OAuth flow"
     )
+
+    p_gl = sub.add_parser("gitlab", help="index a GitLab repository (read-only archive sync)")
+    p_gl.add_argument("project", help="group/name")
+    p_gl.add_argument("--ref", default="", help="branch/tag/sha (default: repo default branch)")
+    p_gl.add_argument("--subdir", default="", help="index only a subtree")
+    p_gl.add_argument(
+        "--token", default=None, help="default: GITLAB_TOKEN env or saved connection"
+    )
+    p_gl.add_argument("--base-url", default="https://gitlab.com", help="self-hosted GitLab URL")
 
     p_notion = sub.add_parser(
         "notion", help="index Notion pages shared with an integration (read-only)"
@@ -241,6 +251,26 @@ def main(argv: list[str] | None = None) -> int:
                     interactive=not args.no_browser,
                 )
             except GdriveError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            print(
+                f"scanned={stats.files_scanned} indexed={stats.indexed} "
+                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
+            )
+            return 0
+
+        if args.command == "gitlab":
+            try:
+                stats = sync_gitlab(
+                    store,
+                    embedder,
+                    project=args.project,
+                    token=args.token,
+                    ref=args.ref,
+                    subdir=args.subdir,
+                    base_url=args.base_url,
+                )
+            except GitLabError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             print(
