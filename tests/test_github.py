@@ -10,8 +10,11 @@ import pytest
 from ragdesk.embed import HashingEmbedder
 from ragdesk.github import (
     GitHubError,
+    _post_form,
     _tar_members,
     device_flow_poll,
+    device_flow_poll_once,
+    resolve_client_id,
     resolve_token,
     sync_github,
     token_source,
@@ -116,6 +119,15 @@ def test_whoami_rejects_bad_token(monkeypatch):
         whoami("bad-token")
 
 
+def test_post_form_wraps_http_errors(monkeypatch):
+    def fake_urlopen(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr("ragdesk.github.urllib.request.urlopen", fake_urlopen)
+    with pytest.raises(GitHubError, match="OAuth client ID"):
+        _post_form("https://github.com/login/device/code", {})
+
+
 def test_device_flow_poll(monkeypatch):
     calls = {"n": 0}
 
@@ -129,6 +141,35 @@ def test_device_flow_poll(monkeypatch):
     token = device_flow_poll("client", "device-code", interval=0.0, timeout=5.0)
     assert token == "tok-123"
     assert calls["n"] == 2
+
+
+def test_device_flow_poll_once_states(monkeypatch):
+    responses = iter(
+        [
+            {"error": "authorization_pending"},
+            {"error": "slow_down"},
+            {"access_token": "tok-9"},
+        ]
+    )
+    monkeypatch.setattr("ragdesk.github._post_form", lambda *a, **k: next(responses))
+    assert device_flow_poll_once("cid", "dc") == ("pending", None)
+    assert device_flow_poll_once("cid", "dc") == ("slow_down", None)
+    assert device_flow_poll_once("cid", "dc") == ("token", "tok-9")
+
+
+def test_resolve_client_id_precedence(monkeypatch):
+    monkeypatch.setattr("ragdesk.github.credentials.get", lambda provider: {})
+    monkeypatch.delenv("RAGDESK_GITHUB_CLIENT_ID", raising=False)
+    assert resolve_client_id() is None
+    monkeypatch.setenv("RAGDESK_GITHUB_CLIENT_ID", "env-cid")
+    assert resolve_client_id() == "env-cid"
+    monkeypatch.setattr(
+        "ragdesk.github.credentials.get", lambda provider: {"client_id": "stored-cid"}
+    )
+    assert resolve_client_id() == "env-cid"  # env wins
+    monkeypatch.delenv("RAGDESK_GITHUB_CLIENT_ID")
+    assert resolve_client_id() == "stored-cid"
+    assert resolve_client_id("explicit") == "explicit"
 
 
 def test_device_flow_timeout(monkeypatch):

@@ -65,10 +65,12 @@ status/preset panel.
 
 - **Local sources** use a native folder/file picker (multi-select), so you
   don't paste paths.
-- **Cloud sources have a one-time Connect flow**: GitHub (`gh` login or a
-  token), Confluence (site + email + API token), Google Drive (BYO OAuth
-  client, browser consent). Credentials are stored `0600` under
-  `~/.config/ragdesk/` and can be disconnected from the same card.
+- **Cloud sources have a one-time Connect flow**: GitHub (device code — no CLI
+  needed — or `gh` login, or a token), Confluence (site + email + API token),
+  Google Drive (BYO OAuth client, browser consent). Credentials are stored
+  `0600` under `~/.config/ragdesk/` and can be disconnected from the same card.
+  For the GitHub device code, save an OAuth client ID (device flow enabled) in
+  the card, or set `RAGDESK_GITHUB_CLIENT_ID`.
 
 The same UI also runs in a browser for development:
 `uv run ragdesk serve --ui desktop/dist`.
@@ -78,10 +80,10 @@ The same UI also runs in a browser for development:
 | Works | Not yet |
 |---|---|
 | Desktop app (Tauri 2): chat, search, sources, settings, streaming answers | PyPI release (v0.1.0 pending) |
-| Indexing: local files (native picker), GitHub repos (connect + tarball sync), Confluence spaces (connect + CQL), Google Drive (connect + doc export) | Windows / Linux builds |
+| Indexing: local files (native picker), GitHub repos (device code / gh / token + tarball sync), Confluence spaces (connect + CQL), Google Drive (connect + doc export) | GitLab connector |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Multilingual reranker (`bge-reranker-v2-m3` not in fastembed yet) |
-| Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Eval badge automation per release |
-| Grounded cited answers via local Ollama, grounding gate, token streaming | MCP-server expansion path for connectors |
+| Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Windows / Linux builds |
+| Grounded cited answers via local Ollama, grounding gate, token streaming | Eval badge automation per release |
 | RAM presets (`light` / `balanced` / `quality`) with per-flag overrides | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |
 

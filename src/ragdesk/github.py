@@ -58,6 +58,17 @@ def resolve_token(explicit: str | None = None) -> str | None:
     return found[1] if found else None
 
 
+def resolve_client_id(explicit: str | None = None) -> str | None:
+    """OAuth client ID for the device flow (env or saved in credentials)."""
+    if explicit:
+        return explicit
+    env = os.environ.get("RAGDESK_GITHUB_CLIENT_ID")
+    if env:
+        return env
+    stored = credentials.get("github").get("client_id")
+    return str(stored) if stored else None
+
+
 def whoami(token: str, *, timeout: float = 30.0) -> str:
     """Validate a token against the API and return the login name."""
     request = urllib.request.Request(
@@ -100,13 +111,43 @@ def _post_form(url: str, data: dict[str, str], timeout: float = 30.0) -> dict:
     request = urllib.request.Request(
         url, data=body, headers={"Accept": "application/json", "User-Agent": USER_AGENT}
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read())
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise GitHubError(
+            f"GitHub rejected the request (HTTP {exc.code}) — check the OAuth client ID "
+            "and that device flow is enabled for the app"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise GitHubError(f"cannot reach GitHub: {exc}") from exc
 
 
 def device_flow_start(client_id: str, *, host: str = GH_HOST) -> dict:
     """Start the device flow; returns user_code, verification_uri, device_code..."""
     return _post_form(f"{host}/login/device/code", {"client_id": client_id, "scope": "repo"})
+
+
+def device_flow_poll_once(
+    client_id: str, device_code: str, *, host: str = GH_HOST
+) -> tuple[str, str | None]:
+    """One poll iteration: ("token", value) | ("pending", None) | ("slow_down", None)."""
+    payload = _post_form(
+        f"{host}/login/oauth/access_token",
+        {
+            "client_id": client_id,
+            "device_code": device_code,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        },
+    )
+    if "access_token" in payload:
+        return ("token", str(payload["access_token"]))
+    error = payload.get("error", "")
+    if error == "authorization_pending":
+        return ("pending", None)
+    if error == "slow_down":
+        return ("slow_down", None)
+    raise GitHubError(f"device flow failed: {error or 'unknown error'}")
 
 
 def device_flow_poll(
@@ -121,23 +162,11 @@ def device_flow_poll(
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         time.sleep(interval)
-        payload = _post_form(
-            f"{host}/login/oauth/access_token",
-            {
-                "client_id": client_id,
-                "device_code": device_code,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            },
-        )
-        if "access_token" in payload:
-            return str(payload["access_token"])
-        error = payload.get("error", "")
-        if error == "authorization_pending":
-            continue
-        if error == "slow_down":
+        status, value = device_flow_poll_once(client_id, device_code, host=host)
+        if status == "token" and value:
+            return value
+        if status == "slow_down":
             interval += 1.0
-            continue
-        raise GitHubError(f"device flow failed: {error or 'unknown error'}")
     raise GitHubError("device flow timed out")
 
 

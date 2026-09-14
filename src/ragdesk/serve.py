@@ -22,7 +22,16 @@ from ragdesk.embed import Embedder
 from ragdesk.gdrive import TOKEN_FILE as GDRIVE_TOKEN_FILE
 from ragdesk.gdrive import GdriveError, load_token_file, run_loopback_flow, sync_gdrive
 from ragdesk.gdrive import whoami as gdrive_whoami
-from ragdesk.github import GitHubError, _token_from_gh, sync_github, token_source
+from ragdesk.github import (
+    GH_HOST,
+    GitHubError,
+    _token_from_gh,
+    device_flow_poll_once,
+    device_flow_start,
+    resolve_client_id,
+    sync_github,
+    token_source,
+)
 from ragdesk.github import whoami as github_whoami
 from ragdesk.index import index_paths
 from ragdesk.ollama import OllamaUnavailable
@@ -83,6 +92,7 @@ class AppState:
         self.llm_host = llm_host
         self.preset = preset
         self.ui_dir = Path(ui_dir) if ui_dir else None
+        self.github_device: dict[str, Any] | None = None
         self.lock = threading.Lock()
 
 
@@ -186,6 +196,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_connect_github(body)
             elif self.path == "/api/connections/github/gh":
                 self._handle_connect_github_gh()
+            elif self.path == "/api/connections/github/client-id":
+                self._handle_github_client_id(body)
+            elif self.path == "/api/connections/github/device/start":
+                self._handle_github_device_start()
+            elif self.path == "/api/connections/github/device/poll":
+                self._handle_github_device_poll()
             elif self.path == "/api/connections/confluence":
                 self._handle_connect_confluence(body)
             elif self.path == "/api/connections/gdrive":
@@ -281,6 +297,8 @@ class Handler(BaseHTTPRequestHandler):
                 "connected": gh_source is not None or bool(github_entry.get("token")),
                 "source": gh_source[0] if gh_source else None,
                 "login": github_entry.get("login", ""),
+                "gh_available": _token_from_gh() is not None,
+                "device_flow_ready": resolve_client_id() is not None,
             },
             "confluence": {
                 "connected": confluence_store or confluence_env,
@@ -321,6 +339,61 @@ class Handler(BaseHTTPRequestHandler):
         login = github_whoami(token)
         credentials.set_provider("github", {"token": token, "login": login})
         self._send(200, {"connected": True, "source": "gh", "login": login})
+
+    def _handle_github_client_id(self, body: dict[str, Any]) -> None:
+        client_id = str(body.get("client_id", "")).strip()
+        if not client_id:
+            self._send(400, {"error": "client_id required"})
+            return
+        credentials.set_provider("github", {"client_id": client_id})
+        self._send(200, {"saved": True, "verified": False})
+
+    def _handle_github_device_start(self) -> None:
+        client_id = resolve_client_id()
+        if not client_id:
+            self._send(
+                400,
+                {
+                    "error": "no OAuth client ID: create a GitHub OAuth app with device flow "
+                    "enabled and save its client ID, or set RAGDESK_GITHUB_CLIENT_ID"
+                },
+            )
+            return
+        data = device_flow_start(client_id)
+        interval = int(data.get("interval", 5) or 5)
+        self.state.github_device = {
+            "device_code": str(data.get("device_code", "")),
+            "client_id": client_id,
+            "interval": interval,
+        }
+        self._send(
+            200,
+            {
+                "user_code": data.get("user_code", ""),
+                "verification_uri": data.get("verification_uri", f"{GH_HOST}/login/device"),
+                "interval": interval,
+                "expires_in": data.get("expires_in", 900),
+            },
+        )
+
+    def _handle_github_device_poll(self) -> None:
+        flow = self.state.github_device
+        if not flow:
+            self._send(400, {"error": "no device flow in progress"})
+            return
+        status, value = device_flow_poll_once(flow["client_id"], flow["device_code"])
+        if status == "pending":
+            self._send(200, {"connected": False, "pending": True})
+            return
+        if status == "slow_down":
+            flow["interval"] = int(flow.get("interval", 5)) + 5
+            self._send(200, {"connected": False, "pending": True, "interval": flow["interval"]})
+            return
+        token = value or ""
+        login = github_whoami(token)
+        credentials.set_provider("github", {"token": token, "login": login})
+        self.state.github_device = None
+        self._send(200, {"connected": True, "login": login})
 
     def _handle_connect_confluence(self, body: dict[str, Any]) -> None:
         base_url = str(body.get("base_url", "")).strip()

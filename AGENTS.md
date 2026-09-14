@@ -20,6 +20,10 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   with `--db $HOME/.ragdesk/index.db`; env overrides: `RAGDESK_BIN`,
   `RAGDESK_DB`, `RAGDESK_LLM_MODEL`, `RAGDESK_PROJECT`. Browser mode:
   `ragdesk serve --ui desktop/dist`.
+- Connections: GitHub has three paths (device code with `RAGDESK_GITHUB_CLIENT_ID`
+  or a saved client ID, `gh` login, or a pasted token); Confluence and GDrive
+  connect flows validate before saving to `~/.config/ragdesk/credentials.json`
+  (`0600`; override the dir with `RAGDESK_CONFIG_DIR` for tests).
 - `fixtures/` — tiny corpus + two golden sets (fixtures, repo) for offline CI.
 - `tests/` — pytest; always uses `HashingEmbedder` (never requires Ollama or
   network). Connector tests monkeypatch HTTP.

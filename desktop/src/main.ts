@@ -332,7 +332,13 @@ $<HTMLFormElement>("search-form").addEventListener("submit", async (event) => {
 // --- sources ------------------------------------------------------------------
 
 type Connections = {
-  github: { connected: boolean; source: string | null; login: string };
+  github: {
+    connected: boolean;
+    source: string | null;
+    login: string;
+    gh_available: boolean;
+    device_flow_ready: boolean;
+  };
   confluence: {
     connected: boolean;
     source: string | null;
@@ -343,8 +349,12 @@ type Connections = {
   gdrive: { connected: boolean; email: string };
 };
 
+type DeviceFlow = { userCode: string; verificationUri: string; interval: number };
+
 let connections: Connections | null = null;
 let selectedPaths: string[] = [];
+let deviceFlow: DeviceFlow | null = null;
+let deviceTimer: number | undefined;
 const sourceResults: Record<string, string> = {};
 
 const GITHUB_SOURCE_LABEL: Record<string, string> = {
@@ -356,6 +366,55 @@ const GITHUB_SOURCE_LABEL: Record<string, string> = {
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+async function openExternal(url: string): Promise<void> {
+  if (isTauri()) {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+      return;
+    } catch {
+      // fall through to a browser tab
+    }
+  }
+  window.open(url, "_blank", "noopener");
+}
+
+function cancelDeviceFlow(): void {
+  deviceFlow = null;
+  window.clearTimeout(deviceTimer);
+}
+
+function startDevicePolling(): void {
+  window.clearTimeout(deviceTimer);
+  if (!deviceFlow) return;
+  deviceTimer = window.setTimeout(async () => {
+    if (!deviceFlow) return;
+    try {
+      const response = await post<{
+        connected?: boolean;
+        pending?: boolean;
+        login?: string;
+        interval?: number;
+      }>("/api/connections/github/device/poll", {});
+      if (response.connected) {
+        const login = response.login ?? "github";
+        cancelDeviceFlow();
+        setResult("github", `connected — ${login}`);
+        await loadConnections();
+        return;
+      }
+      if (response.interval) deviceFlow.interval = response.interval;
+      startDevicePolling();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      cancelDeviceFlow();
+      setResult("github", message);
+      toast(message);
+      renderSources();
+    }
+  }, Math.max(deviceFlow.interval, 3) * 1000);
 }
 
 function setResult(kind: string, message: string): void {
@@ -432,16 +491,48 @@ function localCard(): string {
 
 function githubCard(conn: Connections["github"]): string {
   if (!conn.connected) {
+    const options: string[] = [];
+    if (deviceFlow) {
+      options.push(`<div class="device-box">
+        <p class="source-note">Enter this code on GitHub:</p>
+        <p class="device-code">${escapeHtml(deviceFlow.userCode)}</p>
+        <div class="button-row">
+          <button class="btn" type="button" data-action="open-device-page">Open GitHub</button>
+          <button class="btn btn-quiet" type="button" data-action="github-device-cancel">Cancel</button>
+        </div>
+        <p class="muted">Waiting for approval…</p>
+      </div>`);
+    } else {
+      if (conn.gh_available) {
+        options.push(
+          `<button class="btn" type="button" data-action="github-gh">Use gh login</button>`,
+        );
+      }
+      if (conn.device_flow_ready) {
+        options.push(
+          `<button class="btn" type="button" data-action="github-device-start">Connect with a code</button>`,
+        );
+      }
+    }
+    const setup =
+      !deviceFlow && !conn.device_flow_ready
+        ? `<form data-form="github-client-id" class="stack">
+             <p class="source-note">No <code>gh</code> CLI? Create a GitHub OAuth app with device flow enabled, save its client ID, then connect with a code.</p>
+             <div class="field-row">
+               <input name="client_id" placeholder="OAuth client ID" />
+               <button class="btn" type="submit">Save</button>
+             </div>
+           </form>`
+        : "";
     return `<div class="source-card">
       <h3>GitHub</h3>
-      <p class="source-note">Read-only repository sync. Log in with your <code>gh</code> CLI, or paste a token.</p>
-      <div class="button-row">
-        <button class="btn" type="button" data-action="github-gh">Use gh login</button>
-      </div>
+      <p class="source-note">Read-only repository sync. Connect with a code, your <code>gh</code> CLI, or a token.</p>
+      ${options.length ? `<div class="button-row">${options.join("")}</div>` : ""}
       <form data-form="github-connect" class="stack">
         <input name="token" type="password" placeholder="personal access token" />
         <button class="btn" type="submit">Connect with token</button>
       </form>
+      ${setup}
       <p class="source-result" data-result="github"></p>
     </div>`;
   }
@@ -524,7 +615,13 @@ function gdriveCard(conn: Connections["gdrive"]): string {
 }
 
 function renderSources(): void {
-  const github = connections?.github ?? { connected: false, source: null, login: "" };
+  const github = connections?.github ?? {
+    connected: false,
+    source: null,
+    login: "",
+    gh_available: false,
+    device_flow_ready: false,
+  };
   const confluence = connections?.confluence ?? {
     connected: false,
     source: null,
@@ -577,6 +674,16 @@ $("source-grid").addEventListener("submit", async (event) => {
       await loadStatus();
       return;
     }
+    if (kind === "github-client-id") {
+      if (!payload.client_id) {
+        setResult("github", "paste an OAuth client ID first");
+        return;
+      }
+      await post("/api/connections/github/client-id", { client_id: payload.client_id });
+      setResult("github", "client ID saved — you can connect with a code now");
+      await loadConnections();
+      return;
+    }
     const endpoints: Record<string, string> = {
       "github-connect": "/api/connections/github",
       "github-sync": "/api/sync/github",
@@ -623,6 +730,7 @@ $("source-grid").addEventListener("click", async (event) => {
   }
   if (action.startsWith("disconnect-")) {
     const provider = action.split("-")[1];
+    if (provider === "github") cancelDeviceFlow();
     setResult(provider, "disconnecting…");
     try {
       await post(`/api/connections/${provider}/disconnect`, {});
@@ -643,6 +751,39 @@ $("source-grid").addEventListener("click", async (event) => {
       setResult(provider, message);
       toast(message);
     }
+    return;
+  }
+  if (action === "github-device-start") {
+    setResult("github", "requesting a code…");
+    try {
+      const response = await post<{
+        user_code: string;
+        verification_uri: string;
+        interval: number;
+      }>("/api/connections/github/device/start", {});
+      deviceFlow = {
+        userCode: response.user_code,
+        verificationUri: response.verification_uri,
+        interval: response.interval || 5,
+      };
+      setResult("github", "enter the code shown in your browser");
+      renderSources();
+      void openExternal(deviceFlow.verificationUri);
+      startDevicePolling();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setResult("github", message);
+      toast(message);
+    }
+    return;
+  }
+  if (action === "github-device-cancel") {
+    cancelDeviceFlow();
+    renderSources();
+    return;
+  }
+  if (action === "open-device-page") {
+    if (deviceFlow) void openExternal(deviceFlow.verificationUri);
     return;
   }
   if (action === "github-gh") {

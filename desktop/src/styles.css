@@ -533,6 +533,24 @@ input:focus {
   color: var(--flag);
 }
 
+.device-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--paper);
+  border: 1px dashed var(--stamp);
+  border-radius: 3px;
+}
+
+.device-code {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  letter-spacing: 0.12em;
+  color: var(--stamp);
+}
+
 .source-card .btn {
   align-self: flex-start;
 }

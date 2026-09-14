@@ -21,6 +21,7 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 @pytest.fixture()
 def base_url(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("RAGDESK_GITHUB_CLIENT_ID", raising=False)
     monkeypatch.setattr("ragdesk.serve.token_source", lambda: None)
     monkeypatch.setattr("ragdesk.serve.load_token_file", lambda: {})
     db = tmp_path / "index.db"
@@ -122,6 +123,50 @@ def test_connect_github_gh_missing(base_url: str, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/connections/github/gh", {})
     assert excinfo.value.code == 400
+
+
+def test_github_device_flow_connect(base_url: str, monkeypatch):
+    monkeypatch.setattr("ragdesk.serve._token_from_gh", lambda: None)
+    # no client ID yet -> start refuses
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/connections/github/device/start", {})
+    assert excinfo.value.code == 400
+
+    # save a client ID, then start succeeds
+    status, payload = request(
+        f"{base_url}/api/connections/github/client-id", {"client_id": "cid-1"}
+    )
+    assert payload["saved"] is True
+    monkeypatch.setattr(
+        "ragdesk.serve.device_flow_start",
+        lambda client_id: {
+            "device_code": "dc-1",
+            "user_code": "ABCD-1234",
+            "verification_uri": "https://github.com/login/device",
+            "interval": 1,
+        },
+    )
+    status, payload = request(f"{base_url}/api/connections/github/device/start", {})
+    assert status == 200
+    assert payload["user_code"] == "ABCD-1234"
+
+    # pending poll keeps waiting
+    monkeypatch.setattr(
+        "ragdesk.serve.device_flow_poll_once", lambda cid, dc: ("pending", None)
+    )
+    status, payload = request(f"{base_url}/api/connections/github/device/poll", {})
+    assert payload["connected"] is False and payload["pending"] is True
+
+    # approved poll stores the token
+    monkeypatch.setattr(
+        "ragdesk.serve.device_flow_poll_once", lambda cid, dc: ("token", "tok-1")
+    )
+    monkeypatch.setattr("ragdesk.serve.github_whoami", lambda token: "duke")
+    status, payload = request(f"{base_url}/api/connections/github/device/poll", {})
+    assert payload["connected"] is True and payload["login"] == "duke"
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["github"]["connected"] is True
+    assert connections["github"]["device_flow_ready"] is True
 
 
 def test_connect_confluence_and_disconnect(base_url: str, monkeypatch):
