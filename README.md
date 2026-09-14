@@ -113,7 +113,7 @@ with — the index refuses mismatched embeddings.
 | Indexing: local files (native picker), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML) | Sidecar bundling in the DMG |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
-| Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; grounding gate, token streaming | OpenAI-compatible endpoint (LM Studio / llama.cpp / cloud) |
+| Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | OpenAI-compatible endpoint (LM Studio / llama.cpp / cloud) |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
 | RAM presets (`light` / `balanced` / `quality`) with per-flag overrides | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |

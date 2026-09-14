@@ -35,6 +35,22 @@ type Status = {
   local_paths: PathStat[];
   auto_index: { hours: number; last_run: string };
   llm: { kind: string; model: string; note: string };
+  llm_setup: {
+    ollama_model: string;
+    ollama_reachable: boolean;
+    ollama_has_model: boolean;
+    mlx_available: boolean;
+    mlx_repo: string;
+    mlx_cached: boolean;
+    job: {
+      running: boolean;
+      kind: string;
+      model: string;
+      progress: number;
+      detail: string;
+      error: string;
+    };
+  };
 };
 
 function $<T extends HTMLElement>(id: string): T {
@@ -176,6 +192,64 @@ function llmLabel(status: Status): string {
     : `${status.llm.model} (${status.llm.kind})`;
 }
 
+function llmSetupButtons(status: Status): string {
+  const options = status.llm_setup;
+  const buttons: string[] = [];
+  const repoName = options.mlx_repo.split("/").pop() ?? "model";
+  if (options.mlx_available && options.mlx_repo && !options.mlx_cached) {
+    buttons.push(
+      `<button class="btn btn-primary" type="button" data-action="llm-setup-mlx">Download ${escapeHtml(repoName)} (in-process, one-time)</button>`,
+    );
+  }
+  if (options.ollama_reachable && !options.ollama_has_model) {
+    buttons.push(
+      `<button class="btn" type="button" data-action="llm-setup-ollama">Pull ${escapeHtml(options.ollama_model)} with Ollama</button>`,
+    );
+  }
+  return buttons.length ? `<div class="button-row">${buttons.join("")}</div>` : "";
+}
+
+function renderLlmSetup(status: Status): void {
+  const box = $("llm-setup");
+  const job = status.llm_setup.job;
+  if (job.running) {
+    const percent = Math.round(job.progress * 100);
+    box.innerHTML = `
+      <div class="progress"><div class="progress-bar" style="width:${percent}%"></div></div>
+      <p class="source-result">${escapeHtml(job.detail || "working…")} · ${percent}% (${escapeHtml(job.model)})</p>`;
+    startSetupPolling();
+    return;
+  }
+  const error = job.error ? `<p class="source-result">${escapeHtml(job.error)}</p>` : "";
+  const buttons = llmSetupButtons(status);
+  if (status.llm.kind !== "none") {
+    const pending =
+      status.llm.kind === "mlx" && !status.llm_setup.mlx_cached
+        ? `<p class="source-note">The model is not downloaded yet — without this button the first question would fetch it silently.</p>`
+        : "";
+    box.innerHTML = `<p class="source-note">active: ${escapeHtml(status.llm.note)}</p>${pending}${buttons}${error}`;
+    return;
+  }
+  box.innerHTML =
+    `<p class="source-note">Chat needs a local model — one-time download, stays on this machine. Indexing and search already work without it.</p>` +
+    (buttons ||
+      `<p class="source-note">Install one first: <code>uv tool install "ragdesk[mlx]"</code> (Apple Silicon), or start Ollama and pull <code>${escapeHtml(status.llm_setup.ollama_model)}</code>.</p>`) +
+    error;
+}
+
+let setupTimer: number | undefined;
+
+function startSetupPolling(): void {
+  if (setupTimer) return;
+  setupTimer = window.setInterval(async () => {
+    await loadStatus();
+    if (!status?.llm_setup.job.running) {
+      window.clearInterval(setupTimer);
+      setupTimer = undefined;
+    }
+  }, 2000);
+}
+
 function renderStatus(): void {
   if (!status) return;
   $("stat-docs").textContent = String(status.documents);
@@ -198,6 +272,7 @@ function renderStatus(): void {
     .join("");
 
   const table = $("indexed-table");
+  renderLlmSetup(status);
   ($("auto-index-hours") as HTMLSelectElement).value = String(status.auto_index.hours);
   $("auto-index-last").textContent = status.auto_index.last_run
     ? `last auto run ${status.auto_index.last_run} UTC`
@@ -1059,6 +1134,20 @@ $("source-grid").addEventListener("submit", async (event) => {
     const message = error instanceof Error ? error.message : String(error);
     setResult(provider, message);
     toast(message);
+  }
+});
+
+$("llm-setup").addEventListener("click", async (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
+  const action = target?.dataset.action ?? "";
+  if (action !== "llm-setup-mlx" && action !== "llm-setup-ollama") return;
+  const kind = action === "llm-setup-mlx" ? "mlx" : "ollama";
+  try {
+    await post("/api/llm/setup", { kind });
+    toast(kind === "mlx" ? "Downloading the MLX model…" : "Pulling the model with Ollama…");
+    await loadStatus();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
   }
 });
 

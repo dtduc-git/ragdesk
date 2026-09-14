@@ -14,6 +14,7 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from ragdesk.ollama import DEFAULT_HOST, post_json, post_stream
@@ -54,6 +55,26 @@ def ollama_has_model(tag: str, host: str = DEFAULT_HOST) -> bool:
 
 def mlx_available() -> bool:
     return importlib.util.find_spec("mlx_lm") is not None
+
+
+def _hf_cache_dir() -> str:
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE  # noqa: PLC0415
+
+        return str(HF_HUB_CACHE)
+    except Exception:  # hub not installed (or moved the constant)
+        return str(Path.home() / ".cache" / "huggingface" / "hub")
+
+
+def mlx_model_cached(repo: str, cache_dir: str | None = None) -> bool:
+    """True when a snapshot with weights is already in the shared HF cache."""
+    if not repo:
+        return False
+    folder = Path(cache_dir or _hf_cache_dir()) / f"models--{repo.replace('/', '--')}"
+    snapshots = folder / "snapshots"
+    if not snapshots.is_dir():
+        return False
+    return any(snapshots.glob("*/*.safetensors"))
 
 
 class OllamaLLM:

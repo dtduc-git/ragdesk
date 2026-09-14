@@ -117,6 +117,20 @@ def test_mlx_backend_maps_options_and_streams(monkeypatch):
     assert calls["stream"]["max_tokens"] == 9
 
 
+def test_mlx_model_cached_scans_snapshots(tmp_path):
+    from ragdesk.llm import mlx_model_cached
+
+    repo = "mlx-community/Qwen3.5-4B-MLX-4bit"
+    cache = tmp_path / "hub"
+    folder = cache / f"models--{repo.replace('/', '--')}" / "snapshots" / "abc"
+    folder.mkdir(parents=True)
+    assert mlx_model_cached(repo, str(cache)) is False  # dir exists, no weights yet
+    (folder / "model.safetensors").write_bytes(b"x")
+    assert mlx_model_cached(repo, str(cache)) is True
+    assert mlx_model_cached("other/repo", str(cache)) is False
+    assert mlx_model_cached("", str(cache)) is False
+
+
 def test_llm_status_reports_none_with_hint(no_mlx, monkeypatch):
     monkeypatch.setattr(llm_module, "ollama_has_model", lambda tag, host: False)
     status = llm_status("auto", preset="light")

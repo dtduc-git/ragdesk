@@ -679,6 +679,22 @@ details.alt[open] summary {
   white-space: nowrap;
 }
 
+/* --- model download -------------------------------------------------------- */
+
+.progress {
+  height: 8px;
+  margin: 12px 0 6px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--stamp);
+  transition: width 0.3s ease;
+}
+
 /* --- settings -------------------------------------------------------------- */
 
 .status-table {

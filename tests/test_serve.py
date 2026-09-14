@@ -30,6 +30,7 @@ def base_url(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("ragdesk.serve.token_source", lambda: None)
     monkeypatch.setattr("ragdesk.serve.load_token_file", lambda: {})
     monkeypatch.setattr("ragdesk.llm.mlx_available", lambda: False)
+    monkeypatch.setattr("ragdesk.serve.mlx_available", lambda: False)
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
     monkeypatch.delenv("GITLAB_TOKEN", raising=False)
     db = tmp_path / "index.db"
@@ -373,6 +374,96 @@ def test_auto_index_reindexes_changed_local_paths(base_url: str, tmp_path: Path)
     with Store(db) as store:
         assert "gadgets" in (store.document_text(str(note)) or "")
     assert settings.load()["auto_index_last"]
+
+
+def test_llm_setup_refuses_what_the_machine_cannot_do(base_url: str):
+    status, payload = request(f"{base_url}/api/status")
+    assert status == 200
+    setup = payload["llm_setup"]
+    assert setup["mlx_available"] is False
+    assert setup["ollama_reachable"] is False
+    assert setup["ollama_model"] == "qwen3.5:4b"
+    assert setup["job"]["running"] is False
+
+    for kind in ("mlx", "ollama", "wat"):
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            request(f"{base_url}/api/llm/setup", {"kind": kind})
+        assert excinfo.value.code == 400
+
+
+def test_run_llm_setup_mlx_downloads_and_reports(tmp_path: Path, monkeypatch):
+    import sys
+    import types
+
+    from ragdesk.serve import AppState, run_llm_setup
+
+    class FakeSibling:
+        def __init__(self, name: str, size: int) -> None:
+            self.rfilename = name
+            self.size = size
+
+    class FakeInfo:
+        siblings = [FakeSibling("model.safetensors", 1000), FakeSibling(".gitattributes", 7)]
+
+    downloaded: list[str] = []
+    fake_hub = types.ModuleType("huggingface_hub")
+    fake_hub.HfApi = lambda: types.SimpleNamespace(  # type: ignore[attr-defined]
+        model_info=lambda repo, files_metadata=True: FakeInfo()
+    )
+    fake_hub.hf_hub_download = lambda repo, name: downloaded.append(name)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+
+    state = AppState(
+        db=str(tmp_path / "setup.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+        preset="light",
+    )
+    state.llm_setup = {
+        "running": True,
+        "kind": "mlx",
+        "model": "fake/repo",
+        "progress": 0.0,
+        "detail": "",
+        "error": "",
+    }
+    run_llm_setup(state, "mlx")
+    assert state.llm_setup["error"] == ""
+    assert state.llm_setup["running"] is False
+    assert state.llm_setup["progress"] == 1.0
+    assert downloaded == ["model.safetensors"]  # dotfiles skipped
+    assert state.llm is None  # invalidated so the next ask re-resolves
+
+    def boom(repo: str, name: str) -> None:
+        raise RuntimeError("disk full")
+
+    fake_hub.hf_hub_download = boom  # type: ignore[attr-defined]
+    state.llm_setup["running"] = True
+    state.llm_setup["progress"] = 0.0
+    run_llm_setup(state, "mlx")
+    assert "disk full" in state.llm_setup["error"]
+    assert state.llm_setup["running"] is False
+    assert state.llm_setup["progress"] < 1.0
+
+
+def test_ensure_llm_blocks_while_downloading(tmp_path: Path):
+    from ragdesk.llm import LLMUnavailable
+    from ragdesk.serve import AppState, ensure_llm
+
+    state = AppState(
+        db=str(tmp_path / "busy.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+        preset="light",
+    )
+    state.llm_setup["running"] = True
+    with pytest.raises(LLMUnavailable) as excinfo:
+        ensure_llm(state)
+    assert "downloading" in str(excinfo.value)
 
 
 def test_sync_gitlab_requires_project(base_url: str):

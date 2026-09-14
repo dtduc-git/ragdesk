@@ -47,7 +47,14 @@ from ragdesk.gitlab import DEFAULT_BASE_URL as GITLAB_DEFAULT_BASE
 from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.gitlab import whoami as gitlab_whoami
 from ragdesk.index import index_paths
-from ragdesk.llm import LLMUnavailable, llm_status, resolve_llm
+from ragdesk.llm import (
+    LLMUnavailable,
+    llm_status,
+    mlx_available,
+    mlx_model_cached,
+    ollama_models,
+    resolve_llm,
+)
 from ragdesk.msgraph import MsGraphError, sync_onedrive
 from ragdesk.msgraph import device_flow_poll_once as ms_poll_once
 from ragdesk.msgraph import device_flow_start as ms_device_start
@@ -56,7 +63,8 @@ from ragdesk.msgraph import whoami as ms_whoami
 from ragdesk.notion import NotionError, sync_notion
 from ragdesk.notion import resolve_token as notion_resolve_token
 from ragdesk.notion import whoami as notion_whoami
-from ragdesk.ollama import OllamaUnavailable
+from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable, post_stream
+from ragdesk.presets import PRESETS
 from ragdesk.rerank import get_reranker
 from ragdesk.search import Hit, retrieve
 from ragdesk.store import Store
@@ -116,6 +124,14 @@ class AppState:
         self.llm_host = llm_host
         self.llm_spec = llm_spec
         self.llm: Any = None
+        self.llm_setup: dict[str, Any] = {
+            "running": False,
+            "kind": "",
+            "model": "",
+            "progress": 0.0,
+            "detail": "",
+            "error": "",
+        }
         self.preset = preset
         self.ui_dir = Path(ui_dir) if ui_dir else None
         self.github_device: dict[str, Any] | None = None
@@ -172,6 +188,14 @@ class Handler(BaseHTTPRequestHandler):
                             preset=self.state.preset or "light",
                             host=self.state.llm_host,
                         ),
+                        "llm_setup": {
+                            **llm_setup_options(
+                                self.state.preset or "light",
+                                self.state.llm_host,
+                                self.state.llm_spec,
+                            ),
+                            "job": dict(self.state.llm_setup),
+                        },
                         "preset": self.state.preset,
                         "documents": stats["documents"],
                         "chunks": stats["chunks"],
@@ -229,6 +253,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/index":
                 self._handle_index(body)
+            elif self.path == "/api/llm/setup":
+                self._handle_llm_setup(body)
             elif self.path == "/api/settings":
                 self._handle_settings(body)
             elif self.path == "/api/connections/github":
@@ -306,6 +332,43 @@ class Handler(BaseHTTPRequestHandler):
 
     def _reranker_for(self, override: str | None):
         return get_reranker(override or self.state.rerank)
+
+    def _handle_llm_setup(self, body: dict[str, Any]) -> None:
+        options = llm_setup_options(
+            self.state.preset or "light", self.state.llm_host, self.state.llm_spec
+        )
+        if self.state.llm_setup.get("running"):
+            self._send(409, {"error": "a model download is already running"})
+            return
+        kind = str(body.get("kind", ""))
+        if kind == "ollama":
+            if not options["ollama_reachable"]:
+                self._send(400, {"error": "Ollama is not reachable — start it first"})
+                return
+            model = str(options["ollama_model"])
+        elif kind == "mlx":
+            if not options["mlx_available"]:
+                self._send(
+                    400,
+                    {"error": 'MLX is not installed — run: uv tool install "ragdesk[mlx]"'},
+                )
+                return
+            model = str(options["mlx_repo"])
+        else:
+            self._send(400, {"error": "kind must be 'ollama' or 'mlx'"})
+            return
+        self.state.llm_setup = {
+            "running": True,
+            "kind": kind,
+            "model": model,
+            "progress": 0.0,
+            "detail": "starting",
+            "error": "",
+        }
+        threading.Thread(
+            target=run_llm_setup, args=(self.state, kind), daemon=True
+        ).start()
+        self._send(202, {"started": True, **self.state.llm_setup})
 
     def _handle_settings(self, body: dict[str, Any]) -> None:
         try:
@@ -971,12 +1034,115 @@ def make_server(
 def ensure_llm(state: AppState) -> Any:
     """Resolve once per process; the ladder never downloads behind your back."""
     if state.llm is None:
+        if state.llm_setup.get("running"):
+            raise LLMUnavailable("the answer model is still downloading — try again shortly")
         state.llm = resolve_llm(
             state.llm_spec or None,
             preset=state.preset or "light",
             host=state.llm_host,
         )
     return state.llm
+
+
+def llm_setup_options(preset: str, host: str, spec: str = "") -> dict[str, Any]:
+    """What the onboarding wizard may offer on this machine."""
+    selected = PRESETS.get(preset, PRESETS["light"])
+    tag = str(selected["llm"])
+    repo = str(selected.get("llm_mlx", ""))
+    if spec.startswith("mlx:"):
+        repo = spec.partition(":")[2] or repo
+    models = ollama_models(host or DEFAULT_HOST)
+    return {
+        "ollama_model": tag,
+        "ollama_reachable": bool(models),
+        "ollama_has_model": tag in models or f"{tag}:latest" in models,
+        "mlx_available": mlx_available(),
+        "mlx_repo": repo,
+        "mlx_cached": mlx_model_cached(repo),
+    }
+
+
+def _pull_ollama(job: dict[str, Any], host: str) -> None:
+    for event in post_stream(
+        host or DEFAULT_HOST,
+        "/api/pull",
+        {"model": job["model"], "stream": True},
+        timeout=3600.0,
+    ):
+        if event.get("error"):
+            raise LLMUnavailable(str(event["error"]))
+        job["detail"] = str(event.get("status") or "pulling")
+        total = int(event.get("total") or 0)
+        completed = int(event.get("completed") or 0)
+        if total and completed:
+            job["progress"] = min(0.99, completed / total)
+
+
+def _byte_bar(job: dict[str, Any], name: str, base: int, total: int, size: int) -> Any:
+    """tqdm subclass mirroring download bytes into the job; None without tqdm."""
+    try:
+        from tqdm.auto import tqdm  # noqa: PLC0415 - ships with huggingface_hub
+    except ImportError:
+        return None
+
+    class _Bar(tqdm):  # type: ignore[misc, valid-type]
+        def update(self, n: int = 1) -> Any:
+            result = super().update(n)
+            if size:
+                loaded = base + self.n
+                job["progress"] = min(0.99, loaded / total)
+                job["detail"] = (
+                    f"downloading {name} — {loaded / 1e9:.2f}/{total / 1e9:.2f} GB"
+                )
+            return result
+
+    return _Bar
+
+
+def _download_mlx(job: dict[str, Any]) -> None:
+    from huggingface_hub import HfApi, hf_hub_download  # noqa: PLC0415 - comes with mlx-lm
+
+    repo = str(job["model"])
+    job["detail"] = "listing model files"
+    info = HfApi().model_info(repo, files_metadata=True)
+    files = [
+        (str(sibling.rfilename), int(sibling.size or 0))
+        for sibling in info.siblings or []
+        if not str(sibling.rfilename).startswith(".")
+    ]
+    total = sum(size for _, size in files) or 1
+    done = 0
+    for name, size in files:
+        job["detail"] = f"downloading {name} — {done / 1e9:.2f}/{total / 1e9:.2f} GB"
+        bar = _byte_bar(job, name, done, total, size)
+        try:
+            if bar is not None:
+                hf_hub_download(repo, name, tqdm_class=bar)
+            else:
+                hf_hub_download(repo, name)
+        except TypeError:  # hub too old for a custom progress bar
+            hf_hub_download(repo, name)
+        done += size
+        job["progress"] = min(0.99, done / total)
+
+
+def run_llm_setup(state: AppState, kind: str) -> None:
+    """Download the answer model; progress is reported through ``state.llm_setup``."""
+    job = state.llm_setup
+    try:
+        if kind == "ollama":
+            _pull_ollama(job, state.llm_host)
+        elif kind == "mlx":
+            _download_mlx(job)
+        else:
+            raise LLMUnavailable(f"unknown setup kind: {kind!r}")
+        job["detail"] = "ready"
+        job["progress"] = 1.0
+        state.llm = None  # re-resolve on the next ask
+    except Exception as exc:  # noqa: BLE001 - whatever failed is the message
+        job["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        job["running"] = False
 
 
 class LazyLLM:

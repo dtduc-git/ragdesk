@@ -41,6 +41,11 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   default 1, 0 = off) has elapsed since `auto_index_last`, it re-indexes the
   recorded local roots via `run_auto_index` (connectors stay manual until
   their sync params are persisted).
+- LLM wizard: `/api/llm/setup` {kind: mlx|ollama} starts a background download
+  (`run_llm_setup`); progress + options ride on `/api/status.llm_setup`
+  (job: running/progress/detail/error), the Settings tab renders them, and a
+  finished job clears `state.llm` so the next ask re-resolves the ladder.
+  `llm_setup_options` respects an explicit `--llm mlx:<repo>` override.
 - Connections: GitHub has three paths (device code with `RAGDESK_GITHUB_CLIENT_ID`
   or a saved client ID, `gh` login, or a pasted token); Confluence and GDrive
   connect flows validate before saving to `~/.config/ragdesk/credentials.json`
