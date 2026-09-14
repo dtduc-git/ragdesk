@@ -4,22 +4,27 @@ OAuth servers require every client to be a registered application — that is
 the protocol, not a licensing quirk. The registrations are one-time and belong
 to the maintainer; **users** never need to create anything when these are set.
 
-Client IDs are public by definition. Client secrets for installed apps are,
-per Google/Atlassian documentation, not confidential (native apps cannot keep
-secrets; PKCE is what protects the flow) — they still must not be committed
-together with user tokens.
+Per-provider policy on what may live in this file (it is public):
 
-Maintainers: fill these in at release time, or set the environment variables
-(``RAGDESK_GITHUB_CLIENT_ID``, ``RAGDESK_ATLASSIAN_CLIENT_ID/SECRET``,
-``GDRIVE_CLIENT_ID/SECRET``) / let users bring their own via the Sources UI.
+- GitHub device flow: **client ID only** — device flow uses no client secret.
+- Google (Desktop app): client ID + secret may ship; Google documents that
+  installed apps cannot keep secrets (PKCE protects the flow), and this is
+  common practice for OSS desktop tools.
+- Atlassian 3LO: **client ID only at most; never the secret.** Atlassian has
+  no installed-app model — the secret is a real confidential credential, and
+  shipping it would let anyone impersonate the app. Users bring their own
+  app credentials (stored locally, 0600) or use an API token instead.
+
+Users can always override via the Sources UI (saved under
+``~/.config/ragdesk/credentials.json``) or environment variables:
+``RAGDESK_GITHUB_CLIENT_ID``, ``RAGDESK_ATLASSIAN_CLIENT_ID/SECRET``,
+``GDRIVE_CLIENT_ID/SECRET``.
 """
 
 GITHUB_CLIENT_ID = "Ov23liI2iSz3dhYO9yaM"
 
-ATLASSIAN_CLIENT_ID = "mi2rngO2R6CowrimUzrCAYgwFH53uKPn"
-ATLASSIAN_CLIENT_SECRET = (
-    "ATOAucvlMIE4DoujJR8v97VZPZu3sh-flQIybnjJ9QSSH_mMquB2AYopXmafA7StTKMj4CDF9E59"
-)
+ATLASSIAN_CLIENT_ID = ""
+ATLASSIAN_CLIENT_SECRET = ""
 
 GOOGLE_CLIENT_ID = ""
 GOOGLE_CLIENT_SECRET = ""
