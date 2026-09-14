@@ -13,6 +13,9 @@ from ragdesk.ollama import DEFAULT_HOST, post_json, post_stream
 from ragdesk.search import Hit
 
 DEFAULT_LLM_MODEL = "qwen3.5:4b"
+# Grounded answers are short; the cap also stops small models from looping
+# (a 1k-token ramble blocks the Ollama queue for minutes on laptop hardware).
+ANSWER_OPTIONS = {"num_predict": 400, "temperature": 0.2}
 
 REFUSAL = "I could not find this in your indexed sources."
 
@@ -55,6 +58,7 @@ def answer(
         # Grounded QA wants the fast path: thinking models otherwise burn
         # a hidden chain-of-thought before the (short) cited answer.
         "think": False,
+        "options": dict(ANSWER_OPTIONS),
     }
     # Small models occasionally return an empty completion; one retry.
     for _ in range(2):
@@ -82,6 +86,7 @@ def answer_stream(
         "prompt": build_prompt(question, hits),
         "stream": True,
         "think": False,
+        "options": dict(ANSWER_OPTIONS),
     }
     emitted = False
     for chunk in post_stream(host, "/api/generate", payload):
