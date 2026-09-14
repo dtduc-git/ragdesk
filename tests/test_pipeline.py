@@ -188,3 +188,26 @@ def test_answer_disables_thinking_and_captures_payload(monkeypatch):
     assert answer("q", [hit]) == "ok"
     assert captured["think"] is False
     assert captured["stream"] is False
+    assert "plain prose" in captured["prompt"]
+
+
+def test_answer_retries_empty_response_then_refuses(monkeypatch):
+    calls = {"n": 0}
+
+    def fake_post_json(host: str, path: str, payload: dict, timeout: float = 300.0) -> dict:
+        calls["n"] += 1
+        return {"response": "   "}
+
+    monkeypatch.setattr("ragdesk.answer.post_json", fake_post_json)
+    hit = make_hit("a.md", "some context", chunk_id=1)
+    assert answer("q", [hit]) == REFUSAL
+    assert calls["n"] == 2
+
+
+def test_answer_stream_refuses_when_model_emits_nothing(monkeypatch):
+    def fake_post_stream(host: str, path: str, payload: dict, timeout: float = 300.0):
+        yield {"response": ""}
+
+    monkeypatch.setattr("ragdesk.answer.post_stream", fake_post_stream)
+    hit = make_hit("a.md", "some context", chunk_id=1)
+    assert list(answer_stream("q", [hit])) == [REFUSAL]

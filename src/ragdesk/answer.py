@@ -17,8 +17,10 @@ DEFAULT_LLM_MODEL = "qwen3.5:4b"
 REFUSAL = "I could not find this in your indexed sources."
 
 PROMPT_TEMPLATE = """You are ragdesk, a retrieval assistant. Answer ONLY from the sources below.
-Cite sources as [1], [2] and so on. If the sources do not contain the answer, say
-exactly: "{refusal}". Never use outside knowledge.
+Write a complete answer in plain prose (no LaTeX, no markdown headings or tables).
+Cite the sources you used inline as [1], [2] and so on — but never reply with
+citations alone. If the sources do not contain the answer, say exactly:
+"{refusal}". Never use outside knowledge.
 
 Sources:
 {context}
@@ -46,19 +48,21 @@ def answer(
     best_cosine = max((hit.cosine for hit in hits), default=0.0)
     if not hits or best_cosine < min_cosine:
         return REFUSAL
-    data = post_json(
-        host,
-        "/api/generate",
-        {
-            "model": model,
-            "prompt": build_prompt(question, hits),
-            "stream": False,
-            # Grounded QA wants the fast path: thinking models otherwise burn
-            # a hidden chain-of-thought before the (short) cited answer.
-            "think": False,
-        },
-    )
-    return data["response"].strip()
+    payload = {
+        "model": model,
+        "prompt": build_prompt(question, hits),
+        "stream": False,
+        # Grounded QA wants the fast path: thinking models otherwise burn
+        # a hidden chain-of-thought before the (short) cited answer.
+        "think": False,
+    }
+    # Small models occasionally return an empty completion; one retry.
+    for _ in range(2):
+        data = post_json(host, "/api/generate", payload)
+        text = str(data.get("response", "")).strip()
+        if text:
+            return text
+    return REFUSAL
 
 
 def answer_stream(
@@ -79,7 +83,11 @@ def answer_stream(
         "stream": True,
         "think": False,
     }
+    emitted = False
     for chunk in post_stream(host, "/api/generate", payload):
         piece = chunk.get("response", "")
         if piece:
+            emitted = True
             yield str(piece)
+    if not emitted:
+        yield REFUSAL
