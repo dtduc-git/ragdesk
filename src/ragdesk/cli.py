@@ -112,6 +112,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--port", type=int, default=8765)
     p_serve.add_argument("--llm-model", default=None, help="LLM model (default: from preset)")
     p_serve.add_argument("--llm-host", default=DEFAULT_HOST)
+    p_serve.add_argument("--ui", default="", help="serve a built UI directory (browser mode)")
     return parser
 
 
@@ -145,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             llm_model=settings["llm"],
             llm_host=args.llm_host,
             preset=settings["preset"],
+            ui_dir=args.ui,
         )
         server = make_server(state, port=args.port)
         host, port = server.server_address[:2]

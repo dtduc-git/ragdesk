@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,18 @@ CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+}
+
+MIME_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".json": "application/json",
+    ".woff2": "font/woff2",
+    ".txt": "text/plain; charset=utf-8",
 }
 
 
@@ -56,6 +69,7 @@ class AppState:
         llm_model: str = "",
         llm_host: str = "",
         preset: str = "",
+        ui_dir: str = "",
     ) -> None:
         self.db = db
         self.embedder = embedder
@@ -63,6 +77,7 @@ class AppState:
         self.llm_model = llm_model
         self.llm_host = llm_host
         self.preset = preset
+        self.ui_dir = Path(ui_dir) if ui_dir else None
         self.lock = threading.Lock()
 
 
@@ -117,7 +132,38 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
             return
+        if self.path == "/api/health":
+            self._send(200, {"ok": True})
+            return
+        if self._serve_static():
+            return
         self._send(404, {"error": f"not found: {self.path}"})
+
+    def _serve_static(self) -> bool:
+        """Serve the built UI when ``--ui`` was given (browser dev + e2e)."""
+        ui_dir = self.state.ui_dir
+        if ui_dir is None:
+            return False
+        request_path = urllib.parse.urlparse(self.path).path
+        relative = "index.html" if request_path in ("", "/") else request_path.lstrip("/")
+        candidate = (ui_dir / relative).resolve()
+        if not str(candidate).startswith(str(ui_dir.resolve())) or not candidate.is_file():
+            # SPA fallback: unknown non-asset paths get the app shell
+            if "." in Path(relative).name:
+                return False
+            candidate = ui_dir / "index.html"
+            if not candidate.is_file():
+                return False
+        body = candidate.read_bytes()
+        content_type = MIME_TYPES.get(candidate.suffix.lower(), "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        for key, value in CORS_HEADERS.items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
+        return True
 
     def do_POST(self) -> None:
         try:

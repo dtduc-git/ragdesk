@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -146,3 +148,46 @@ def test_ask_stream_requires_query(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/ask/stream", {})
     assert excinfo.value.code == 400
+
+
+def test_static_ui_serving_and_traversal_guard(tmp_path: Path):
+    ui = tmp_path / "ui"
+    (ui / "assets").mkdir(parents=True)
+    (ui / "index.html").write_text("<html><body>ragdesk ui shell</body></html>")
+    (ui / "assets" / "app.js").write_text("console.log('ui')")
+    (tmp_path / "secret.txt").write_text("do not serve me")
+
+    db = tmp_path / "index.db"
+    with Store(db) as store:
+        index_paths(store, HashingEmbedder(), [FIXTURES / "docs"])
+    state = AppState(db=str(db), embedder=HashingEmbedder(), ui_dir=str(ui))
+    httpd = make_server(state, port=0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address[:2]
+    try:
+        def raw_get(path: str) -> tuple[int, bytes, str]:
+            conn = http.client.HTTPConnection(host, port, timeout=5)
+            conn.request("GET", path)
+            response = conn.getresponse()
+            body = response.read()
+            content_type = response.getheader("Content-Type") or ""
+            conn.close()
+            return response.status, body, content_type
+
+        status, body, content_type = raw_get("/")
+        assert status == 200
+        assert b"ragdesk ui shell" in body
+        assert content_type.startswith("text/html")
+
+        status, body, _ = raw_get("/assets/app.js")
+        assert status == 200 and b"console.log" in body
+
+        status, body, _ = raw_get("/../secret.txt")
+        assert status == 404, "path traversal must not escape the ui directory"
+        assert b"do not serve me" not in body
+
+        status, body, content_type = raw_get("/some/deep/route")
+        assert status == 200 and b"ragdesk ui shell" in body
+    finally:
+        httpd.shutdown()
