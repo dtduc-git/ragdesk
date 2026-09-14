@@ -67,9 +67,12 @@ this repository's own docs and source.
 | corpus / preset | recall@5 | nDCG@10 | MRR@10 |
 |---|---|---|---|
 | fixtures (7 queries) / hash-4096 — CI gate | 1.000 | 1.000 | 1.000 |
-| repo (9 queries) / hash-4096 | 0.889 | 0.846 | 0.796 |
+| repo (9 queries) / hash-4096 | 0.889 | 0.832 | 0.778 |
 | repo (9 queries) / EmbeddingGemma-300M int8 (ONNX) | 1.000 | 0.918 | 0.889 |
 | repo (9 queries) / EmbeddingGemma + `lexical` rerank | 1.000 | 0.862 | 0.815 |
+
+Measured 2026-09-14 on the repo tree; doc edits shift these by ~1 query, and
+they are re-measured on every release.
 
 Honest notes: the tiny fixtures corpus saturates, so the repo golden set is the
 one that says something. The dependency-free `lexical` reranker **lowers**
