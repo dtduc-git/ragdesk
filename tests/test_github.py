@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import tarfile
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from ragdesk.github import (
     device_flow_poll,
     resolve_token,
     sync_github,
+    token_source,
+    whoami,
 )
 from ragdesk.store import Store
 
@@ -77,6 +80,7 @@ def test_sync_github_requires_token(store: Store, monkeypatch):
 
 
 def test_resolve_token_precedence(monkeypatch):
+    monkeypatch.setattr("ragdesk.github.credentials.get", lambda provider: {})
     assert resolve_token("explicit") == "explicit"
     monkeypatch.setenv("GITHUB_TOKEN", "env-token")
     assert resolve_token() == "env-token"
@@ -86,6 +90,30 @@ def test_resolve_token_precedence(monkeypatch):
     monkeypatch.delenv("GH_TOKEN")
     monkeypatch.setattr("ragdesk.github._token_from_gh", lambda: "cli-token")
     assert resolve_token() == "cli-token"
+    # stored credentials beat the gh CLI
+    monkeypatch.setattr(
+        "ragdesk.github.credentials.get", lambda provider: {"token": "stored"}
+    )
+    assert resolve_token() == "stored"
+
+
+def test_token_source_reports_origin(monkeypatch):
+    monkeypatch.setattr("ragdesk.github.credentials.get", lambda provider: {})
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr("ragdesk.github._token_from_gh", lambda: None)
+    assert token_source() is None
+    monkeypatch.setattr("ragdesk.github._token_from_gh", lambda: "cli")
+    assert token_source() == ("gh", "cli")
+
+
+def test_whoami_rejects_bad_token(monkeypatch):
+    def fake_urlopen(request, timeout=None):
+        raise urllib.error.HTTPError(request.full_url, 401, "unauthorized", {}, None)
+
+    monkeypatch.setattr("ragdesk.github.urllib.request.urlopen", fake_urlopen)
+    with pytest.raises(GitHubError):
+        whoami("bad-token")
 
 
 def test_device_flow_poll(monkeypatch):

@@ -13,12 +13,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from ragdesk import __version__
+from ragdesk import __version__, credentials
 from ragdesk.answer import REFUSAL, answer, answer_stream
 from ragdesk.confluence import ConfluenceError, sync_confluence
+from ragdesk.confluence import whoami as confluence_whoami
 from ragdesk.embed import Embedder
-from ragdesk.gdrive import GdriveError, sync_gdrive
-from ragdesk.github import GitHubError, sync_github
+from ragdesk.gdrive import TOKEN_FILE as GDRIVE_TOKEN_FILE
+from ragdesk.gdrive import GdriveError, load_token_file, run_loopback_flow, sync_gdrive
+from ragdesk.gdrive import whoami as gdrive_whoami
+from ragdesk.github import GitHubError, _token_from_gh, sync_github, token_source
+from ragdesk.github import whoami as github_whoami
 from ragdesk.index import index_paths
 from ragdesk.ollama import OllamaUnavailable
 from ragdesk.rerank import get_reranker
@@ -135,6 +139,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/health":
             self._send(200, {"ok": True})
             return
+        if self.path == "/api/connections":
+            self._send(200, self._connections_payload())
+            return
         if self._serve_static():
             return
         self._send(404, {"error": f"not found: {self.path}"})
@@ -174,6 +181,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/index":
                 self._handle_index(body)
+            elif self.path == "/api/connections/github":
+                self._handle_connect_github(body)
+            elif self.path == "/api/connections/github/gh":
+                self._handle_connect_github_gh()
+            elif self.path == "/api/connections/confluence":
+                self._handle_connect_confluence(body)
+            elif self.path == "/api/connections/gdrive":
+                self._handle_connect_gdrive(body)
+            elif self.path.endswith("/disconnect") and self.path.startswith(
+                "/api/connections/"
+            ):
+                self._handle_disconnect(self.path.split("/")[3])
             elif self.path == "/api/sync/github":
                 self._handle_sync_github(body)
             elif self.path == "/api/sync/confluence":
@@ -243,8 +262,116 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
-    def _handle_sync_confluence(self, body: dict[str, Any]) -> None:
+    def _connections_payload(self) -> dict[str, Any]:
+        github_entry = credentials.get("github")
+        gh_source = token_source()
+        confluence_entry = credentials.get("confluence")
+        gdrive_payload = load_token_file()
+        return {
+            "github": {
+                "connected": gh_source is not None or bool(github_entry.get("token")),
+                "source": gh_source[0] if gh_source else None,
+                "login": github_entry.get("login", ""),
+            },
+            "confluence": {
+                "connected": bool(
+                    confluence_entry.get("base_url")
+                    and confluence_entry.get("email")
+                    and confluence_entry.get("token")
+                ),
+                "base_url": confluence_entry.get("base_url", ""),
+                "email": confluence_entry.get("email", ""),
+                "display_name": confluence_entry.get("display_name", ""),
+            },
+            "gdrive": {
+                "connected": bool(gdrive_payload.get("refresh_token")),
+                "email": gdrive_payload.get("email", ""),
+            },
+        }
+
+    def _handle_connect_github(self, body: dict[str, Any]) -> None:
+        token = str(body.get("token", "")).strip()
+        if token:
+            login = github_whoami(token)
+            credentials.set_provider("github", {"token": token, "login": login})
+            self._send(200, {"connected": True, "source": "credentials", "login": login})
+            return
+        found = token_source()
+        if not found:
+            self._send(400, {"error": "no GitHub token: paste one or log in with gh"})
+            return
+        source, value = found
+        login = github_whoami(value)
+        credentials.set_provider("github", {"login": login})
+        self._send(200, {"connected": True, "source": source, "login": login})
+
+    def _handle_connect_github_gh(self) -> None:
+        token = _token_from_gh()
+        if not token:
+            self._send(400, {"error": "gh CLI not found or not logged in (gh auth login)"})
+            return
+        login = github_whoami(token)
+        credentials.set_provider("github", {"token": token, "login": login})
+        self._send(200, {"connected": True, "source": "gh", "login": login})
+
+    def _handle_connect_confluence(self, body: dict[str, Any]) -> None:
         base_url = str(body.get("base_url", "")).strip()
+        email = str(body.get("email", "")).strip()
+        token = str(body.get("token", "")).strip()
+        if not (base_url and email and token):
+            self._send(400, {"error": "base_url, email and token are all required"})
+            return
+        display_name = confluence_whoami(base_url, email, token)
+        credentials.set_provider(
+            "confluence",
+            {
+                "base_url": base_url,
+                "email": email,
+                "token": token,
+                "display_name": display_name,
+            },
+        )
+        self._send(200, {"connected": True, "display_name": display_name})
+
+    def _handle_connect_gdrive(self, body: dict[str, Any]) -> None:
+        stored = credentials.get("gdrive")
+        client_id = str(body.get("client_id", "")).strip() or str(
+            stored.get("client_id", "")
+        )
+        client_secret = str(body.get("client_secret", "")).strip() or str(
+            stored.get("client_secret", "")
+        )
+        if not client_id:
+            self._send(400, {"error": "an OAuth client ID is required"})
+            return
+        payload = run_loopback_flow(client_id, client_secret)
+        email = ""
+        access_token = str(payload.get("access_token", ""))
+        if access_token:
+            email = gdrive_whoami(access_token)
+            payload["email"] = email
+            from ragdesk.gdrive import save_token_file
+
+            save_token_file(payload)
+        saved = {"client_id": client_id}
+        if client_secret:
+            saved["client_secret"] = client_secret
+        credentials.set_provider("gdrive", saved)
+        self._send(200, {"connected": True, "email": email})
+
+    def _handle_disconnect(self, provider: str) -> None:
+        if provider not in ("github", "confluence", "gdrive"):
+            self._send(404, {"error": f"unknown provider: {provider}"})
+            return
+        credentials.clear(provider)
+        if provider == "gdrive":
+            GDRIVE_TOKEN_FILE.unlink(missing_ok=True)
+        self._send(200, {"connected": False})
+
+    def _handle_sync_confluence(self, body: dict[str, Any]) -> None:
+        base_url = str(body.get("base_url", "")).strip() or str(
+            credentials.get("confluence").get("base_url", "")
+        )
         space = str(body.get("space", "")).strip()
         if not base_url or not space:
             self._send(400, {"error": "base_url and space required"})

@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from ragdesk import credentials
 from ragdesk.embed import Embedder
 from ragdesk.index import IndexStats, index_document
 from ragdesk.store import Store
@@ -74,14 +75,35 @@ def _get_json(url: str, auth: str, *, timeout: float = 60.0) -> dict:
 
 
 def _resolve_credentials(email: str | None, token: str | None) -> tuple[str, str]:
-    email = email or os.environ.get("CONFLUENCE_EMAIL")
-    token = token or os.environ.get("CONFLUENCE_TOKEN")
+    stored = credentials.get("confluence")
+    email = email or os.environ.get("CONFLUENCE_EMAIL") or stored.get("email")
+    token = token or os.environ.get("CONFLUENCE_TOKEN") or stored.get("token")
     if not email or not token:
         raise ConfluenceError(
-            "Confluence credentials missing: pass email + token or set "
-            "CONFLUENCE_EMAIL / CONFLUENCE_TOKEN"
+            "Confluence credentials missing: connect the site (base URL + email + API "
+            "token) or set CONFLUENCE_EMAIL / CONFLUENCE_TOKEN"
         )
     return email, token
+
+
+def whoami(
+    base_url: str,
+    email: str,
+    token: str,
+    *,
+    api_path: str = "/wiki/rest/api/user/current",
+    timeout: float = 30.0,
+) -> str:
+    """Validate site credentials and return a display name."""
+    auth = base64.b64encode(f"{email}:{token}".encode()).decode()
+    base = base_url.rstrip("/")
+    payload = _get_json(f"{base}{api_path}", auth, timeout=timeout)
+    return str(
+        payload.get("displayName")
+        or payload.get("publicName")
+        or payload.get("email")
+        or email
+    )
 
 
 def sync_confluence(

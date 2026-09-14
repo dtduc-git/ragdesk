@@ -19,7 +19,10 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 @pytest.fixture()
-def base_url(tmp_path: Path):
+def base_url(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr("ragdesk.serve.token_source", lambda: None)
+    monkeypatch.setattr("ragdesk.serve.load_token_file", lambda: {})
     db = tmp_path / "index.db"
     embedder = HashingEmbedder()
     with Store(db) as store:
@@ -94,6 +97,61 @@ def test_ask_grounding_gate_skips_llm(base_url: str):
     assert status == 200
     assert payload["refused"] is True
     assert payload["hits"]
+
+
+def test_connections_empty(base_url: str):
+    status, payload = request(f"{base_url}/api/connections")
+    assert status == 200
+    assert payload["github"]["connected"] is False
+    assert payload["confluence"]["connected"] is False
+    assert payload["gdrive"]["connected"] is False
+
+
+def test_connect_github_with_token(base_url: str, monkeypatch):
+    monkeypatch.setattr("ragdesk.serve.github_whoami", lambda token: "duke")
+    status, payload = request(f"{base_url}/api/connections/github", {"token": "tok"})
+    assert status == 200
+    assert payload["login"] == "duke"
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["github"]["connected"] is True
+    assert connections["github"]["login"] == "duke"
+
+
+def test_connect_github_gh_missing(base_url: str, monkeypatch):
+    monkeypatch.setattr("ragdesk.serve._token_from_gh", lambda: None)
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/connections/github/gh", {})
+    assert excinfo.value.code == 400
+
+
+def test_connect_confluence_and_disconnect(base_url: str, monkeypatch):
+    monkeypatch.setattr("ragdesk.serve.confluence_whoami", lambda *a, **k: "Duke Dinh")
+    status, payload = request(
+        f"{base_url}/api/connections/confluence",
+        {"base_url": "https://x.atlassian.net", "email": "a@b.c", "token": "t"},
+    )
+    assert status == 200
+    assert payload["display_name"] == "Duke Dinh"
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["confluence"]["connected"] is True
+    assert connections["confluence"]["base_url"] == "https://x.atlassian.net"
+
+    status, payload = request(f"{base_url}/api/connections/confluence/disconnect", {})
+    assert payload["connected"] is False
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["confluence"]["connected"] is False
+
+
+def test_connect_confluence_requires_all_fields(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/connections/confluence", {"base_url": "https://x"})
+    assert excinfo.value.code == 400
+
+
+def test_connect_gdrive_requires_client_id(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/connections/gdrive", {})
+    assert excinfo.value.code == 400
 
 
 def test_ask_llm_unavailable_surfaces_503(base_url: str):

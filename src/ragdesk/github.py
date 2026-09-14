@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from ragdesk import credentials
 from ragdesk.embed import Embedder
 from ragdesk.index import IndexStats, index_document, is_indexable
 from ragdesk.store import Store
@@ -36,13 +37,45 @@ class GitHubError(RuntimeError):
 # --- token resolution ---------------------------------------------------------
 
 
-def resolve_token(explicit: str | None = None) -> str | None:
+def token_source(explicit: str | None = None) -> tuple[str, str] | None:
+    """Return ``(source, token)`` for the first available credential."""
     if explicit:
-        return explicit
+        return ("explicit", explicit)
     env = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if env:
-        return env
-    return _token_from_gh()
+        return ("env", env)
+    stored = credentials.get("github").get("token")
+    if stored:
+        return ("credentials", str(stored))
+    token = _token_from_gh()
+    if token:
+        return ("gh", token)
+    return None
+
+
+def resolve_token(explicit: str | None = None) -> str | None:
+    found = token_source(explicit)
+    return found[1] if found else None
+
+
+def whoami(token: str, *, timeout: float = 30.0) -> str:
+    """Validate a token against the API and return the login name."""
+    request = urllib.request.Request(
+        f"{API}/user",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": USER_AGENT,
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise GitHubError(f"GitHub rejected the token (HTTP {exc.code})") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise GitHubError(f"cannot reach GitHub: {exc}") from exc
+    return str(payload.get("login", ""))
 
 
 def _token_from_gh() -> str | None:

@@ -22,6 +22,7 @@ from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from ragdesk import credentials
 from ragdesk.embed import Embedder
 from ragdesk.index import IndexStats, index_document
 from ragdesk.store import Store
@@ -257,6 +258,14 @@ def _fetch_text(file: dict, access_token: str) -> str | None:
     return None
 
 
+def whoami(access_token: str, *, timeout: float = 30.0) -> str:
+    """Return the connected account's email address."""
+    payload = _get_json(
+        f"{DRIVE_API}/about?fields=user/emailAddress", access_token, timeout=timeout
+    )
+    return str((payload.get("user") or {}).get("emailAddress", ""))
+
+
 def resolve_access_token(
     client_id: str = "",
     client_secret: str = "",
@@ -292,8 +301,15 @@ def sync_gdrive(
     interactive: bool = True,
 ) -> IndexStats:
     """Index Google Docs/Sheets/Slides + text files from Drive (reads only)."""
-    client_id = client_id or os.environ.get("GDRIVE_CLIENT_ID", "")
-    client_secret = client_secret or os.environ.get("GDRIVE_CLIENT_SECRET", "")
+    stored = credentials.get("gdrive")
+    client_id = (
+        client_id or os.environ.get("GDRIVE_CLIENT_ID", "") or str(stored.get("client_id", ""))
+    )
+    client_secret = (
+        client_secret
+        or os.environ.get("GDRIVE_CLIENT_SECRET", "")
+        or str(stored.get("client_secret", ""))
+    )
     token = resolve_access_token(
         client_id,
         client_secret,

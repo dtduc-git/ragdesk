@@ -97,6 +97,7 @@ def test_sync_confluence_paginates_and_indexes(store: Store, monkeypatch):
 def test_sync_confluence_requires_credentials(store: Store, monkeypatch):
     monkeypatch.delenv("CONFLUENCE_EMAIL", raising=False)
     monkeypatch.delenv("CONFLUENCE_TOKEN", raising=False)
+    monkeypatch.setattr("ragdesk.confluence.credentials.get", lambda provider: {})
     with pytest.raises(ConfluenceError):
         sync_confluence(
             store,
@@ -104,6 +105,25 @@ def test_sync_confluence_requires_credentials(store: Store, monkeypatch):
             base_url="https://team.atlassian.net",
             space="DOCS",
         )
+
+
+def test_sync_confluence_uses_stored_credentials(store: Store, monkeypatch):
+    monkeypatch.delenv("CONFLUENCE_EMAIL", raising=False)
+    monkeypatch.delenv("CONFLUENCE_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "ragdesk.confluence.credentials.get",
+        lambda provider: {"email": "a@b.c", "token": "tok"},
+    )
+    monkeypatch.setattr(
+        "ragdesk.confluence._get_json", lambda *a, **k: {"results": [], "_links": {}}
+    )
+    stats = sync_confluence(
+        store,
+        HashingEmbedder(),
+        base_url="https://team.atlassian.net",
+        space="DOCS",
+    )
+    assert stats.files_scanned == 0
 
 
 def test_sync_confluence_rejects_bad_space(store: Store):
