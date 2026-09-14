@@ -45,6 +45,9 @@ fn spawn_server() -> Option<Child> {
     base.push("serve".to_string());
     base.push("--port".to_string());
     base.push(PORT.to_string());
+    // The server exits on its own if this process dies (e.g. SIGTERM quit),
+    // so a stale server never keeps the port from the next launch.
+    base.push("--watch-parent".to_string());
     // Optional override for machines where the preset model is not pulled yet.
     if let Ok(model) = std::env::var("RAGDESK_LLM_MODEL") {
         base.push("--llm-model".to_string());

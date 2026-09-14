@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 from ragdesk import __version__
@@ -148,6 +151,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--llm-model", default=None, help="LLM model (default: from preset)")
     p_serve.add_argument("--llm-host", default=DEFAULT_HOST)
     p_serve.add_argument("--ui", default="", help="serve a built UI directory (browser mode)")
+    p_serve.add_argument(
+        "--watch-parent",
+        action="store_true",
+        help="exit when the parent process dies (the desktop app passes this)",
+    )
     return parser
 
 
@@ -190,6 +198,15 @@ def main(argv: list[str] | None = None) -> int:
         server = make_server(state, port=args.port)
         host, port = server.server_address[:2]
         print(f"ragdesk serving on http://{host}:{port} (Ctrl-C to stop)")
+        if args.watch_parent:
+            parent = os.getppid()
+
+            def watch_parent() -> None:
+                while os.getppid() == parent:
+                    time.sleep(3)
+                os._exit(0)
+
+            threading.Thread(target=watch_parent, daemon=True).start()
         try:
             server.serve_forever()
         except KeyboardInterrupt:
