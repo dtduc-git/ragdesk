@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ragdesk import __version__
 from ragdesk.answer import DEFAULT_LLM_MODEL, answer
+from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import DEFAULT_OLLAMA_MODEL, get_embedder
 from ragdesk.evaluate import evaluate, format_report, load_golden
 from ragdesk.github import GitHubError, sync_github
@@ -79,6 +80,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gh.add_argument("--subdir", default="", help="index only a subtree")
     p_gh.add_argument(
         "--token", default=None, help="GitHub token (default: GITHUB_TOKEN env or gh auth token)"
+    )
+
+    p_cf = sub.add_parser("confluence", help="index a Confluence space (read-only)")
+    p_cf.add_argument("space", help="space key, e.g. DOCS")
+    p_cf.add_argument("--base-url", required=True, help="e.g. https://team.atlassian.net")
+    p_cf.add_argument("--email", default=None, help="default: CONFLUENCE_EMAIL env")
+    p_cf.add_argument("--token", default=None, help="default: CONFLUENCE_TOKEN env")
+    p_cf.add_argument(
+        "--api-path", default="/wiki/rest/api/content/search", help="REST path (Server/DC differs)"
     )
 
     p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
@@ -155,6 +165,26 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"scanned={stats.files_scanned} indexed={stats.indexed} "
                 f"unchanged={stats.unchanged} chunks={stats.chunks}"
+            )
+            return 0
+
+        if args.command == "confluence":
+            try:
+                stats = sync_confluence(
+                    store,
+                    embedder,
+                    base_url=args.base_url,
+                    space=args.space,
+                    email=args.email,
+                    token=args.token,
+                    api_path=args.api_path,
+                )
+            except ConfluenceError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            print(
+                f"scanned={stats.files_scanned} indexed={stats.indexed} "
+                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
             )
             return 0
 
