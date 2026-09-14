@@ -79,6 +79,27 @@ OAuth apps and their caveats — live in **[docs/sources.md](docs/sources.md)**.
 The same UI also runs in a browser for development:
 `uv run ragdesk serve --ui desktop/dist`.
 
+## Use the index from Claude Code / Cursor (MCP)
+
+`ragdesk mcp` runs a dependency-free MCP server over stdio, so any MCP client
+can search your local index:
+
+```json
+{
+  "mcpServers": {
+    "ragdesk": {
+      "command": "ragdesk",
+      "args": ["--embedder", "onnx", "--db", "/Users/you/.ragdesk/index.db", "mcp"]
+    }
+  }
+}
+```
+
+Tools: `ragdesk_search` (hybrid retrieval with paths and scores),
+`ragdesk_document` (full text of one indexed document), `ragdesk_sources`
+(per-source document/chunk counts). Pass the same `--embedder` you indexed
+with — the index refuses mismatched embeddings.
+
 ## What works today (honest list)
 
 | Works | Not yet |

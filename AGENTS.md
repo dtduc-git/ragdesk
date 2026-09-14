@@ -17,7 +17,8 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   `evaluate` (recall@5 / nDCG@10 / MRR), `answer` (Ollama LLM: non-stream +
   stream, grounding gate), `credentials` (0600 store under `~/.config/ragdesk/`),
   `envfile` (.env loader for dev), `buildenv` (bakes .env into a gitignored
-  `_build_env.py` for release builds), `serve` (loopback JSON API:
+  `_build_env.py` for release builds), `mcp` (stdio MCP server exposing
+  search/document/sources to Claude Code & co), `serve` (loopback JSON API:
   status/search/ask/index/sync + connections connect/disconnect + optional
   static UI), `presets` (RAM tiers), `cli`.
 - `desktop/` — Tauri 2 shell (card-catalog UI). Rust spawns `ragdesk serve`

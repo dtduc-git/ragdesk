@@ -17,6 +17,7 @@ from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
 from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.index import index_paths
+from ragdesk.mcp import McpServer
 from ragdesk.notion import NotionError, sync_notion
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
 from ragdesk.presets import DEFAULT_PRESET, PRESETS
@@ -133,6 +134,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_web.add_argument("--max-pages", type=int, default=50)
     p_web.add_argument("--depth", type=int, default=2)
 
+    sub.add_parser("mcp", help="run the MCP server over stdio (for Claude Code / Cursor)")
+
     p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
     p_serve.add_argument("--port", type=int, default=8765)
     p_serve.add_argument("--llm-model", default=None, help="LLM model (default: from preset)")
@@ -163,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+    if args.command == "mcp":
+        return McpServer(db=args.db, embedder=embedder, reranker=reranker).serve()
 
     if args.command == "serve":
         state = AppState(

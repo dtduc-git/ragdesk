@@ -157,6 +157,16 @@ class Store:
         chunks = self.conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"]
         return {"documents": docs, "chunks": chunks}
 
+    def document_text(self, path: str) -> str | None:
+        rows = self.conn.execute(
+            "SELECT c.text FROM chunks c JOIN documents d ON d.id = c.doc_id "
+            "WHERE d.path = ? ORDER BY c.ordinal",
+            (path,),
+        ).fetchall()
+        if not rows:
+            return None
+        return "\n\n".join(row["text"] for row in rows)
+
     def sources(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT d.source AS source, COUNT(DISTINCT d.id) AS documents, "
