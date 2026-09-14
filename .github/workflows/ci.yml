@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --all-groups
+      - run: uv run ruff check .
+      - run: uv run pytest
+      - name: Retrieval eval (fixtures, offline embedder)
+        run: |
+          uv run ragdesk --embedder hash --db .ragdesk/eval.db index fixtures/docs
+          uv run ragdesk --embedder hash --db .ragdesk/eval.db eval \
+            --golden fixtures/golden.jsonl --min-recall 0.8

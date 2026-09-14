@@ -1,0 +1,64 @@
+[project]
+name = "ragdesk"
+dynamic = ["version"]
+description = "Personal, local-first RAG over your own sources. Desktop-lightweight, desktop-first, and it publishes its retrieval numbers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Duke - Duc Dinh", email = "dtduc.contact@gmail.com" }]
+keywords = [
+  "rag",
+  "retrieval",
+  "local-first",
+  "desktop",
+  "sqlite",
+  "fts5",
+  "hybrid-search",
+  "eval",
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Text Processing :: Indexing",
+]
+dependencies = []
+
+[project.scripts]
+ragdesk = "ragdesk.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/dtduc-git/ragdesk"
+Issues = "https://github.com/dtduc-git/ragdesk/issues"
+Changelog = "https://github.com/dtduc-git/ragdesk/releases"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/ragdesk/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ragdesk"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.5",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

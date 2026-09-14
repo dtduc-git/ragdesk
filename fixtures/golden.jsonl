@@ -1,0 +1,7 @@
+{"query": "how do access tokens expire", "relevant": ["fixtures/docs/auth.md"]}
+{"query": "PKCE authorization flow for desktop apps", "relevant": ["fixtures/docs/auth.md"]}
+{"query": "what does 401 invalid_token mean and refresh token", "relevant": ["fixtures/docs/auth.md"]}
+{"query": "how to rollback a bad deploy", "relevant": ["fixtures/docs/deploy.md"]}
+{"query": "canary release terraform helm blue-green", "relevant": ["fixtures/docs/deploy.md"]}
+{"query": "who to escalate an incident to and paging", "relevant": ["fixtures/docs/oncall.md"]}
+{"query": "SEV1 severity and postmortem requirements", "relevant": ["fixtures/docs/oncall.md"]}
