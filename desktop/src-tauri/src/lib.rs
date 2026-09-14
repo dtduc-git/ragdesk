@@ -1,14 +1,69 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+// Prevents additional console window on Windows in release, DO NOT REMOVE!!
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::process::{Child, Command};
+use std::sync::Mutex;
+
+/// The Python `ragdesk serve` child process, killed when the app exits.
+struct ServerChild(Mutex<Option<Child>>);
+
+fn spawn_server() -> Option<Child> {
+    let mut base: Vec<String> = ["serve", "--port", "8765"].iter().map(|s| s.to_string()).collect();
+    // Optional override for machines where the preset model is not pulled yet.
+    if let Ok(model) = std::env::var("RAGDESK_LLM_MODEL") {
+        base.push("--llm-model".to_string());
+        base.push(model);
+    }
+    let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
+
+    if let Ok(bin) = std::env::var("RAGDESK_BIN") {
+        candidates.push((bin, base.clone()));
+    }
+    candidates.push(("ragdesk".to_string(), base.clone()));
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push((format!("{home}/.local/bin/ragdesk"), base.clone()));
+    }
+    // Dev mode: run the checkout via uv (cwd is desktop/ during `tauri dev`).
+    let project = std::env::var("RAGDESK_PROJECT").unwrap_or_else(|_| "..".to_string());
+    candidates.push((
+        "uv".to_string(),
+        std::iter::once("run".to_string())
+            .chain(std::iter::once("--project".to_string()))
+            .chain(std::iter::once(project))
+            .chain(std::iter::once("ragdesk".to_string()))
+            .chain(base.iter().cloned())
+            .collect(),
+    ));
+
+    for (program, program_args) in candidates {
+        match Command::new(&program).args(&program_args).spawn() {
+            Ok(child) => return Some(child),
+            Err(_) => continue,
+        }
+    }
+    None
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .setup(|app| {
+            use tauri::Manager;
+            let child = spawn_server();
+            app.manage(ServerChild(Mutex::new(child)));
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                if let Some(state) = app_handle.try_state::<ServerChild>() {
+                    if let Some(mut child) = state.0.lock().unwrap().take() {
+                        let _ = child.kill();
+                    }
+                }
+            }
+        });
 }
