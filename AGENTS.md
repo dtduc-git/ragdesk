@@ -11,7 +11,8 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   vectors + fail-closed embedder guard), `search` (BM25 + dense + RRF;
   `retrieve` adds the optional rerank stage), `rerank` (LexicalReranker
   baseline; FastEmbedReranker behind the `onnx` extra), `index` (incremental
-  local files), `github` / `confluence` / `gdrive` connectors, `evaluate`
+  local files),   `github` / `confluence` / `gdrive` connectors, `web` (same-host HTML crawl,
+  capped pages/depth), `evaluate`
   (recall@5 / nDCG@10 / MRR), `answer` (Ollama LLM: non-stream + stream,
   grounding gate), `credentials` (0600 store under `~/.config/ragdesk/`),
   `serve` (loopback JSON API: status/search/ask/index/sync + connections

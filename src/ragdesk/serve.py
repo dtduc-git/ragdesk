@@ -46,6 +46,7 @@ from ragdesk.ollama import OllamaUnavailable
 from ragdesk.rerank import get_reranker
 from ragdesk.search import Hit, retrieve
 from ragdesk.store import Store
+from ragdesk.web import WebError, crawl_site
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -226,6 +227,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_confluence(body)
             elif self.path == "/api/sync/gdrive":
                 self._handle_sync_gdrive(body)
+            elif self.path == "/api/sync/web":
+                self._handle_sync_web(body)
             elif self.path == "/api/search":
                 self._handle_search(body)
             elif self.path == "/api/ask":
@@ -236,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, {"error": f"not found: {self.path}"})
         except OllamaUnavailable as exc:
             self._send(503, {"error": str(exc)})
-        except (GitHubError, ConfluenceError, GdriveError) as exc:
+        except (GitHubError, ConfluenceError, GdriveError, WebError) as exc:
             self._send(502, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface errors to the UI
             self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
@@ -559,6 +562,37 @@ class Handler(BaseHTTPRequestHandler):
             200,
             {
                 "space": space,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_sync_web(self, body: dict[str, Any]) -> None:
+        url = str(body.get("url", "")).strip()
+        if not url:
+            self._send(400, {"error": "url required"})
+            return
+        try:
+            max_pages = int(body.get("max_pages") or 50)
+            max_depth = int(body.get("max_depth") or 2)
+        except (TypeError, ValueError):
+            self._send(400, {"error": "max_pages and max_depth must be numbers"})
+            return
+        with self.state.lock, Store(self.state.db) as store:
+            stats = crawl_site(
+                store,
+                self.state.embedder,
+                start_url=url,
+                max_pages=max_pages,
+                max_depth=max_depth,
+            )
+        self._send(
+            200,
+            {
+                "url": url,
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,

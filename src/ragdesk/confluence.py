@@ -12,7 +12,6 @@ Sync is full-fetch: content hashes make re-indexing a no-op for unchanged pages.
 from __future__ import annotations
 
 import base64
-import html
 import json
 import os
 import re
@@ -23,6 +22,7 @@ import urllib.request
 
 from ragdesk import credentials, defaults
 from ragdesk.embed import Embedder
+from ragdesk.htmlutil import html_to_text
 from ragdesk.index import IndexStats, index_document
 from ragdesk.oauth import new_state, pkce_pair, run_loopback
 from ragdesk.store import Store
@@ -37,34 +37,9 @@ CONFLUENCE_SCOPES = (
 )
 DEFAULT_OAUTH_PORT = 8788
 
-_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-_BLOCK_RE = re.compile(
-    r"</(?:p|div|li|tr|h[1-6]|table|ul|ol|blockquote|pre|code)>", re.IGNORECASE
-)
-_TAG_RE = re.compile(r"<[^>]+>")
-
 
 class ConfluenceError(RuntimeError):
     """Confluence API / auth failure."""
-
-
-def html_to_text(storage_html: str) -> str:
-    """Convert Confluence storage-format HTML to readable plain text."""
-    text = _BR_RE.sub("\n", storage_html)
-    text = _BLOCK_RE.sub("\n", text)
-    text = _TAG_RE.sub("", text)
-    text = html.unescape(text)
-    lines: list[str] = []
-    blank = False
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if line:
-            lines.append(line)
-            blank = False
-        elif not blank:
-            lines.append("")
-            blank = True
-    return "\n".join(lines).strip()
 
 
 # --- HTTP helpers ---------------------------------------------------------------

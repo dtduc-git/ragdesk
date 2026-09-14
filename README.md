@@ -81,7 +81,7 @@ The same UI also runs in a browser for development:
 | Works | Not yet |
 |---|---|
 | Desktop app (Tauri 2): chat, search, sources, settings, streaming answers | PyPI release (v0.1.0 pending) |
-| Indexing: local files (native picker), GitHub repos (device code / gh / token + tarball sync), Confluence spaces (connect + CQL), Google Drive (connect + doc export) | GitLab connector |
+| Indexing: local files (native picker), GitHub repos (device code / gh / token + tarball sync), Confluence spaces (connect + CQL), Google Drive (connect + doc export), website crawl (same-host, HTML) | GitLab connector |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Multilingual reranker (`bge-reranker-v2-m3` not in fastembed yet) |
 | Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Windows / Linux builds |
 | Grounded cited answers via local Ollama, grounding gate, token streaming | Eval badge automation per release |
@@ -123,8 +123,10 @@ uv run ragdesk --embedder onnx --db /tmp/eval.db --rerank lexical eval --golden 
 1. Release v0.1.0: PyPI (trusted publishing) + desktop DMG on GitHub Releases
 2. Eval badge automation per release
 3. Multilingual reranker backend (`bge-reranker-v2-m3` / `gte-multilingual-reranker-base`)
-4. Windows / Linux builds
-5. MCP-server expansion path for connectors
+4. More sources, following the Bedrock Knowledge Base connector set as a reference:
+   S3 (bucket/prefix), SharePoint / OneDrive (Microsoft Graph), Notion
+5. Windows / Linux builds
+6. MCP-server expansion path for connectors
 
 ## Non-goals
 

@@ -22,6 +22,7 @@ from ragdesk.rerank import get_reranker
 from ragdesk.search import retrieve
 from ragdesk.serve import AppState, make_server
 from ragdesk.store import Store
+from ragdesk.web import WebError, crawl_site
 
 DEFAULT_DB = ".ragdesk/index.db"
 
@@ -107,6 +108,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gd.add_argument(
         "--no-browser", action="store_true", help="do not run the interactive OAuth flow"
     )
+
+    p_web = sub.add_parser("web", help="crawl a docs site and index it (read-only)")
+    p_web.add_argument("url", help="start URL, e.g. https://docs.example.com/")
+    p_web.add_argument("--max-pages", type=int, default=50)
+    p_web.add_argument("--depth", type=int, default=2)
 
     p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
     p_serve.add_argument("--port", type=int, default=8765)
@@ -225,6 +231,24 @@ def main(argv: list[str] | None = None) -> int:
                     interactive=not args.no_browser,
                 )
             except GdriveError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            print(
+                f"scanned={stats.files_scanned} indexed={stats.indexed} "
+                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
+            )
+            return 0
+
+        if args.command == "web":
+            try:
+                stats = crawl_site(
+                    store,
+                    embedder,
+                    start_url=args.url,
+                    max_pages=args.max_pages,
+                    max_depth=args.depth,
+                )
+            except WebError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             print(

@@ -250,6 +250,32 @@ def test_connect_gdrive_requires_client_id(base_url: str):
     assert excinfo.value.code == 400
 
 
+def test_sync_web_endpoint(base_url: str, monkeypatch):
+    from ragdesk.index import IndexStats
+
+    captured: dict = {}
+
+    def fake_crawl(store, embedder, **kwargs):
+        captured.update(kwargs)
+        return IndexStats(files_scanned=2, indexed=2, chunks=5)
+
+    monkeypatch.setattr("ragdesk.serve.crawl_site", fake_crawl)
+    status, payload = request(
+        f"{base_url}/api/sync/web",
+        {"url": "https://docs.example.com/", "max_pages": 10, "max_depth": 1},
+    )
+    assert status == 200
+    assert payload["indexed"] == 2
+    assert captured["max_pages"] == 10
+    assert captured["max_depth"] == 1
+
+
+def test_sync_web_requires_url(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/sync/web", {})
+    assert excinfo.value.code == 400
+
+
 def test_ask_llm_unavailable_surfaces_503(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/ask", {"query": "access tokens"})

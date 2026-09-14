@@ -691,6 +691,22 @@ function gdriveCard(conn: Connections["gdrive"]): string {
   </div>`;
 }
 
+function webCard(): string {
+  return `<div class="source-card">
+    <h3>Website</h3>
+    <p class="source-note">Crawl a docs site: same host, HTML only, capped pages. Read-only.</p>
+    <form data-form="web-sync" class="stack">
+      <input name="url" placeholder="https://docs.example.com/start" required />
+      <div class="field-row">
+        <input name="max_pages" type="number" min="1" max="500" placeholder="max pages (50)" />
+        <input name="max_depth" type="number" min="0" max="5" placeholder="depth (2)" />
+      </div>
+      <button class="btn btn-primary" type="submit">Crawl site</button>
+    </form>
+    <p class="source-result" data-result="web"></p>
+  </div>`;
+}
+
 function renderSources(): void {
   const github = connections?.github ?? {
     connected: false,
@@ -712,7 +728,11 @@ function renderSources(): void {
   };
   const gdrive = connections?.gdrive ?? { connected: false, email: "", oauth_ready: false };
   $("source-grid").innerHTML =
-    localCard() + githubCard(github) + confluenceCard(confluence) + gdriveCard(gdrive);
+    localCard() +
+    githubCard(github) +
+    confluenceCard(confluence) +
+    gdriveCard(gdrive) +
+    webCard();
   for (const [kind, message] of Object.entries(sourceResults)) {
     const element = document.querySelector<HTMLElement>(`[data-result="${kind}"]`);
     if (element) element.textContent = message;
@@ -773,6 +793,7 @@ $("source-grid").addEventListener("submit", async (event) => {
       "confluence-sync": "/api/sync/confluence",
       "gdrive-connect": "/api/connections/gdrive",
       "gdrive-sync": "/api/sync/gdrive",
+      "web-sync": "/api/sync/web",
     };
     const endpoint = endpoints[kind];
     if (!endpoint) return;
