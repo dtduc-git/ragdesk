@@ -196,4 +196,5 @@ JavaScript rendering.
 | GitLab `401/403` | The token is missing the `read_api` scope, or it expired. |
 | Microsoft: *"AADSTS7000218: … public client flows"* | Enable **Allow public client flows** in the app registration (Authentication). |
 | Microsoft: consent screen says *need admin approval* | Your tenant blocks user consent; an admin must approve the app (or use a personal account). |
+| Something shows *"local server is not reachable"* | The Python server restarted; the app relaunches it within ~3 s, retry. If it repeats, check `~/.ragdesk/serve.log`. |
 | `not HTML (...)` during crawl | The link points at a binary/JS-only asset; those are skipped by design. |

@@ -47,26 +47,43 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => replacements[character] ?? character);
 }
 
-async function get<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`);
-  const data: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error((data as { error?: string }).error ?? `HTTP ${response.status}`);
+function explainFetch(error: unknown): Error {
+  if (error instanceof TypeError) {
+    return new Error(
+      "ragdesk's local server is not reachable right now — the app restarts it within a few seconds, retry",
+    );
   }
-  return data as T;
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+async function get<T>(path: string): Promise<T> {
+  try {
+    const response = await fetch(`${API}${path}`);
+    const data: unknown = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error((data as { error?: string }).error ?? `HTTP ${response.status}`);
+    }
+    return data as T;
+  } catch (error) {
+    throw explainFetch(error);
+  }
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error((data as { error?: string }).error ?? `HTTP ${response.status}`);
+  try {
+    const response = await fetch(`${API}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data: unknown = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error((data as { error?: string }).error ?? `HTTP ${response.status}`);
+    }
+    return data as T;
+  } catch (error) {
+    throw explainFetch(error);
   }
-  return data as T;
 }
 
 // --- theme --------------------------------------------------------------------

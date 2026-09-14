@@ -24,7 +24,9 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   status/search/ask/index/sync + connections connect/disconnect + optional
   static UI), `presets` (RAM tiers), `cli`.
 - `desktop/` — Tauri 2 shell (card-catalog UI). Rust spawns `ragdesk serve`
-  with `--db $HOME/.ragdesk/index.db`; env overrides: `RAGDESK_BIN`,
+  with `--db $HOME/.ragdesk/index.db`; a watchdog thread respawns it if it
+  dies (skipping the respawn when another instance owns the port) and the
+  child's output goes to `~/.ragdesk/serve.log`; env overrides: `RAGDESK_BIN`,
   `RAGDESK_DB`, `RAGDESK_LLM_MODEL`, `RAGDESK_PROJECT`. Browser mode:
   `ragdesk serve --ui desktop/dist`.
 - Connections: GitHub has three paths (device code with `RAGDESK_GITHUB_CLIENT_ID`

@@ -1,11 +1,37 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::process::{Child, Command};
-use std::sync::Mutex;
+use std::fs::OpenOptions;
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+const PORT: u16 = 8765;
 
 /// The Python `ragdesk serve` child process, killed when the app exits.
-struct ServerChild(Mutex<Option<Child>>);
+struct ServerChild(Arc<Mutex<Option<Child>>>);
+
+fn port_open() -> bool {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, PORT));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+/// Append the child's output to ~/.ragdesk/serve.log so crashes leave a trace.
+fn server_log() -> Stdio {
+    let Ok(home) = std::env::var("HOME") else {
+        return Stdio::null();
+    };
+    let dir = format!("{home}/.ragdesk");
+    let _ = std::fs::create_dir_all(&dir);
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{dir}/serve.log"))
+        .map(Stdio::from)
+        .unwrap_or_else(|_| Stdio::null())
+}
 
 fn spawn_server() -> Option<Child> {
     // Global flags first, then the subcommand: `ragdesk --db <path> serve ...`
@@ -18,7 +44,7 @@ fn spawn_server() -> Option<Child> {
     }
     base.push("serve".to_string());
     base.push("--port".to_string());
-    base.push("8765".to_string());
+    base.push(PORT.to_string());
     // Optional override for machines where the preset model is not pulled yet.
     if let Ok(model) = std::env::var("RAGDESK_LLM_MODEL") {
         base.push("--llm-model".to_string());
@@ -46,7 +72,12 @@ fn spawn_server() -> Option<Child> {
     ));
 
     for (program, program_args) in candidates {
-        match Command::new(&program).args(&program_args).spawn() {
+        match Command::new(&program)
+            .args(&program_args)
+            .stdout(server_log())
+            .stderr(server_log())
+            .spawn()
+        {
             Ok(child) => return Some(child),
             Err(_) => continue,
         }
@@ -61,8 +92,28 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::Manager;
-            let child = spawn_server();
-            app.manage(ServerChild(Mutex::new(child)));
+            let shared = Arc::new(Mutex::new(spawn_server()));
+            app.manage(ServerChild(shared.clone()));
+            // Watchdog: if the Python server dies, bring it back (unless another
+            // instance already owns the port), so the UI never talks to a corpse.
+            thread::spawn(move || loop {
+                thread::sleep(Duration::from_secs(3));
+                let exited = {
+                    let Ok(mut guard) = shared.lock() else {
+                        break;
+                    };
+                    match guard.as_mut() {
+                        None => break,
+                        Some(child) => child.try_wait().ok().flatten().is_some(),
+                    }
+                };
+                if exited && !port_open() {
+                    let fresh = spawn_server();
+                    if let Ok(mut guard) = shared.lock() {
+                        *guard = fresh;
+                    }
+                }
+            });
             Ok(())
         })
         .build(tauri::generate_context!())
