@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,7 +17,13 @@ from typing import Any
 
 from ragdesk import __version__, credentials
 from ragdesk.answer import REFUSAL, answer, answer_stream
-from ragdesk.confluence import ConfluenceError, sync_confluence
+from ragdesk.confluence import (
+    ConfluenceError,
+    connect_oauth,
+    oauth_ready,
+    resolve_oauth_credentials,
+    sync_confluence,
+)
 from ragdesk.confluence import whoami as confluence_whoami
 from ragdesk.embed import Embedder
 from ragdesk.gdrive import TOKEN_FILE as GDRIVE_TOKEN_FILE
@@ -204,6 +211,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_github_device_poll()
             elif self.path == "/api/connections/confluence":
                 self._handle_connect_confluence(body)
+            elif self.path == "/api/connections/confluence/oauth":
+                self._handle_connect_confluence_oauth(body)
             elif self.path == "/api/connections/gdrive":
                 self._handle_connect_gdrive(body)
             elif self.path.endswith("/disconnect") and self.path.startswith(
@@ -291,6 +300,17 @@ class Handler(BaseHTTPRequestHandler):
         confluence_env = bool(
             os.environ.get("CONFLUENCE_EMAIL") and os.environ.get("CONFLUENCE_TOKEN")
         )
+        confluence_oauth = bool(
+            confluence_entry.get("cloud_id") and confluence_entry.get("refresh_token")
+        )
+        if confluence_oauth:
+            confluence_source = "oauth"
+        elif confluence_store:
+            confluence_source = "credentials"
+        elif confluence_env:
+            confluence_source = "env"
+        else:
+            confluence_source = None
         gdrive_payload = load_token_file()
         return {
             "github": {
@@ -301,13 +321,15 @@ class Handler(BaseHTTPRequestHandler):
                 "device_flow_ready": resolve_client_id() is not None,
             },
             "confluence": {
-                "connected": confluence_store or confluence_env,
-                "source": (
-                    "credentials" if confluence_store else ("env" if confluence_env else None)
-                ),
+                "connected": confluence_oauth or confluence_store or confluence_env,
+                "source": confluence_source,
                 "base_url": confluence_entry.get("base_url", ""),
                 "email": confluence_entry.get("email", ""),
                 "display_name": confluence_entry.get("display_name", ""),
+                "oauth_ready": oauth_ready(),
+                "oauth_connected": confluence_oauth,
+                "site_name": confluence_entry.get("site_name", ""),
+                "site_url": confluence_entry.get("site_url", ""),
             },
             "gdrive": {
                 "connected": bool(gdrive_payload.get("refresh_token")),
@@ -414,6 +436,51 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._send(200, {"connected": True, "display_name": display_name})
 
+    def _handle_connect_confluence_oauth(self, body: dict[str, Any]) -> None:
+        entry = credentials.get("confluence")
+        client_id = (
+            str(body.get("client_id", "")).strip()
+            or str(entry.get("client_id", ""))
+            or os.environ.get("RAGDESK_ATLASSIAN_CLIENT_ID", "")
+        )
+        client_secret = (
+            str(body.get("client_secret", "")).strip()
+            or str(entry.get("client_secret", ""))
+            or os.environ.get("RAGDESK_ATLASSIAN_CLIENT_SECRET", "")
+        )
+        if not (client_id and client_secret):
+            self._send(
+                400,
+                {
+                    "error": "an Atlassian OAuth app client ID and secret are required "
+                    "(save them here once, or set RAGDESK_ATLASSIAN_CLIENT_ID/SECRET)"
+                },
+            )
+            return
+        timeout = float(body.get("timeout", 300) or 300)
+        session = connect_oauth(client_id, client_secret, timeout=timeout)
+        credentials.set_provider(
+            "confluence",
+            {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "cloud_id": session["cloud_id"],
+                "site_url": session["site_url"],
+                "site_name": session["site_name"],
+                "access_token": session["access_token"],
+                "refresh_token": session["refresh_token"],
+                "expires_at": time.time() + int(session["expires_in"]),
+            },
+        )
+        self._send(
+            200,
+            {
+                "connected": True,
+                "display_name": session["site_name"] or session["site_url"],
+                "base_url": session["site_url"],
+            },
+        )
+
     def _handle_connect_gdrive(self, body: dict[str, Any]) -> None:
         stored = credentials.get("gdrive")
         client_id = str(body.get("client_id", "")).strip() or str(
@@ -450,22 +517,45 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"connected": False})
 
     def _handle_sync_confluence(self, body: dict[str, Any]) -> None:
-        base_url = str(body.get("base_url", "")).strip() or str(
-            credentials.get("confluence").get("base_url", "")
-        )
         space = str(body.get("space", "")).strip()
-        if not base_url or not space:
-            self._send(400, {"error": "base_url and space required"})
+        if not space:
+            self._send(400, {"error": "space required"})
             return
+        oauth = resolve_oauth_credentials()
         with self.state.lock, Store(self.state.db) as store:
-            stats = sync_confluence(
-                store,
-                self.state.embedder,
-                base_url=base_url,
-                space=space,
-                email=body.get("email"),
-                token=body.get("token"),
-            )
+            if oauth:
+                api_base, bearer = oauth
+                entry = credentials.get("confluence")
+                label_host = urllib.parse.urlparse(str(entry.get("site_url", ""))).netloc
+                stats = sync_confluence(
+                    store,
+                    self.state.embedder,
+                    space=space,
+                    api_base=api_base,
+                    bearer=bearer,
+                    label_host=label_host,
+                )
+            else:
+                base_url = str(body.get("base_url", "")).strip() or str(
+                    credentials.get("confluence").get("base_url", "")
+                )
+                if not base_url:
+                    self._send(
+                        400,
+                        {
+                            "error": "no Confluence connection: connect with Atlassian "
+                            "OAuth, or provide a site URL + API token"
+                        },
+                    )
+                    return
+                stats = sync_confluence(
+                    store,
+                    self.state.embedder,
+                    base_url=base_url,
+                    space=space,
+                    email=body.get("email"),
+                    token=body.get("token"),
+                )
         self._send(
             200,
             {

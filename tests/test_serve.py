@@ -193,6 +193,54 @@ def test_connect_confluence_requires_all_fields(base_url: str):
     assert excinfo.value.code == 400
 
 
+def test_connect_confluence_oauth_and_sync(base_url: str, monkeypatch):
+    monkeypatch.setattr(
+        "ragdesk.serve.connect_oauth",
+        lambda client_id, client_secret, timeout=300.0: {
+            "cloud_id": "cloud-1",
+            "site_url": "https://team.atlassian.net",
+            "site_name": "Team",
+            "access_token": "at",
+            "refresh_token": "rt",
+            "expires_in": 3600,
+        },
+    )
+    status, payload = request(
+        f"{base_url}/api/connections/confluence/oauth",
+        {"client_id": "cid", "client_secret": "sec"},
+    )
+    assert status == 200
+    assert payload["display_name"] == "Team"
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["confluence"]["connected"] is True
+    assert connections["confluence"]["source"] == "oauth"
+    assert connections["confluence"]["oauth_connected"] is True
+
+    captured: dict = {}
+
+    def fake_sync(store, embedder, **kwargs):
+        from ragdesk.index import IndexStats
+
+        captured.update(kwargs)
+        return IndexStats()
+
+    monkeypatch.setattr("ragdesk.serve.sync_confluence", fake_sync)
+    monkeypatch.setattr(
+        "ragdesk.serve.resolve_oauth_credentials",
+        lambda: ("https://api.atlassian.com/ex/confluence/cloud-1", "fresh"),
+    )
+    status, payload = request(f"{base_url}/api/sync/confluence", {"space": "DOCS"})
+    assert status == 200
+    assert captured["api_base"].endswith("cloud-1")
+    assert captured["bearer"] == "fresh"
+
+
+def test_connect_confluence_oauth_requires_client(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/connections/confluence/oauth", {})
+    assert excinfo.value.code == 400
+
+
 def test_connect_gdrive_requires_client_id(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/connections/gdrive", {})

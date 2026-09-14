@@ -6,7 +6,10 @@ import pytest
 
 from ragdesk.confluence import (
     ConfluenceError,
+    connect_oauth,
     html_to_text,
+    oauth_authorize_url,
+    resolve_oauth_credentials,
     sync_confluence,
 )
 from ragdesk.embed import HashingEmbedder
@@ -136,3 +139,80 @@ def test_sync_confluence_rejects_bad_space(store: Store):
             email="a@b.c",
             token="tok",
         )
+
+
+def test_oauth_authorize_url():
+    url = oauth_authorize_url("cid", "http://127.0.0.1:8788/callback", "st", "ch")
+    assert url.startswith("https://auth.atlassian.com/authorize?")
+    assert "audience=api.atlassian.com" in url
+    assert "code_challenge_method=S256" in url
+    assert "offline_access" in url
+
+
+def test_connect_oauth_flow(monkeypatch):
+    monkeypatch.setattr("ragdesk.confluence.new_state", lambda: "STATE")
+    monkeypatch.setattr("ragdesk.confluence.pkce_pair", lambda: ("ver", "chal"))
+
+    def fake_loopback(build_url, port=0, timeout=300.0):
+        build_url(8788)  # exercises the redirect-URI builder
+        return {"code": "c1", "state": "STATE"}
+
+    monkeypatch.setattr("ragdesk.confluence.run_loopback", fake_loopback)
+    monkeypatch.setattr(
+        "ragdesk.confluence.exchange_oauth_code",
+        lambda *a, **k: {"access_token": "at", "refresh_token": "rt", "expires_in": 3600},
+    )
+    monkeypatch.setattr(
+        "ragdesk.confluence.accessible_resources",
+        lambda access: [
+            {"id": "cloud-1", "url": "https://team.atlassian.net", "name": "Team"}
+        ],
+    )
+    session = connect_oauth("cid", "secret", timeout=1)
+    assert session["cloud_id"] == "cloud-1"
+    assert session["site_name"] == "Team"
+    assert session["access_token"] == "at"
+    assert session["refresh_token"] == "rt"
+
+
+def test_resolve_oauth_credentials_refreshes_when_stale(monkeypatch):
+    monkeypatch.setattr(
+        "ragdesk.confluence.credentials.get",
+        lambda provider: {
+            "cloud_id": "cloud-1",
+            "refresh_token": "rt",
+            "access_token": "stale",
+            "expires_at": 0,
+            "client_id": "cid",
+            "client_secret": "sec",
+        },
+    )
+    saved: dict = {}
+    monkeypatch.setattr(
+        "ragdesk.confluence.credentials.set_provider",
+        lambda provider, values: saved.update(values),
+    )
+    monkeypatch.setattr(
+        "ragdesk.confluence.refresh_oauth_token",
+        lambda cid, sec, rt: {"access_token": "fresh", "expires_in": 3600},
+    )
+    api_base, bearer = resolve_oauth_credentials()
+    assert api_base == "https://api.atlassian.com/ex/confluence/cloud-1"
+    assert bearer == "fresh"
+    assert saved["access_token"] == "fresh"
+
+
+def test_sync_confluence_bearer_path(store: Store, monkeypatch):
+    monkeypatch.setattr(
+        "ragdesk.confluence._get_json_bearer",
+        lambda url, token, timeout=60.0: {"results": [], "_links": {}},
+    )
+    stats = sync_confluence(
+        store,
+        HashingEmbedder(),
+        space="DOCS",
+        api_base="https://api.atlassian.com/ex/confluence/cloud-1",
+        bearer="tok",
+        label_host="team.atlassian.net",
+    )
+    assert stats.files_scanned == 0

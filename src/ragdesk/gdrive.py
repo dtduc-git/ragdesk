@@ -7,24 +7,18 @@ Credentials can come from params or ``GDRIVE_CLIENT_ID`` / ``GDRIVE_CLIENT_SECRE
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import os
-import secrets
-import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import webbrowser
 from collections.abc import Iterator
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ragdesk import credentials
 from ragdesk.embed import Embedder
 from ragdesk.index import IndexStats, index_document
+from ragdesk.oauth import new_state, pkce_pair, run_loopback
 from ragdesk.store import Store
 
 SCOPES = "https://www.googleapis.com/auth/drive.readonly"
@@ -50,16 +44,6 @@ class GdriveError(RuntimeError):
 
 
 # --- OAuth (RFC 8252 native app) -------------------------------------------------
-
-
-def pkce_pair() -> tuple[str, str]:
-    verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).rstrip(b"=").decode()
-    challenge = (
-        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-        .rstrip(b"=")
-        .decode()
-    )
-    return verifier, challenge
 
 
 def auth_url(client_id: str, redirect_uri: str, challenge: str, state: str) -> str:
@@ -123,31 +107,6 @@ def refresh_access_token(client_id: str, client_secret: str, refresh_token: str)
     return str(token)
 
 
-class _CallbackHandler(BaseHTTPRequestHandler):
-    result: dict[str, str] = {}
-
-    def do_GET(self) -> None:
-        parsed = urllib.parse.urlparse(self.path)
-        if parsed.path != "/oauth/callback":
-            self.send_response(404)
-            self.end_headers()
-            return
-        params = urllib.parse.parse_qs(parsed.query)
-        _CallbackHandler.result = {key: value[0] for key, value in params.items()}
-        body = (
-            b"<html><body><h3>ragdesk</h3>"
-            b"<p>Authorization captured. You can close this tab.</p></body></html>"
-        )
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args) -> None:
-        pass
-
-
 def _callback_code(result: dict[str, str], expected_state: str) -> str:
     if not result:
         raise GdriveError("OAuth flow timed out (no redirect captured)")
@@ -168,23 +127,16 @@ def run_loopback_flow(
 ) -> dict:
     """Open the browser, capture the loopback redirect, exchange the code."""
     verifier, challenge = pkce_pair()
-    state = secrets.token_urlsafe(16)
-    _CallbackHandler.result = {}
-    server = ThreadingHTTPServer(("127.0.0.1", port), _CallbackHandler)
-    redirect_uri = f"http://127.0.0.1:{server.server_port}/oauth/callback"
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        webbrowser.open(auth_url(client_id, redirect_uri, challenge, state))
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline and not _CallbackHandler.result:
-            time.sleep(0.5)
-        result = dict(_CallbackHandler.result)
-    finally:
-        server.shutdown()
-        server.server_close()
+    state = new_state()
+    redirect: dict[str, str] = {}
+
+    def build_url(actual_port: int) -> str:
+        redirect["uri"] = f"http://127.0.0.1:{actual_port}/oauth/callback"
+        return auth_url(client_id, redirect["uri"], challenge, state)
+
+    result = run_loopback(build_url, port=port, path="/oauth/callback", timeout=timeout)
     code = _callback_code(result, state)
-    payload = exchange_code(client_id, client_secret, code, verifier, redirect_uri)
+    payload = exchange_code(client_id, client_secret, code, verifier, redirect["uri"])
     save_token_file(payload, token_file)
     return payload
 
