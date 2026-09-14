@@ -104,11 +104,12 @@ with — the index refuses mismatched embeddings.
 
 | Works | Not yet |
 |---|---|
-| Desktop app (Tauri 2): chat, search, sources, settings, streaming answers | PyPI release (v0.1.0 pending) |
-| Indexing: local files (native picker), GitHub repos (device code / gh / token + tarball sync), GitLab repos (token + archive sync), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Notion (shared pages), website crawl (same-host, HTML) | Sidecar bundling in the DMG |
-| Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Multilingual reranker (`bge-reranker-v2-m3` not in fastembed yet) |
-| Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Windows / Linux builds |
-| Grounded cited answers via local Ollama, grounding gate, token streaming | Eval badge automation per release |
+| Desktop app (Tauri 2): chat, search, sources, indexed stats, eval panel, dark theme | PyPI release (v0.1.0 pending) |
+| Indexing: local files (native picker), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Notion (shared pages), website crawl (same-host, HTML) | Sidecar bundling in the DMG |
+| Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
+| Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
+| Grounded cited answers via local Ollama, grounding gate, token streaming | MCP-server expansion path for connectors |
+| MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
 | RAM presets (`light` / `balanced` / `quality`) with per-flag overrides | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |
 
@@ -146,11 +147,10 @@ uv run ragdesk --embedder onnx --db /tmp/eval.db --rerank lexical eval --golden 
 
 1. Release v0.1.0: PyPI (trusted publishing) + desktop DMG on GitHub Releases
 2. Eval badge automation per release
-3. Multilingual reranker backend (`bge-reranker-v2-m3` / `gte-multilingual-reranker-base`)
-4. More sources, following the Bedrock Knowledge Base connector set as a reference:
-   S3 (bucket/prefix), SharePoint / OneDrive (Microsoft Graph), Notion
-5. Windows / Linux builds
-6. MCP-server expansion path for connectors
+3. More sources, following the Bedrock Knowledge Base connector set as a reference:
+   S3 (bucket/prefix), SharePoint / OneDrive (Microsoft Graph)
+4. Windows / Linux builds
+5. MCP-server expansion path for connectors
 
 ## Non-goals
 

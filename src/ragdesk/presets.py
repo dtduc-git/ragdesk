@@ -17,9 +17,9 @@ PRESETS: dict[str, dict[str, str]] = {
     },
     "quality": {
         "embedder": "onnx",
-        "rerank": "fastembed:BAAI/bge-reranker-base",
+        "rerank": "onnx",
         "llm": "qwen3.5:9b",
-        "note": "32GB / GPU: larger LLM plus reranker",
+        "note": "32GB / GPU: larger LLM plus the multilingual ONNX reranker (gte)",
     },
 }
 DEFAULT_PRESET = "light"

@@ -140,6 +140,8 @@ def test_get_reranker_specs():
     assert get_reranker("lexical").name == "lexical"
     assert get_reranker("fastembed").name == "fastembed:BAAI/bge-reranker-base"
     assert get_reranker("fastembed:custom/model").model == "custom/model"
+    assert get_reranker("onnx").name.startswith("onnx:onnx-community/gte-multilingual")
+    assert get_reranker("onnx:custom/repo").repo == "custom/repo"
     with pytest.raises(ValueError):
         get_reranker("nope")
 

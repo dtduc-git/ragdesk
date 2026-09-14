@@ -10,7 +10,8 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   with query/doc prompts; shared `tokenize`), `store` (SQLite: FTS5 + float32
   vectors + fail-closed embedder guard), `search` (BM25 + dense + RRF;
   `retrieve` adds the optional rerank stage), `rerank` (LexicalReranker
-  baseline; FastEmbedReranker behind the `onnx` extra), `index` (incremental
+  baseline; FastEmbedReranker + OnnxReranker = multilingual gte behind the
+  `onnx` extra), `index` (incremental
   local files), `github` / `gitlab` / `confluence` / `gdrive` / `notion`
   connectors, `web` (same-host HTML crawl, capped pages/depth), `archive`
   (shared repo-tarball extraction), `htmlutil` (shared HTML→text),
@@ -61,7 +62,8 @@ uv run python -m ragdesk.buildenv && uv build
   good reason; ONNX/reranker deps belong in an optional extra.
 - `HashingEmbedder` is for tests/CI only — never quote its numbers as quality.
 - Never default the reranker to a CC-BY-NC model (jina-reranker-v2 is
-  non-commercial); `BAAI/bge-reranker-base` (MIT) is the fastembed default.
+  non-commercial). Defaults: `BAAI/bge-reranker-base` (MIT, fastembed) and
+  `onnx-community/gte-multilingual-reranker-base` (Apache-2.0, `--rerank onnx`).
 - Embedder/dimension mismatch must stay fail-closed (`Store.ensure_embedder`).
 - Sources are read-only. No telemetry, ever.
 - Eval numbers published in README must be reproducible from the repo.
