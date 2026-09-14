@@ -59,6 +59,7 @@ def test_no_defaults_means_no_client(monkeypatch):
     monkeypatch.setattr("ragdesk.defaults.ATLASSIAN_CLIENT_ID", "")
     monkeypatch.setattr("ragdesk.defaults.ATLASSIAN_CLIENT_SECRET", "")
     monkeypatch.setattr("ragdesk.defaults.GOOGLE_CLIENT_ID", "")
+    monkeypatch.setattr("ragdesk.defaults.GOOGLE_CLIENT_SECRET", "")
     assert resolve_client_id() is None
     assert resolve_oauth_client() is None
     assert resolve_client_credentials() == ("", "")
