@@ -15,7 +15,7 @@ import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
 
-from ragdesk import credentials
+from ragdesk import credentials, defaults
 from ragdesk.embed import Embedder
 from ragdesk.index import IndexStats, index_document
 from ragdesk.oauth import new_state, pkce_pair, run_loopback
@@ -210,6 +210,26 @@ def _fetch_text(file: dict, access_token: str) -> str | None:
     return None
 
 
+def resolve_client_credentials(
+    client_id: str = "", client_secret: str = ""
+) -> tuple[str, str]:
+    """(client_id, client_secret): explicit > env > saved > shipped defaults."""
+    stored = credentials.get("gdrive")
+    resolved_id = (
+        client_id
+        or os.environ.get("GDRIVE_CLIENT_ID")
+        or str(stored.get("client_id", ""))
+        or defaults.GOOGLE_CLIENT_ID
+    )
+    resolved_secret = (
+        client_secret
+        or os.environ.get("GDRIVE_CLIENT_SECRET")
+        or str(stored.get("client_secret", ""))
+        or defaults.GOOGLE_CLIENT_SECRET
+    )
+    return str(resolved_id), str(resolved_secret)
+
+
 def whoami(access_token: str, *, timeout: float = 30.0) -> str:
     """Return the connected account's email address."""
     payload = _get_json(
@@ -253,15 +273,7 @@ def sync_gdrive(
     interactive: bool = True,
 ) -> IndexStats:
     """Index Google Docs/Sheets/Slides + text files from Drive (reads only)."""
-    stored = credentials.get("gdrive")
-    client_id = (
-        client_id or os.environ.get("GDRIVE_CLIENT_ID", "") or str(stored.get("client_id", ""))
-    )
-    client_secret = (
-        client_secret
-        or os.environ.get("GDRIVE_CLIENT_SECRET", "")
-        or str(stored.get("client_secret", ""))
-    )
+    client_id, client_secret = resolve_client_credentials(client_id, client_secret)
     token = resolve_access_token(
         client_id,
         client_secret,

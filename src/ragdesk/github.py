@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from ragdesk import credentials
+from ragdesk import credentials, defaults
 from ragdesk.embed import Embedder
 from ragdesk.index import IndexStats, index_document, is_indexable
 from ragdesk.store import Store
@@ -59,14 +59,17 @@ def resolve_token(explicit: str | None = None) -> str | None:
 
 
 def resolve_client_id(explicit: str | None = None) -> str | None:
-    """OAuth client ID for the device flow (env or saved in credentials)."""
+    """OAuth client ID for the device flow: explicit > env > saved > shipped."""
     if explicit:
         return explicit
     env = os.environ.get("RAGDESK_GITHUB_CLIENT_ID")
     if env:
         return env
     stored = credentials.get("github").get("client_id")
-    return str(stored) if stored else None
+    if stored:
+        return str(stored)
+    shipped = defaults.GITHUB_CLIENT_ID.strip()
+    return shipped or None
 
 
 def whoami(token: str, *, timeout: float = 30.0) -> str:

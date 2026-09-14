@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ragdesk import credentials
+from ragdesk import credentials, defaults
 from ragdesk.embed import Embedder
 from ragdesk.index import IndexStats, index_document
 from ragdesk.oauth import new_state, pkce_pair, run_loopback
@@ -215,13 +215,17 @@ def accessible_resources(access_token: str, *, timeout: float = 60.0) -> list[di
 
 
 def resolve_oauth_client() -> tuple[str, str] | None:
-    """(client_id, client_secret) from env or the credentials store."""
+    """(client_id, client_secret) from saved creds, env, or shipped defaults."""
     stored = credentials.get("confluence")
     client_id = (
-        stored.get("client_id") or os.environ.get("RAGDESK_ATLASSIAN_CLIENT_ID") or ""
+        stored.get("client_id")
+        or os.environ.get("RAGDESK_ATLASSIAN_CLIENT_ID")
+        or defaults.ATLASSIAN_CLIENT_ID
     )
     client_secret = (
-        stored.get("client_secret") or os.environ.get("RAGDESK_ATLASSIAN_CLIENT_SECRET") or ""
+        stored.get("client_secret")
+        or os.environ.get("RAGDESK_ATLASSIAN_CLIENT_SECRET")
+        or defaults.ATLASSIAN_CLIENT_SECRET
     )
     if client_id and client_secret:
         return str(client_id), str(client_secret)

@@ -28,6 +28,7 @@ from ragdesk.confluence import whoami as confluence_whoami
 from ragdesk.embed import Embedder
 from ragdesk.gdrive import TOKEN_FILE as GDRIVE_TOKEN_FILE
 from ragdesk.gdrive import GdriveError, load_token_file, run_loopback_flow, sync_gdrive
+from ragdesk.gdrive import resolve_client_credentials as gdrive_client_credentials
 from ragdesk.gdrive import whoami as gdrive_whoami
 from ragdesk.github import (
     GH_HOST,
@@ -334,8 +335,7 @@ class Handler(BaseHTTPRequestHandler):
             "gdrive": {
                 "connected": bool(gdrive_payload.get("refresh_token")),
                 "email": gdrive_payload.get("email", ""),
-                "oauth_ready": bool(credentials.get("gdrive").get("client_id"))
-                or bool(os.environ.get("GDRIVE_CLIENT_ID")),
+                "oauth_ready": bool(gdrive_client_credentials()[0]),
             },
         }
 
@@ -484,12 +484,9 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _handle_connect_gdrive(self, body: dict[str, Any]) -> None:
-        stored = credentials.get("gdrive")
-        client_id = str(body.get("client_id", "")).strip() or str(
-            stored.get("client_id", "")
-        )
-        client_secret = str(body.get("client_secret", "")).strip() or str(
-            stored.get("client_secret", "")
+        client_id, client_secret = gdrive_client_credentials(
+            str(body.get("client_id", "")).strip(),
+            str(body.get("client_secret", "")).strip(),
         )
         if not client_id:
             self._send(400, {"error": "an OAuth client ID is required"})
