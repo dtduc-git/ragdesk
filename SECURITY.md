@@ -29,6 +29,24 @@ public. Per-provider policy:
 If a secret is ever committed by accident: rotate it at the provider first
 (that invalidates the leaked value), then remove it from the tree. Rewriting
 published git history is optional and usually unnecessary after rotation.
+GitHub push protection blocks commits containing provider credentials, so the
+repository cannot accidentally carry them in the first place.
+
+## Build-time credentials
+
+Release artifacts may carry non-confidential OAuth values so users get
+one-click connects. The flow keeps the repository clean:
+
+1. `cp .env.example .env` and fill in values. `.env` is **gitignored**.
+2. `python -m ragdesk.buildenv` writes `src/ragdesk/_build_env.py`
+   (also gitignored) and **refuses** confidential values — the Atlassian 3LO
+   secret is never baked.
+3. `uv build` / `npm run tauri build` package the generated module.
+
+Anything baked into a distributed artifact is effectively public: assume it
+can be extracted. That is acceptable for GitHub client IDs and Google
+Desktop client credentials, and never acceptable for Atlassian 3LO secrets or
+user tokens.
 - **No telemetry**: no analytics, no phone-home. Network calls go only to the
   local Ollama server, unless you explicitly configure a cloud provider with
   your own key.

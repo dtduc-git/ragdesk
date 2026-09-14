@@ -8,3 +8,7 @@ build/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+
+# local build credentials (never commit)
+.env
+src/ragdesk/_build_env.py

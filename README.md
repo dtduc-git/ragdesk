@@ -63,6 +63,9 @@ The shell spawns `ragdesk serve` (loopback only) and renders the card-catalog
 UI: streaming chat with citations, hybrid search, source connectors, and the
 status/preset panel.
 
+Per-source connection guides — API tokens, browser consent, bring-your-own
+OAuth apps and their caveats — live in **[docs/sources.md](docs/sources.md)**.
+
 - **Local sources** use a native folder/file picker (multi-select), so you
   don't paste paths.
 - **Cloud sources have a one-time Connect flow**: GitHub (device code — a

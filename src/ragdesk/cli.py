@@ -11,6 +11,7 @@ from ragdesk import __version__
 from ragdesk.answer import answer, answer_stream
 from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import get_embedder
+from ragdesk.envfile import load_env_file
 from ragdesk.evaluate import evaluate, format_report, load_golden
 from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
@@ -130,6 +131,7 @@ def _print_hits(hits) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_env_file()  # local .env (gitignored) for development
     args = _build_parser().parse_args(argv)
     try:
         settings = resolve_preset(

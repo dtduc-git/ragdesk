@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import sys
+import types
+
 from ragdesk.confluence import resolve_oauth_client
+from ragdesk.defaults import shipped
 from ragdesk.gdrive import resolve_client_credentials
 from ragdesk.github import resolve_client_id
 
@@ -51,6 +55,14 @@ def test_saved_credentials_win_over_shipped_defaults(monkeypatch):
         lambda provider: {"client_id": "saved-at", "client_secret": "saved-secret"},
     )
     assert resolve_oauth_client() == ("saved-at", "saved-secret")
+
+
+def test_shipped_reads_build_env(monkeypatch):
+    module = types.ModuleType("ragdesk._build_env")
+    module.GITHUB_CLIENT_ID = "built-gh"
+    monkeypatch.setitem(sys.modules, "ragdesk._build_env", module)
+    assert shipped("GITHUB_CLIENT_ID") == "built-gh"
+    assert shipped("GOOGLE_CLIENT_ID") == ""
 
 
 def test_no_defaults_means_no_client(monkeypatch):
