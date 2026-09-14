@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from ragdesk.embed import Embedder
-from ragdesk.search import Hit, hybrid_search
+from ragdesk.search import Hit, retrieve
 from ragdesk.store import Store
 
 
@@ -48,10 +48,13 @@ def evaluate(
     embedder: Embedder,
     golden: list[dict[str, Any]],
     top_k: int = 10,
+    reranker: Any = None,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     per_query: list[dict[str, Any]] = []
     for row in golden:
-        hits = hybrid_search(store, embedder, row["query"], top_k=top_k)
+        hits = retrieve(
+            store, embedder, row["query"], top_k=top_k, reranker=reranker
+        )
         ranking = _rank_docs(hits)
         relevant = row["relevant"]
 

@@ -6,10 +6,12 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
 ## Layout
 
 - `src/ragdesk/` — package. `chunk` (paragraph-aware + overlap), `embed`
-  (HashingEmbedder for CI, OllamaEmbedder for real), `store` (SQLite: FTS5 +
-  float32 vectors + fail-closed embedder guard), `search` (BM25 + dense + RRF),
-  `index` (incremental local files), `evaluate` (recall@5 / nDCG@10 / MRR),
-  `answer` (Ollama LLM + grounding gate), `cli`.
+  (HashingEmbedder for CI, OllamaEmbedder for real; shared `tokenize`),
+  `store` (SQLite: FTS5 + float32 vectors + fail-closed embedder guard),
+  `search` (BM25 + dense + RRF; `retrieve` adds the optional rerank stage),
+  `rerank` (LexicalReranker baseline; FastEmbedReranker behind the `rerank`
+  extra), `index` (incremental local files), `evaluate` (recall@5 / nDCG@10 /
+  MRR), `answer` (Ollama LLM + grounding gate), `cli`.
 - `fixtures/` — tiny corpus + golden set for the offline CI eval.
 - `tests/` — pytest; always uses `HashingEmbedder` (never requires Ollama).
 
@@ -28,6 +30,8 @@ uv run ragdesk --embedder hash --db /tmp/eval.db eval --golden fixtures/golden.j
 - Core stays dependency-free (argparse/sqlite3/urllib). New runtime deps need a
   good reason; ONNX/reranker deps belong in an optional extra.
 - `HashingEmbedder` is for tests/CI only — never quote its numbers as quality.
+- Never default the reranker to a CC-BY-NC model (jina-reranker-v2 is
+  non-commercial); `BAAI/bge-reranker-base` (MIT) is the fastembed default.
 - Embedder/dimension mismatch must stay fail-closed (`Store.ensure_embedder`).
 - Sources are read-only. No telemetry, ever.
 - Eval numbers published in README must be reproducible from the repo.

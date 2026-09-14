@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ragdesk.embed import Embedder
 from ragdesk.store import Store
 
+if TYPE_CHECKING:
+    from ragdesk.rerank import Reranker
+
 RRF_K = 60
+RERANK_POOL = 30
 
 
 @dataclass(frozen=True)
@@ -76,3 +81,19 @@ def hybrid_search(
             )
         )
     return hits
+
+
+def retrieve(
+    store: Store,
+    embedder: Embedder,
+    query: str,
+    top_k: int = 8,
+    reranker: Reranker | None = None,
+    pool: int = RERANK_POOL,
+) -> list[Hit]:
+    """Two-stage retrieval: fuse a larger candidate pool, optionally rerank,
+    then cut to ``top_k``."""
+    if reranker is not None:
+        candidates = hybrid_search(store, embedder, query, top_k=max(top_k, pool))
+        return reranker.rerank(query, candidates)[:top_k]
+    return hybrid_search(store, embedder, query, top_k=top_k)

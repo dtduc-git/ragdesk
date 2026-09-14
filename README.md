@@ -34,6 +34,10 @@ ragdesk ask "..." --min-cosine 0.35   # grounding gate (calibrate per embedder)
 # retrieval only
 ragdesk search "oauth pkce desktop"
 
+# reranking (optional)
+ragdesk --rerank lexical search "..."    # dependency-free baseline
+ragdesk --rerank fastembed search "..."  # ONNX cross-encoder (model downloads on first use)
+
 # numbers
 ragdesk eval --golden fixtures/golden.jsonl
 ragdesk stats
@@ -45,9 +49,10 @@ ragdesk stats
 |---|---|
 | Incremental local file indexing (hash-based) | Desktop UI (Tauri) |
 | Hybrid retrieval: FTS5 BM25 + dense + RRF | GitHub / Confluence / Google Drive connectors |
+| Reranking: `lexical` baseline + `fastembed` cross-encoder (`[rerank]` extra) | Multilingual reranker (`bge-reranker-v2-m3` is not in fastembed yet, upstream qdrant/fastembed#494) |
 | Cited answers via local Ollama LLM + grounding gate | ONNX embedder backend (EmbeddingGemma int8 direct) |
-| Eval harness + CI gate (`--min-recall`) | Reranker (bge-reranker-v2-m3 planned) |
-| Fail-closed embedder/dimension guard | RAM presets + model manager |
+| Eval harness + CI gate (`--min-recall`) | RAM presets + model manager |
+| Fail-closed embedder/dimension guard | |
 
 ## Eval
 
@@ -74,7 +79,8 @@ upcoming release.
 
 ## Roadmap
 
-1. Reranker stage (bge-reranker-v2-m3, ONNX)
+1. Multilingual reranker backend (`bge-reranker-v2-m3` / `gte-multilingual-reranker-base`
+   via ONNX or llama.cpp — not in fastembed yet)
 2. ONNX embedder backend (EmbeddingGemma-300M int8)
 3. GitHub connector (device flow, RFC 8628)
 4. Tauri desktop shell + RAM presets (8GB floor, model manager)

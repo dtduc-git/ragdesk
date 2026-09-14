@@ -13,7 +13,8 @@ from ragdesk.embed import DEFAULT_OLLAMA_MODEL, get_embedder
 from ragdesk.evaluate import evaluate, format_report, load_golden
 from ragdesk.index import index_paths
 from ragdesk.ollama import OllamaUnavailable
-from ragdesk.search import hybrid_search
+from ragdesk.rerank import get_reranker
+from ragdesk.search import retrieve
 from ragdesk.store import Store
 
 DEFAULT_DB = ".ragdesk/index.db"
@@ -31,6 +32,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--embedder",
         default=DEFAULT_EMBEDDER,
         help=f"embedder spec: ollama[:model] or hash[:dim] (default: {DEFAULT_EMBEDDER})",
+    )
+    parser.add_argument(
+        "--rerank",
+        default="none",
+        help="reranker spec: none | lexical | fastembed[:model] (default: none)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -76,7 +82,12 @@ def _print_hits(hits) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    embedder = get_embedder(args.embedder)
+    try:
+        embedder = get_embedder(args.embedder)
+        reranker = get_reranker(args.rerank)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     with Store(args.db) as store:
         if args.command == "stats":
@@ -97,11 +108,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "search":
-            _print_hits(hybrid_search(store, embedder, args.query, top_k=args.top_k))
+            hits = retrieve(
+                store, embedder, args.query, top_k=args.top_k, reranker=reranker
+            )
+            _print_hits(hits)
             return 0
 
         if args.command == "ask":
-            hits = hybrid_search(store, embedder, args.query, top_k=args.top_k)
+            hits = retrieve(
+                store, embedder, args.query, top_k=args.top_k, reranker=reranker
+            )
             try:
                 text = answer(args.query, hits, model=args.model, min_cosine=args.min_cosine)
             except OllamaUnavailable as exc:
@@ -116,7 +132,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "eval":
             golden = load_golden(args.golden)
-            metrics, per_query = evaluate(store, embedder, golden, top_k=args.top_k)
+            metrics, per_query = evaluate(
+                store, embedder, golden, top_k=args.top_k, reranker=reranker
+            )
             if args.json:
                 print(json.dumps({"metrics": metrics, "queries": per_query}, indent=2))
             else:

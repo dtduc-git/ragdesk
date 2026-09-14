@@ -36,6 +36,11 @@ Homepage = "https://github.com/dtduc-git/ragdesk"
 Issues = "https://github.com/dtduc-git/ragdesk/issues"
 Changelog = "https://github.com/dtduc-git/ragdesk/releases"
 
+[project.optional-dependencies]
+rerank = [
+    "fastembed>=0.8.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

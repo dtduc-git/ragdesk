@@ -25,6 +25,20 @@ _STOPWORDS = frozenset(
 )
 
 
+def tokenize(text: str) -> list[str]:
+    """Lowercase, strip edge punctuation, drop stopwords.
+
+    Shared by the hashing embedder and the lexical reranker (toy/fallback
+    paths only — real models do their own tokenization).
+    """
+    tokens: list[str] = []
+    for token in text.lower().split():
+        token = token.strip(".,;:!?()[]{}`'\"#*_-")
+        if token and token not in _STOPWORDS:
+            tokens.append(token)
+    return tokens
+
+
 class Embedder(Protocol):
     name: str
     dim: int
@@ -49,10 +63,7 @@ class HashingEmbedder:
         vectors: list[list[float]] = []
         for text in texts:
             vec = [0.0] * self.dim
-            for token in text.lower().split():
-                token = token.strip(".,;:!?()[]{}`'\"#*_-")
-                if not token or token in _STOPWORDS:
-                    continue
+            for token in tokenize(text):
                 digest = hashlib.blake2b(token.encode(), digest_size=8).digest()
                 index = int.from_bytes(digest[:4], "little") % self.dim
                 vec[index] += 1.0 if digest[4] % 2 == 0 else -1.0
