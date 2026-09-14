@@ -29,7 +29,10 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   0 = off), `llm` (answer backends + the no-double-download ladder: `auto`
   reuses a running Ollama that already has the preset model, else MLX
   in-process from the shared HF cache; `--llm`/`RAGDESK_LLM` override),
-  `presets` (RAM tiers; each carries an Ollama tag and an `llm_mlx` repo),
+  `presets` (RAM tiers; each carries an Ollama tag and an `llm_mlx` repo;
+  `POST /api/settings {preset}` applies a tier live — rerank and LLM swap, the
+  shared embedder means no re-index; the choice persists in settings.json and
+  beats the built-in default, with `--preset` still winning at launch),
   `cli`.
 - `desktop/` — Tauri 2 shell (card-catalog UI). Rust spawns `ragdesk serve`
   with `--db $HOME/.ragdesk/index.db`; a watchdog thread respawns it if it

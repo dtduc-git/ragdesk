@@ -187,6 +187,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/status":
             with Store(self.state.db) as store:
                 stats = store.stats()
+                # The flag wins at launch; otherwise the saved setting, else light.
+                preset = self.state.preset or settings.load()["preset"] or "light"
                 self._send(
                     200,
                     {
@@ -200,18 +202,18 @@ class Handler(BaseHTTPRequestHandler):
                         "llm_model": self.state.llm_model,
                         "llm": llm_status(
                             self.state.llm_spec or None,
-                            preset=self.state.preset or "light",
+                            preset=preset,
                             host=self.state.llm_host,
                         ),
                         "llm_setup": {
                             **llm_setup_options(
-                                self.state.preset or "light",
+                                preset,
                                 self.state.llm_host,
                                 self.state.llm_spec,
                             ),
                             "job": dict(self.state.llm_setup),
                         },
-                        "preset": self.state.preset,
+                        "preset": preset,
                         "documents": stats["documents"],
                         "chunks": stats["chunks"],
                         "sources": store.sources(),
@@ -225,6 +227,15 @@ class Handler(BaseHTTPRequestHandler):
                             or getattr(self.state.embedder, "loaded", False),
                             "idle_unload_minutes": settings.load()["idle_unload_minutes"],
                         },
+                        "presets": [
+                            {
+                                "name": name,
+                                "note": str(entry["note"]),
+                                "rerank": str(entry["rerank"]),
+                                "llm": str(entry["llm"]),
+                            }
+                            for name, entry in PRESETS.items()
+                        ],
                     },
                 )
             return
@@ -436,10 +447,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "idle_unload_minutes must be a number"})
                 return
             updates["idle_unload_minutes"] = max(0, min(minutes, 1440))
+        if "preset" in body:
+            preset = str(body["preset"])
+            if preset not in PRESETS:
+                self._send(400, {"error": f"unknown preset: {preset!r}"})
+                return
+            updates["preset"] = preset
         if not updates:
             self._send(400, {"error": "nothing to update"})
             return
         settings.save(updates)
+        if "preset" in updates:
+            # Apply without a restart: reranking is query-time, the LLM re-resolves,
+            # and every preset shares the same embedder so no re-index is needed.
+            selected = PRESETS[updates["preset"]]
+            self.state.preset = updates["preset"]
+            self.state.rerank = selected["rerank"]
+            self.state.llm_model = selected["llm"]
+            self.state.llm = None
         self._send(200, updates)
 
     def _handle_index(self, body: dict[str, Any]) -> None:

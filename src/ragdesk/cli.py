@@ -54,8 +54,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--preset",
         choices=sorted(PRESETS),
-        default=DEFAULT_PRESET,
-        help="hardware preset for embedder/reranker/LLM defaults (default: light)",
+        default=None,
+        help="hardware preset (default: saved setting, else light)",
     )
     parser.add_argument(
         "--embedder",
@@ -190,8 +190,10 @@ def main(argv: list[str] | None = None) -> int:
     load_env_file()  # local .env (gitignored) for development
     args = _build_parser().parse_args(argv)
     try:
+        # The saved preset wins over the built-in default; an explicit flag wins over both.
+        saved_preset = app_settings.load().get("preset") or DEFAULT_PRESET
         settings = resolve_preset(
-            args.preset,
+            args.preset or saved_preset,
             embedder=args.embedder,
             rerank=args.rerank,
             llm=getattr(args, "llm_model", None) or getattr(args, "model", None),

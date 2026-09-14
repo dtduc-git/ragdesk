@@ -35,6 +35,7 @@ type Status = {
   local_paths: PathStat[];
   auto_index: { hours: number; last_run: string };
   memory: { models_loaded: boolean; idle_unload_minutes: number };
+  presets: Array<{ name: string; note: string; rerank: string; llm: string }>;
   llm: { kind: string; model: string; note: string };
   llm_setup: {
     ollama_model: string;
@@ -133,13 +134,13 @@ $("theme-toggle").addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
-function markSeg(containerId: string, value: number): void {
+function markSeg(containerId: string, value: number | string): void {
   document.querySelectorAll<HTMLElement>(`#${containerId} .seg-item`).forEach((item) => {
-    item.classList.toggle("is-active", Number(item.dataset.value) === value);
+    item.classList.toggle("is-active", item.dataset.value === String(value));
   });
 }
 
-async function saveSetting(body: Record<string, number>): Promise<void> {
+async function saveSetting(body: Record<string, number | string>): Promise<void> {
   try {
     await post("/api/settings", body);
     await loadStatus();
@@ -153,9 +154,10 @@ document.querySelectorAll<HTMLElement>(".seg").forEach((group) => {
   group.addEventListener("click", (event) => {
     const item = (event.target as HTMLElement).closest<HTMLElement>(".seg-item");
     if (!item) return;
-    const value = Number(item.dataset.value);
-    if (group.id === "auto-index-seg") void saveSetting({ auto_index_hours: value });
-    if (group.id === "idle-unload-seg") void saveSetting({ idle_unload_minutes: value });
+    const value = item.dataset.value ?? "";
+    if (group.id === "auto-index-seg") void saveSetting({ auto_index_hours: Number(value) });
+    if (group.id === "idle-unload-seg") void saveSetting({ idle_unload_minutes: Number(value) });
+    if (group.id === "preset-seg") void saveSetting({ preset: value });
   });
 });
 
@@ -302,6 +304,12 @@ function renderStatus(): void {
   $("memory-state").textContent = status.memory.models_loaded
     ? "in RAM — unloads after the idle stretch"
     : "released — the next question reloads them";
+  markSeg("preset-seg", status.preset);
+  const presetName = status.preset;
+  const activePreset = (status.presets ?? []).find((entry) => entry.name === presetName);
+  $("preset-note").textContent = activePreset
+    ? `${activePreset.note} · rerank ${activePreset.rerank}`
+    : "";
   if (status.sources.length === 0) {
     table.innerHTML = `<p class="muted">Nothing indexed yet. Add a source.</p>`;
     return;

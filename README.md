@@ -119,7 +119,7 @@ with — the index refuses mismatched embeddings.
 | Answer cache: an identical question on an unchanged corpus replays instantly | |
 | Memory: durable notes you add (or extract from a chat) ride along with every answer | |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
-| RAM presets (`light` / `balanced` / `quality`) with per-flag overrides | |
+| RAM presets (`light` / `balanced` / `quality`) — switchable in Settings, applied live; per-flag overrides still work | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |
 
 ## Eval

@@ -118,7 +118,7 @@
         <section class="panel" id="panel-settings">
           <header class="panel-head">
             <h2>Settings</h2>
-            <p>Read from the running indexer. Change them when you launch the app.</p>
+            <p>Read from the running indexer. Changes apply immediately.</p>
           </header>
 
           <dl class="spec-sheet" id="status-table"></dl>
@@ -190,16 +190,17 @@
               <p class="caption" id="memory-status"></p>
             </section>
 
-            <section class="setting-card is-quiet">
+            <section class="setting-card">
               <header class="setting-head">
-                <h3>Presets</h3>
-                <p>
-                  Launch flags: <code>--preset light</code> for 8GB machines,
-                  <code>balanced</code> for 16GB with the reranker, <code>quality</code> for
-                  32GB and a larger model. <code>--embedder</code>, <code>--rerank</code> and
-                  <code>--llm</code> override them.
-                </p>
+                <h3>Machine preset</h3>
+                <p>Sets the reranker and the answer model for your hardware. Change it any time — nothing gets re-indexed.</p>
               </header>
+              <div class="seg" id="preset-seg" role="group" aria-label="Machine preset">
+                <button class="seg-item" type="button" data-value="light">Light</button>
+                <button class="seg-item" type="button" data-value="balanced">Balanced</button>
+                <button class="seg-item" type="button" data-value="quality">Quality</button>
+              </div>
+              <p class="caption" id="preset-note">…</p>
             </section>
           </div>
         </section>

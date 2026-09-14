@@ -11,6 +11,7 @@ DEFAULTS: dict = {
     "auto_index_hours": 1,
     "auto_index_last": "",
     "idle_unload_minutes": 15,
+    "preset": "",
 }
 
 

@@ -721,6 +721,29 @@ def test_memory_extract_reads_the_latest_chat(base_url: str, monkeypatch):
     assert len(listing["memories"]) == 2
 
 
+def test_preset_setting_applies_without_restart(base_url: str):
+    from ragdesk import settings
+
+    status, payload = request(f"{base_url}/api/status")
+    assert status == 200
+    assert payload["preset"] == "light"
+    assert {entry["name"] for entry in payload["presets"]} == {"light", "balanced", "quality"}
+
+    status, payload = request(f"{base_url}/api/settings", {"preset": "balanced"})
+    assert status == 200
+    assert payload["preset"] == "balanced"
+    assert settings.load()["preset"] == "balanced"
+
+    _, after = request(f"{base_url}/api/status")
+    assert after["preset"] == "balanced"
+    assert after["rerank"].startswith("fastembed")  # reranker applied live
+    assert after["llm_model"] == "qwen3.5:4b"
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/settings", {"preset": "gaming"})
+    assert excinfo.value.code == 400
+
+
 def test_sync_gitlab_requires_project(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/gitlab", {})
