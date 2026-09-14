@@ -65,12 +65,13 @@ status/preset panel.
 
 - **Local sources** use a native folder/file picker (multi-select), so you
   don't paste paths.
-- **Cloud sources have a one-time Connect flow**: GitHub (device code — no CLI
-  needed — or `gh` login, or a token), Confluence (site + email + API token),
-  Google Drive (BYO OAuth client, browser consent). Credentials are stored
-  `0600` under `~/.config/ragdesk/` and can be disconnected from the same card.
-  For the GitHub device code, save an OAuth client ID (device flow enabled) in
-  the card, or set `RAGDESK_GITHUB_CLIENT_ID`.
+- **Cloud sources have a one-time Connect flow**: GitHub (device code — a
+  client ID ships with the app, so no CLI is needed; `gh` login and tokens
+  also work), Confluence (API token — no app registration — or your own
+  Atlassian OAuth app for one-click consent), Google Drive (BYO OAuth client,
+  browser consent). Credentials are stored `0600` under `~/.config/ragdesk/`
+  and can be disconnected from the same card. Atlassian client secrets are
+  never shipped in the repository (see `SECURITY.md`).
 
 The same UI also runs in a browser for development:
 `uv run ragdesk serve --ui desktop/dist`.

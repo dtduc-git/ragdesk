@@ -571,6 +571,21 @@ details.alt[open] summary {
   margin-bottom: 8px;
 }
 
+.link-like {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--stamp);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  font-size: inherit;
+}
+
+.link-like:hover {
+  color: var(--ink);
+}
+
 .source-card .btn {
   align-self: flex-start;
 }

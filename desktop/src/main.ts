@@ -585,33 +585,51 @@ function githubCard(conn: Connections["github"]): string {
 
 function confluenceCard(conn: Connections["confluence"]): string {
   if (!conn.connected) {
-    const primary = conn.oauth_ready
-      ? `<button class="btn btn-primary" type="button" data-action="confluence-oauth-start">Connect with Atlassian</button>`
-      : `<button class="btn btn-primary" type="button" data-action="reveal-confluence">Connect with Atlassian</button>`;
-    const setup =
-      !conn.oauth_ready && reveal.confluence
-        ? `<form data-form="confluence-oauth" class="stack">
-             <p class="source-note">Create an Atlassian OAuth 2.0 (3LO) app with redirect URL <code>http://127.0.0.1:8788/callback</code>, then paste its credentials once.</p>
-             <input name="client_id" placeholder="Atlassian client ID" required />
-             <input name="client_secret" type="password" placeholder="Atlassian client secret" required />
-             <button class="btn" type="submit">Save &amp; connect</button>
-           </form>`
-        : "";
+    const tokenForm = `<form data-form="confluence-connect" class="stack">
+      <div class="field-row">
+        <input name="base_url" placeholder="https://team.atlassian.net" required />
+        <input name="email" placeholder="you@company.com" required />
+      </div>
+      <input name="token" type="password" placeholder="API token" required />
+      <button class="btn btn-primary" type="submit">Connect with API token</button>
+      <p class="source-note">
+        Create one at
+        <button class="link-like" type="button" data-action="open-atlassian-tokens">id.atlassian.com — API tokens</button>.
+        No app registration needed.
+      </p>
+    </form>`;
+
+    const oauthSetup = `<form data-form="confluence-oauth" class="stack">
+      <p class="source-note">
+        Create an OAuth 2.0 (3LO) app with redirect URL
+        <code>http://127.0.0.1:8788/callback</code> —
+        <button class="link-like" type="button" data-action="open-atlassian-console">open the developer console</button>
+        — then paste its credentials. Stored locally, never in git.
+      </p>
+      <input name="client_id" placeholder="Atlassian client ID" required />
+      <input name="client_secret" type="password" placeholder="Atlassian client secret" required />
+      <button class="btn" type="submit">Save &amp; connect</button>
+    </form>`;
+
+    if (conn.oauth_ready) {
+      return `<div class="source-card">
+        <h3>Confluence</h3>
+        <p class="source-note">One click: Atlassian asks for consent in your browser.</p>
+        <button class="btn btn-primary" type="button" data-action="confluence-oauth-start">Connect with Atlassian</button>
+        <details class="alt">
+          <summary>Connect with a site URL + API token</summary>
+          ${tokenForm}
+        </details>
+        <p class="source-result" data-result="confluence"></p>
+      </div>`;
+    }
     return `<div class="source-card">
       <h3>Confluence</h3>
-      <p class="source-note">One click: Atlassian asks for consent in your browser.</p>
-      ${primary}
-      ${setup}
+      <p class="source-note">Use an API token (works for everyone), or bring your own Atlassian OAuth app for one-click consent.</p>
+      ${tokenForm}
       <details class="alt">
-        <summary>Use a site URL + API token</summary>
-        <form data-form="confluence-connect" class="stack">
-          <input name="base_url" placeholder="https://team.atlassian.net" required />
-          <div class="field-row">
-            <input name="email" placeholder="you@company.com" required />
-            <input name="token" type="password" placeholder="API token" required />
-          </div>
-          <button class="btn" type="submit">Connect</button>
-        </form>
+        <summary>Use Atlassian OAuth (your own app)</summary>
+        ${oauthSetup}
       </details>
       <p class="source-result" data-result="confluence"></p>
     </div>`;
@@ -821,9 +839,17 @@ $("source-grid").addEventListener("click", async (event) => {
     void startGithubDevice();
     return;
   }
-  if (action === "reveal-github" || action === "reveal-confluence" || action === "reveal-gdrive") {
+  if (action === "reveal-github" || action === "reveal-gdrive") {
     reveal[action.replace("reveal-", "")] = true;
     renderSources();
+    return;
+  }
+  if (action === "open-atlassian-tokens") {
+    void openExternal("https://id.atlassian.com/manage-profile/security/api-tokens");
+    return;
+  }
+  if (action === "open-atlassian-console") {
+    void openExternal("https://developer.atlassian.com/console/myapps/");
     return;
   }
   if (action === "gdrive-oauth-start" || action === "confluence-oauth-start") {
