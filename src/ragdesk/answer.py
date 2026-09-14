@@ -7,11 +7,10 @@ eval harness instead of trusting the default.
 
 from __future__ import annotations
 
-from ragdesk.ollama import post_json
+from ragdesk.ollama import DEFAULT_HOST, post_json
 from ragdesk.search import Hit
 
 DEFAULT_LLM_MODEL = "qwen3.5:4b"
-DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 
 REFUSAL = "I could not find this in your indexed sources."
 
@@ -39,7 +38,7 @@ def answer(
     question: str,
     hits: list[Hit],
     model: str = DEFAULT_LLM_MODEL,
-    host: str = DEFAULT_OLLAMA_HOST,
+    host: str = DEFAULT_HOST,
     min_cosine: float = 0.0,
 ) -> str:
     best_cosine = max((hit.cosine for hit in hits), default=0.0)

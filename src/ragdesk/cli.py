@@ -12,9 +12,10 @@ from ragdesk.answer import DEFAULT_LLM_MODEL, answer
 from ragdesk.embed import DEFAULT_OLLAMA_MODEL, get_embedder
 from ragdesk.evaluate import evaluate, format_report, load_golden
 from ragdesk.index import index_paths
-from ragdesk.ollama import OllamaUnavailable
+from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
 from ragdesk.rerank import get_reranker
 from ragdesk.search import retrieve
+from ragdesk.serve import AppState, make_server
 from ragdesk.store import Store
 
 DEFAULT_DB = ".ragdesk/index.db"
@@ -70,6 +71,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--json", action="store_true", help="machine-readable output")
 
     sub.add_parser("stats", help="index statistics")
+
+    p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
+    p_serve.add_argument("--port", type=int, default=8765)
+    p_serve.add_argument("--llm-model", default=DEFAULT_LLM_MODEL)
+    p_serve.add_argument("--llm-host", default=DEFAULT_HOST)
     return parser
 
 
@@ -88,6 +94,23 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+
+    if args.command == "serve":
+        state = AppState(
+            db=args.db,
+            embedder=embedder,
+            rerank=args.rerank,
+            llm_model=args.llm_model,
+            llm_host=args.llm_host,
+        )
+        server = make_server(state, port=args.port)
+        host, port = server.server_address[:2]
+        print(f"ragdesk serving on http://{host}:{port} (Ctrl-C to stop)")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        return 0
 
     with Store(args.db) as store:
         if args.command == "stats":

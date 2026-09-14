@@ -12,10 +12,9 @@ import hashlib
 import math
 from typing import Protocol
 
-from ragdesk.ollama import post_json
+from ragdesk.ollama import DEFAULT_HOST, post_json
 
 DEFAULT_OLLAMA_MODEL = "embeddinggemma:300m"
-DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 DEFAULT_ONNX_REPO = "onnx-community/embeddinggemma-300m-ONNX"
 ONNX_QUERY_PROMPT = "task: search result | query: "
 ONNX_DOC_PROMPT = "title: none | text: "
@@ -86,7 +85,7 @@ class OllamaEmbedder:
     def __init__(
         self,
         model: str = DEFAULT_OLLAMA_MODEL,
-        host: str = DEFAULT_OLLAMA_HOST,
+        host: str = DEFAULT_HOST,
         dim: int = 768,
     ) -> None:
         self.name = f"ollama:{model}"

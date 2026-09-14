@@ -6,6 +6,8 @@ import json
 import urllib.error
 import urllib.request
 
+DEFAULT_HOST = "http://localhost:11434"
+
 
 class OllamaUnavailable(RuntimeError):
     """Ollama is not reachable (not running, or model missing)."""
