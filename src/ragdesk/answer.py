@@ -7,7 +7,9 @@ eval harness instead of trusting the default.
 
 from __future__ import annotations
 
-from ragdesk.ollama import DEFAULT_HOST, post_json
+from collections.abc import Iterator
+
+from ragdesk.ollama import DEFAULT_HOST, post_json, post_stream
 from ragdesk.search import Hit
 
 DEFAULT_LLM_MODEL = "qwen3.5:4b"
@@ -50,3 +52,22 @@ def answer(
         {"model": model, "prompt": build_prompt(question, hits), "stream": False},
     )
     return data["response"].strip()
+
+
+def answer_stream(
+    question: str,
+    hits: list[Hit],
+    model: str = DEFAULT_LLM_MODEL,
+    host: str = DEFAULT_HOST,
+    min_cosine: float = 0.0,
+) -> Iterator[str]:
+    """Same contract as :func:`answer`, but yields text pieces as they arrive."""
+    best_cosine = max((hit.cosine for hit in hits), default=0.0)
+    if not hits or best_cosine < min_cosine:
+        yield REFUSAL
+        return
+    payload = {"model": model, "prompt": build_prompt(question, hits), "stream": True}
+    for chunk in post_stream(host, "/api/generate", payload):
+        piece = chunk.get("response", "")
+        if piece:
+            yield str(piece)

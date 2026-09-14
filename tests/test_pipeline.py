@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ragdesk.answer import REFUSAL, answer, build_prompt
+from ragdesk.answer import REFUSAL, answer, answer_stream, build_prompt
 from ragdesk.chunk import chunk_text
 from ragdesk.embed import HashingEmbedder, get_embedder
 from ragdesk.evaluate import evaluate, load_golden
@@ -168,3 +168,9 @@ def test_get_embedder_specs():
 def test_embed_query_matches_embed_for_single_text():
     embedder = HashingEmbedder(dim=64)
     assert embedder.embed_query("hello world") == embedder.embed(["hello world"])[0]
+
+
+def test_answer_stream_gate_skips_llm():
+    hit = make_hit("a.md", "some context", chunk_id=1)
+    assert list(answer_stream("q", [hit], min_cosine=0.99)) == [REFUSAL]
+    assert list(answer_stream("q", [])) == [REFUSAL]

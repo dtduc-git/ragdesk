@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ragdesk import __version__
-from ragdesk.answer import REFUSAL, answer
+from ragdesk.answer import REFUSAL, answer, answer_stream
 from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import Embedder
 from ragdesk.gdrive import GdriveError, sync_gdrive
@@ -55,12 +55,14 @@ class AppState:
         rerank: str = "none",
         llm_model: str = "",
         llm_host: str = "",
+        preset: str = "",
     ) -> None:
         self.db = db
         self.embedder = embedder
         self.rerank = rerank
         self.llm_model = llm_model
         self.llm_host = llm_host
+        self.preset = preset
         self.lock = threading.Lock()
 
 
@@ -108,6 +110,7 @@ class Handler(BaseHTTPRequestHandler):
                         },
                         "rerank": self.state.rerank,
                         "llm_model": self.state.llm_model,
+                        "preset": self.state.preset,
                         "documents": stats["documents"],
                         "chunks": stats["chunks"],
                         "sources": store.sources(),
@@ -135,6 +138,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_search(body)
             elif self.path == "/api/ask":
                 self._handle_ask(body)
+            elif self.path == "/api/ask/stream":
+                self._handle_ask_stream(body)
             else:
                 self._send(404, {"error": f"not found: {self.path}"})
         except OllamaUnavailable as exc:
@@ -238,6 +243,55 @@ class Handler(BaseHTTPRequestHandler):
                 "chunks": stats.chunks,
             },
         )
+
+    def _handle_ask_stream(self, body: dict[str, Any]) -> None:
+        """Stream the answer as newline-delimited JSON (headers are committed
+        before the LLM call, so failures arrive as an ``error`` line)."""
+        query = str(body.get("query", "")).strip()
+        if not query:
+            self._send(400, {"error": "query required"})
+            return
+        top_k = int(body.get("top_k", 6))
+        min_cosine = float(body.get("min_cosine", 0.0))
+        try:
+            with self.state.lock, Store(self.state.db) as store:
+                hits = retrieve(
+                    store,
+                    self.state.embedder,
+                    query,
+                    top_k=top_k,
+                    reranker=self._reranker_for(body.get("rerank")),
+                )
+        except Exception as exc:  # noqa: BLE001 - headers not sent yet
+            self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Connection", "close")
+        for key, value in CORS_HEADERS.items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.close_connection = True
+        try:
+            for piece in answer_stream(
+                query,
+                hits,
+                model=self.state.llm_model,
+                host=self.state.llm_host,
+                min_cosine=min_cosine,
+            ):
+                self.wfile.write((json.dumps({"delta": piece}) + "\n").encode())
+                self.wfile.flush()
+            done = {"done": True, "hits": [hit_to_dict(hit) for hit in hits]}
+            self.wfile.write((json.dumps(done) + "\n").encode())
+            self.wfile.flush()
+        except Exception as exc:  # noqa: BLE001 - headers already sent
+            try:
+                self.wfile.write((json.dumps({"error": str(exc)}) + "\n").encode())
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     def _handle_search(self, body: dict[str, Any]) -> None:
         query = str(body.get("query", "")).strip()

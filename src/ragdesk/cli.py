@@ -8,21 +8,22 @@ import sys
 from pathlib import Path
 
 from ragdesk import __version__
-from ragdesk.answer import DEFAULT_LLM_MODEL, answer
+from ragdesk.answer import answer, answer_stream
 from ragdesk.confluence import ConfluenceError, sync_confluence
-from ragdesk.embed import DEFAULT_OLLAMA_MODEL, get_embedder
+from ragdesk.embed import get_embedder
 from ragdesk.evaluate import evaluate, format_report, load_golden
 from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
 from ragdesk.index import index_paths
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
+from ragdesk.presets import DEFAULT_PRESET, PRESETS
+from ragdesk.presets import resolve as resolve_preset
 from ragdesk.rerank import get_reranker
 from ragdesk.search import retrieve
 from ragdesk.serve import AppState, make_server
 from ragdesk.store import Store
 
 DEFAULT_DB = ".ragdesk/index.db"
-DEFAULT_EMBEDDER = f"ollama:{DEFAULT_OLLAMA_MODEL}"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -33,14 +34,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"ragdesk {__version__}")
     parser.add_argument("--db", default=DEFAULT_DB, help=f"index database (default: {DEFAULT_DB})")
     parser.add_argument(
+        "--preset",
+        choices=sorted(PRESETS),
+        default=DEFAULT_PRESET,
+        help="hardware preset for embedder/reranker/LLM defaults (default: light)",
+    )
+    parser.add_argument(
         "--embedder",
-        default=DEFAULT_EMBEDDER,
-        help=f"embedder spec: ollama[:model] or hash[:dim] (default: {DEFAULT_EMBEDDER})",
+        default=None,
+        help="embedder spec: onnx[:repo], ollama[:model] or hash[:dim] (default: from preset)",
     )
     parser.add_argument(
         "--rerank",
-        default="none",
-        help="reranker spec: none | lexical | fastembed[:model] (default: none)",
+        default=None,
+        help="reranker spec: none | lexical | fastembed[:model] (default: from preset)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -53,7 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_ask = sub.add_parser("ask", help="cited answer via a local Ollama LLM")
     p_ask.add_argument("query")
-    p_ask.add_argument("--model", default=DEFAULT_LLM_MODEL)
+    p_ask.add_argument("--model", default=None, help="LLM model (default: from preset)")
     p_ask.add_argument(
         "--min-cosine",
         type=float,
@@ -61,6 +68,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="grounding gate: refuse below this dense cosine (calibrate per embedder)",
     )
     p_ask.add_argument("--top-k", type=int, default=6)
+    p_ask.add_argument("--stream", action="store_true", help="print tokens as they arrive")
 
     p_eval = sub.add_parser("eval", help="retrieval eval on a golden set")
     p_eval.add_argument("--golden", required=True, type=Path)
@@ -102,7 +110,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
     p_serve.add_argument("--port", type=int, default=8765)
-    p_serve.add_argument("--llm-model", default=DEFAULT_LLM_MODEL)
+    p_serve.add_argument("--llm-model", default=None, help="LLM model (default: from preset)")
     p_serve.add_argument("--llm-host", default=DEFAULT_HOST)
     return parser
 
@@ -117,8 +125,14 @@ def _print_hits(hits) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
-        embedder = get_embedder(args.embedder)
-        reranker = get_reranker(args.rerank)
+        settings = resolve_preset(
+            args.preset,
+            embedder=args.embedder,
+            rerank=args.rerank,
+            llm=getattr(args, "llm_model", None) or getattr(args, "model", None),
+        )
+        embedder = get_embedder(settings["embedder"])
+        reranker = get_reranker(settings["rerank"])
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -127,9 +141,10 @@ def main(argv: list[str] | None = None) -> int:
         state = AppState(
             db=args.db,
             embedder=embedder,
-            rerank=args.rerank,
-            llm_model=args.llm_model,
+            rerank=settings["rerank"],
+            llm_model=settings["llm"],
             llm_host=args.llm_host,
+            preset=settings["preset"],
         )
         server = make_server(state, port=args.port)
         host, port = server.server_address[:2]
@@ -228,11 +243,27 @@ def main(argv: list[str] | None = None) -> int:
                 store, embedder, args.query, top_k=args.top_k, reranker=reranker
             )
             try:
-                text = answer(args.query, hits, model=args.model, min_cosine=args.min_cosine)
+                if args.stream:
+                    for piece in answer_stream(
+                        args.query,
+                        hits,
+                        model=settings["llm"],
+                        min_cosine=args.min_cosine,
+                    ):
+                        print(piece, end="", flush=True)
+                    print()
+                else:
+                    print(
+                        answer(
+                            args.query,
+                            hits,
+                            model=settings["llm"],
+                            min_cosine=args.min_cosine,
+                        )
+                    )
             except OllamaUnavailable as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            print(text)
             if hits:
                 print("\nSources:")
                 for rank, hit in enumerate(hits, start=1):

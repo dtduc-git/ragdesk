@@ -56,6 +56,7 @@ def test_status(base_url: str):
     assert payload["chunks"] == 3
     assert payload["embedder"]["name"] == "hash-4096"
     assert payload["llm_model"] == "test-model"
+    assert payload["sources"] == [{"source": "local", "documents": 3}]
 
 
 def test_search(base_url: str):
@@ -118,3 +119,30 @@ def test_sync_github_success(base_url: str, monkeypatch):
     assert status == 200
     assert payload["indexed"] == 1
     assert payload["repo"] == "owner/repo"
+
+
+def test_ask_stream(base_url: str, monkeypatch):
+    def fake_stream(question, hits, model="", host="", min_cosine=0.0):
+        yield "Hel"
+        yield "lo"
+
+    monkeypatch.setattr("ragdesk.serve.answer_stream", fake_stream)
+    req = urllib.request.Request(
+        f"{base_url}/api/ask/stream",
+        data=json.dumps({"query": "access tokens"}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as response:
+        lines = [
+            json.loads(line) for line in response.read().decode().splitlines() if line
+        ]
+    text = "".join(line["delta"] for line in lines if "delta" in line)
+    assert text == "Hello"
+    assert lines[-1]["done"] is True
+    assert lines[-1]["hits"]
+
+
+def test_ask_stream_requires_query(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/ask/stream", {})
+    assert excinfo.value.code == 400
