@@ -4,8 +4,9 @@ Personal, local-first RAG over your own sources. Index your notes, repos and
 docs — ask in natural language, get cited answers. Everything runs on your
 machine, and **every release publishes its retrieval numbers**.
 
-> **Status: pre-alpha (0.1.0).** Retrieval core + eval harness landed. The
-> desktop shell and cloud connectors are on the roadmap.
+> **Status: pre-alpha (0.1.0).** Retrieval core, eval harness, connectors
+> (local, GitHub, Confluence, Google Drive), streaming answers and a Tauri
+> desktop app are in. Not on PyPI yet — run from source.
 
 ## Why another personal RAG?
 
@@ -46,17 +47,34 @@ ragdesk eval --golden fixtures/golden.jsonl
 ragdesk stats
 ```
 
+## Desktop app (Tauri 2)
+
+```bash
+# one-time: make the CLI visible to the packaged app
+uv tool install ".[onnx]"
+
+cd desktop
+npm install
+npm run tauri dev     # dev window; spawns the local server automatically
+npm run tauri build   # .app + .dmg on macOS
+```
+
+The shell spawns `ragdesk serve` (loopback only) and renders the card-catalog
+UI: streaming chat with citations, hybrid search, source connectors, and the
+status/preset panel. The same UI also runs in a browser for development:
+`uv run ragdesk serve --ui desktop/dist`.
+
 ## What works today (honest list)
 
 | Works | Not yet |
 |---|---|
-| Incremental local file indexing (hash-based) | Desktop UI (Tauri) |
-| Hybrid retrieval: FTS5 BM25 + dense + RRF | GitHub / Confluence / Google Drive connectors |
-| Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Multilingual reranker (`bge-reranker-v2-m3` is not in fastembed yet, upstream qdrant/fastembed#494) |
-| ONNX embedder: EmbeddingGemma-300M int8, CPU (`[onnx]` extra) | RAM presets + model manager |
-| Cited answers via local Ollama LLM + grounding gate | Confluence / GDrive connectors |
-| Eval harness + CI gate (`--min-recall`) | Published eval badge automation |
-| Fail-closed embedder/dimension guard | |
+| Desktop app (Tauri 2): chat, search, sources, settings, streaming answers | PyPI release (v0.1.0 pending) |
+| Indexing: local files, GitHub repos (tarball sync + `gh` token), Confluence spaces, Google Drive (BYO OAuth) | Windows / Linux builds |
+| Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Multilingual reranker (`bge-reranker-v2-m3` not in fastembed yet) |
+| Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Eval badge automation per release |
+| Grounded cited answers via local Ollama, grounding gate, token streaming | MCP-server expansion path for connectors |
+| RAM presets (`light` / `balanced` / `quality`) with per-flag overrides | |
+| Eval harness + CI gates on the fixtures and repo golden sets | |
 
 ## Eval
 
@@ -90,12 +108,11 @@ uv run ragdesk --embedder onnx --db /tmp/eval.db --rerank lexical eval --golden 
 
 ## Roadmap
 
-1. Multilingual reranker backend (`bge-reranker-v2-m3` / `gte-multilingual-reranker-base`
-   via ONNX or llama.cpp — not in fastembed yet)
-2. GitHub connector (device flow, RFC 8628)
-3. Tauri desktop shell + RAM presets (8GB floor, model manager)
-4. Confluence connector (API token), Google Drive (BYO OAuth client + PKCE)
-5. Published eval badge per release
+1. Release v0.1.0: PyPI (trusted publishing) + desktop DMG on GitHub Releases
+2. Eval badge automation per release
+3. Multilingual reranker backend (`bge-reranker-v2-m3` / `gte-multilingual-reranker-base`)
+4. Windows / Linux builds
+5. MCP-server expansion path for connectors
 
 ## Non-goals
 

@@ -8,7 +8,17 @@ use std::sync::Mutex;
 struct ServerChild(Mutex<Option<Child>>);
 
 fn spawn_server() -> Option<Child> {
-    let mut base: Vec<String> = ["serve", "--port", "8765"].iter().map(|s| s.to_string()).collect();
+    // Global flags first, then the subcommand: `ragdesk --db <path> serve ...`
+    let mut base: Vec<String> = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        // Desktop indexes live in the home directory, not the app's cwd.
+        let db = std::env::var("RAGDESK_DB").unwrap_or_else(|_| format!("{home}/.ragdesk/index.db"));
+        base.push("--db".to_string());
+        base.push(db);
+    }
+    base.push("serve".to_string());
+    base.push("--port".to_string());
+    base.push("8765".to_string());
     // Optional override for machines where the preset model is not pulled yet.
     if let Ok(model) = std::env::var("RAGDESK_LLM_MODEL") {
         base.push("--llm-model".to_string());

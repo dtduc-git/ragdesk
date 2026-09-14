@@ -6,15 +6,22 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
 ## Layout
 
 - `src/ragdesk/` — package. `chunk` (paragraph-aware + overlap), `embed`
-  (HashingEmbedder for CI, OllamaEmbedder for real, OnnxEmbedder =
-  EmbeddingGemma int8 with query/doc prompts; shared `tokenize`),
-  `store` (SQLite: FTS5 + float32 vectors + fail-closed embedder guard),
-  `search` (BM25 + dense + RRF; `retrieve` adds the optional rerank stage),
-  `rerank` (LexicalReranker baseline; FastEmbedReranker behind the `onnx`
-  extra), `index` (incremental local files), `evaluate` (recall@5 / nDCG@10 /
-  MRR), `answer` (Ollama LLM + grounding gate), `cli`.
-- `fixtures/` — tiny corpus + golden set for the offline CI eval.
-- `tests/` — pytest; always uses `HashingEmbedder` (never requires Ollama).
+  (HashingEmbedder for CI, OllamaEmbedder, OnnxEmbedder = EmbeddingGemma int8
+  with query/doc prompts; shared `tokenize`), `store` (SQLite: FTS5 + float32
+  vectors + fail-closed embedder guard), `search` (BM25 + dense + RRF;
+  `retrieve` adds the optional rerank stage), `rerank` (LexicalReranker
+  baseline; FastEmbedReranker behind the `onnx` extra), `index` (incremental
+  local files), `github` / `confluence` / `gdrive` connectors, `evaluate`
+  (recall@5 / nDCG@10 / MRR), `answer` (Ollama LLM: non-stream + stream,
+  grounding gate), `serve` (loopback JSON API: status/search/ask/index/sync +
+  optional static UI), `presets` (RAM tiers), `cli`.
+- `desktop/` — Tauri 2 shell (card-catalog UI). Rust spawns `ragdesk serve`
+  with `--db $HOME/.ragdesk/index.db`; env overrides: `RAGDESK_BIN`,
+  `RAGDESK_DB`, `RAGDESK_LLM_MODEL`, `RAGDESK_PROJECT`. Browser mode:
+  `ragdesk serve --ui desktop/dist`.
+- `fixtures/` — tiny corpus + two golden sets (fixtures, repo) for offline CI.
+- `tests/` — pytest; always uses `HashingEmbedder` (never requires Ollama or
+  network). Connector tests monkeypatch HTTP.
 
 ## Commands
 
@@ -27,6 +34,8 @@ uv run ragdesk --embedder hash --db /tmp/eval.db eval --golden fixtures/golden.j
 # repo golden (real numbers; --embedder onnx downloads ~0.3GB on first run)
 uv run ragdesk --embedder hash --db /tmp/eval-repo.db index README.md AGENTS.md SECURITY.md src .github fixtures/docs
 uv run ragdesk --embedder hash --db /tmp/eval-repo.db eval --golden fixtures/golden_repo.jsonl
+# desktop shell
+cd desktop && npm install && npm run tauri build
 ```
 
 ## Conventions
