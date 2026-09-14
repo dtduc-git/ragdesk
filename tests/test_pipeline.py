@@ -50,6 +50,19 @@ def test_chunking_rejects_bad_overlap():
         chunk_text("hello", max_chars=100, overlap=100)
 
 
+def test_index_skips_heavy_dirs(tmp_path: Path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "note.md").write_text("kept")
+    for heavy in ("node_modules/pkg", "target/debug", ".git/objects"):
+        (tmp_path / heavy).mkdir(parents=True)
+        (tmp_path / heavy / "junk.md").write_text("dropped")
+    with Store(tmp_path / "index.db") as store:
+        stats = index_paths(store, HashingEmbedder(), [tmp_path])
+        assert stats.indexed == 1
+        assert [d["path"] for d in store.documents()] == [str(tmp_path / "docs" / "note.md")]
+        assert store.local_paths()[0]["path"] == str(tmp_path)
+
+
 def test_index_and_search_end_to_end(tmp_path: Path):
     docs = tmp_path / "docs"
     docs.mkdir()

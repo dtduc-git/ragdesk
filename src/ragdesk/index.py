@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,12 +43,12 @@ def iter_files(paths: list[Path]) -> Iterator[Path]:
         if path.is_file():
             yield path
             continue
-        for candidate in sorted(path.rglob("*")):
-            if not candidate.is_file():
-                continue
-            if any(part in SKIP_DIRS for part in candidate.parts):
-                continue
-            yield candidate
+        # os.walk (not rglob) so skipped trees are pruned, never traversed:
+        # a repo's target/ or node_modules/ can hold tens of thousands of files.
+        for root, dirs, files in os.walk(path):
+            dirs[:] = sorted(name for name in dirs if name not in SKIP_DIRS)
+            for name in sorted(files):
+                yield Path(root) / name
 
 
 def is_text_file(path: Path) -> bool:
@@ -140,4 +141,5 @@ def index_paths(store: Store, embedder: Embedder, paths: list[Path]) -> IndexSta
             stats.chunks += chunks
         else:
             stats.unchanged += 1
+    store.set_local_roots([str(path) for path in paths if path.exists()])
     return stats

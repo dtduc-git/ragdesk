@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import array
+import json
 import math
 import re
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +177,54 @@ class Store:
             "GROUP BY d.source ORDER BY d.source"
         ).fetchall()
         return [dict(row) for row in rows]
+
+    # --- local roots ------------------------------------------------------------
+
+    def set_local_roots(self, roots: list[str]) -> None:
+        """Remember the chosen paths so the Indexed tab can break them down."""
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+        entries = {entry["path"]: entry for entry in self._local_roots()}
+        for root in roots:
+            entries[root] = {"path": root, "indexed_at": stamp}
+        self.set_meta("local_roots", json.dumps(list(entries.values())))
+
+    def _local_roots(self) -> list[dict[str, str]]:
+        raw = self.get_meta("local_roots")
+        if not raw:
+            return []
+        try:
+            entries = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        return [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+        ]
+
+    def local_paths(self) -> list[dict[str, Any]]:
+        """Per chosen path: documents, chunks and the last index run."""
+        rows = self.conn.execute(
+            "SELECT d.path AS path, COUNT(c.id) AS chunks FROM documents d "
+            "LEFT JOIN chunks c ON c.doc_id = d.id WHERE d.source = 'local' "
+            "GROUP BY d.id"
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for entry in self._local_roots():
+            root = str(entry["path"])
+            prefix = root.rstrip("/") + "/"
+            under = [
+                row for row in rows if row["path"] == root or row["path"].startswith(prefix)
+            ]
+            out.append(
+                {
+                    "path": root,
+                    "documents": len(under),
+                    "chunks": sum(int(row["chunks"]) for row in under),
+                    "indexed_at": str(entry.get("indexed_at", "")),
+                }
+            )
+        return out
 
     # --- search lanes -----------------------------------------------------------
 

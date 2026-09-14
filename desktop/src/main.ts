@@ -18,6 +18,8 @@ type Hit = {
 
 type SourceStat = { source: string; documents: number; chunks: number; indexed_at: string };
 
+type PathStat = { path: string; documents: number; chunks: number; indexed_at: string };
+
 type Status = {
   version: string;
   db: string;
@@ -28,6 +30,7 @@ type Status = {
   documents: number;
   chunks: number;
   sources: SourceStat[];
+  local_paths: PathStat[];
 };
 
 function $<T extends HTMLElement>(id: string): T {
@@ -180,19 +183,33 @@ function renderStatus(): void {
   }
   const totalDocs = status.sources.reduce((sum, entry) => sum + entry.documents, 0);
   const totalChunks = status.sources.reduce((sum, entry) => sum + entry.chunks, 0);
+  const localPaths = status.local_paths ?? [];
   table.innerHTML = `
     <div class="stats-row stats-head">
       <span>Source</span><span>Documents</span><span>Chunks</span><span>Last indexed</span>
     </div>
     ${status.sources
-      .map(
-        (entry) => `<div class="stats-row">
+      .map((entry) => {
+        const children =
+          entry.source === "local"
+            ? localPaths
+                .map(
+                  (child) => `<div class="stats-row stats-sub">
+          <span class="stats-source" title="${escapeHtml(child.path)}">↳ ${escapeHtml(child.path)}</span>
+          <span>${child.documents}</span>
+          <span>${child.chunks}</span>
+          <span>${escapeHtml((child.indexed_at || "").slice(0, 16))}</span>
+        </div>`,
+                )
+                .join("")
+            : "";
+        return `<div class="stats-row">
           <span class="stats-source">${escapeHtml(entry.source)}</span>
           <span>${entry.documents}</span>
           <span>${entry.chunks}</span>
           <span>${escapeHtml((entry.indexed_at || "").slice(0, 16))}</span>
-        </div>`,
-      )
+        </div>${children}`;
+      })
       .join("")}
     <div class="stats-row stats-total">
       <span>Total</span><span>${totalDocs}</span><span>${totalChunks}</span><span></span>

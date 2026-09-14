@@ -8,11 +8,13 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
 - `src/ragdesk/` — package. `chunk` (paragraph-aware + overlap), `embed`
   (HashingEmbedder for CI, OllamaEmbedder, OnnxEmbedder = EmbeddingGemma int8
   with query/doc prompts; shared `tokenize`), `store` (SQLite: FTS5 + float32
-  vectors + fail-closed embedder guard), `search` (BM25 + dense + RRF;
-  `retrieve` adds the optional rerank stage), `rerank` (LexicalReranker
-  baseline; FastEmbedReranker + OnnxReranker = multilingual gte behind the
-  `onnx` extra), `index` (incremental
-  local files), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
+  vectors + fail-closed embedder guard; keeps the chosen local roots in `meta`
+  for the per-path Indexed breakdown via `local_paths()`), `search` (BM25 +
+  dense + RRF; `retrieve` adds the optional rerank stage), `rerank`
+  (LexicalReranker baseline; FastEmbedReranker + OnnxReranker = multilingual
+  gte behind the `onnx` extra), `index` (incremental local files; `iter_files`
+  prunes `SKIP_DIRS` during the walk so `target/`/`node_modules/` are never
+  traversed), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
   `msgraph` (OneDrive + SharePoint, device flow) connectors, `web` (same-host
   HTML crawl, capped pages/depth), `archive`
   (shared repo-tarball extraction), `htmlutil` (shared HTML→text),

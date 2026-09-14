@@ -75,6 +75,9 @@ def test_status(base_url: str):
     assert local["documents"] == 3
     assert local["chunks"] == 3
     assert local["indexed_at"]
+    assert payload["local_paths"][0]["path"] == str(FIXTURES / "docs")
+    assert payload["local_paths"][0]["documents"] == 3
+    assert payload["local_paths"][0]["chunks"] == 3
 
 
 def test_search(base_url: str):
@@ -95,6 +98,8 @@ def test_index_endpoint(base_url: str, tmp_path: Path):
     assert payload["indexed"] == 1
     status, payload = request(f"{base_url}/api/status")
     assert payload["documents"] == 4
+    assert payload["local_paths"][-1]["path"] == str(docs)
+    assert payload["local_paths"][-1]["documents"] == 1
 
 
 def test_index_requires_paths(base_url: str):

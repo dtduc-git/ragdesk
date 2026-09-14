@@ -104,7 +104,7 @@ with — the index refuses mismatched embeddings.
 
 | Works | Not yet |
 |---|---|
-| Desktop app (Tauri 2): chat, search, sources, indexed stats, eval panel, dark theme | PyPI release (v0.1.0 pending) |
+| Desktop app (Tauri 2): chat, search, sources, indexed stats (per source and per chosen path), eval panel, dark theme | PyPI release (v0.1.0 pending) |
 | Indexing: local files (native picker), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML) | Sidecar bundling in the DMG |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |

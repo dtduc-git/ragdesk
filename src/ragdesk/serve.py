@@ -166,6 +166,7 @@ class Handler(BaseHTTPRequestHandler):
                         "documents": stats["documents"],
                         "chunks": stats["chunks"],
                         "sources": store.sources(),
+                        "local_paths": store.local_paths(),
                     },
                 )
             return
