@@ -23,6 +23,8 @@ def base_url(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.delenv("RAGDESK_GITHUB_CLIENT_ID", raising=False)
     monkeypatch.setattr("ragdesk.defaults.GITHUB_CLIENT_ID", "")
+    monkeypatch.setattr("ragdesk.defaults.ATLASSIAN_CLIENT_ID", "")
+    monkeypatch.setattr("ragdesk.defaults.ATLASSIAN_CLIENT_SECRET", "")
     monkeypatch.setattr("ragdesk.serve.token_source", lambda: None)
     monkeypatch.setattr("ragdesk.serve.load_token_file", lambda: {})
     db = tmp_path / "index.db"

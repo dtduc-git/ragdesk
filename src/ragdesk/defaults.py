@@ -16,8 +16,10 @@ Maintainers: fill these in at release time, or set the environment variables
 
 GITHUB_CLIENT_ID = "Ov23liI2iSz3dhYO9yaM"
 
-ATLASSIAN_CLIENT_ID = ""
-ATLASSIAN_CLIENT_SECRET = ""
+ATLASSIAN_CLIENT_ID = "mi2rngO2R6CowrimUzrCAYgwFH53uKPn"
+ATLASSIAN_CLIENT_SECRET = (
+    "ATOAucvlMIE4DoujJR8v97VZPZu3sh-flQIybnjJ9QSSH_mMquB2AYopXmafA7StTKMj4CDF9E59"
+)
 
 GOOGLE_CLIENT_ID = ""
 GOOGLE_CLIENT_SECRET = ""
