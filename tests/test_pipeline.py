@@ -9,6 +9,7 @@ from ragdesk.chunk import chunk_text
 from ragdesk.embed import HashingEmbedder, get_embedder
 from ragdesk.evaluate import evaluate, load_golden
 from ragdesk.index import index_paths
+from ragdesk.llm import OllamaLLM
 from ragdesk.rerank import LexicalReranker, get_reranker
 from ragdesk.search import Hit, hybrid_search
 from ragdesk.store import EmbedderMismatch, Store
@@ -117,6 +118,30 @@ def test_eval_on_fixtures_is_good(tmp_path: Path):
         assert metrics["mrr@10"] >= 0.8, per_query
 
 
+class FakeLLM:
+    """Test double for a ragdesk.llm backend: never touches the network."""
+
+    kind = "fake"
+    model = "fake"
+    host = "fake"
+
+    def __init__(self, replies: list[str] | None = None, pieces: list[str] | None = None):
+        self.replies = list(replies) if replies is not None else ["ok"]
+        self.pieces = list(pieces or [])
+        self.calls = 0
+        self.options: list[dict] = []
+
+    def generate(self, prompt: str, options: dict) -> str:
+        self.calls += 1
+        self.options.append(dict(options))
+        return self.replies.pop(0) if self.replies else ""
+
+    def generate_stream(self, prompt: str, options: dict):
+        self.calls += 1
+        self.options.append(dict(options))
+        yield from self.pieces
+
+
 def test_grounding_gate_skips_llm_when_weak():
     hit = Hit(
         chunk_id=1,
@@ -129,8 +154,8 @@ def test_grounding_gate_skips_llm_when_weak():
         cosine=0.1,
         lanes="dense",
     )
-    assert answer("q", [hit], min_cosine=0.5) == REFUSAL
-    assert answer("q", [], min_cosine=0.0) == REFUSAL
+    assert answer("q", [hit], FakeLLM(), min_cosine=0.5) == REFUSAL
+    assert answer("q", [], FakeLLM(), min_cosine=0.0) == REFUSAL
     prompt = build_prompt("what is the plan?", [hit])
     assert "what is the plan?" in prompt
     assert "docs/a.md" in prompt
@@ -187,20 +212,23 @@ def test_embed_query_matches_embed_for_single_text():
 
 def test_answer_stream_gate_skips_llm():
     hit = make_hit("a.md", "some context", chunk_id=1)
-    assert list(answer_stream("q", [hit], min_cosine=0.99)) == [REFUSAL]
-    assert list(answer_stream("q", [])) == [REFUSAL]
+    llm = FakeLLM(pieces=["never called"])
+    assert list(answer_stream("q", [hit], llm, min_cosine=0.99)) == [REFUSAL]
+    assert list(answer_stream("q", [], llm)) == [REFUSAL]
+    assert llm.calls == 0
 
 
-def test_answer_disables_thinking_and_captures_payload(monkeypatch):
+def test_ollama_backend_sends_grounded_payload(monkeypatch):
     captured: dict = {}
 
     def fake_post_json(host: str, path: str, payload: dict, timeout: float = 300.0) -> dict:
         captured.update(payload)
         return {"response": "ok"}
 
-    monkeypatch.setattr("ragdesk.answer.post_json", fake_post_json)
+    monkeypatch.setattr("ragdesk.llm.post_json", fake_post_json)
     hit = make_hit("a.md", "some context", chunk_id=1)
-    assert answer("q", [hit]) == "ok"
+    assert answer("q", [hit], OllamaLLM("test-tag", "http://127.0.0.1:9")) == "ok"
+    assert captured["model"] == "test-tag"
     assert captured["think"] is False
     assert captured["stream"] is False
     assert captured["options"]["num_predict"] == 400
@@ -208,23 +236,19 @@ def test_answer_disables_thinking_and_captures_payload(monkeypatch):
     assert "plain prose" in captured["prompt"]
 
 
-def test_answer_retries_empty_response_then_refuses(monkeypatch):
-    calls = {"n": 0}
-
-    def fake_post_json(host: str, path: str, payload: dict, timeout: float = 300.0) -> dict:
-        calls["n"] += 1
-        return {"response": "   "}
-
-    monkeypatch.setattr("ragdesk.answer.post_json", fake_post_json)
+def test_answer_retries_empty_response_then_refuses():
     hit = make_hit("a.md", "some context", chunk_id=1)
-    assert answer("q", [hit]) == REFUSAL
-    assert calls["n"] == 2
+    llm = FakeLLM(replies=["   ", "   "])
+    assert answer("q", [hit], llm) == REFUSAL
+    assert llm.calls == 2
 
 
-def test_answer_stream_refuses_when_model_emits_nothing(monkeypatch):
-    def fake_post_stream(host: str, path: str, payload: dict, timeout: float = 300.0):
-        yield {"response": ""}
-
-    monkeypatch.setattr("ragdesk.answer.post_stream", fake_post_stream)
+def test_answer_stream_maps_pieces():
     hit = make_hit("a.md", "some context", chunk_id=1)
-    assert list(answer_stream("q", [hit])) == [REFUSAL]
+    llm = FakeLLM(pieces=["Hel", "", "lo"])
+    assert list(answer_stream("q", [hit], llm)) == ["Hel", "lo"]
+
+
+def test_answer_stream_refuses_when_model_emits_nothing():
+    hit = make_hit("a.md", "some context", chunk_id=1)
+    assert list(answer_stream("q", [hit], FakeLLM(pieces=[]))) == [REFUSAL]

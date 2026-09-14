@@ -1,4 +1,4 @@
-"""Grounded answer generation via a local Ollama LLM (optional).
+"""Grounded answer generation over any :mod:`ragdesk.llm` backend.
 
 The grounding gate refuses to call the LLM when retrieval is weak — the
 cosine threshold is embedder-specific, so calibrate it per embedder with the
@@ -8,14 +8,14 @@ eval harness instead of trusting the default.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
-from ragdesk.ollama import DEFAULT_HOST, post_json, post_stream
 from ragdesk.search import Hit
 
 DEFAULT_LLM_MODEL = "qwen3.5:4b"
 # Grounded answers are short; the cap also stops small models from looping
-# (a 1k-token ramble blocks the Ollama queue for minutes on laptop hardware).
-# num_ctx keeps the KV cache small — the 8GB-preset story depends on it.
+# (a 1k-token ramble holds the model for minutes on laptop hardware).
+# ``num_ctx`` is Ollama-specific and ignored by other backends.
 ANSWER_OPTIONS = {"num_predict": 400, "temperature": 0.2, "num_ctx": 8192}
 
 REFUSAL = "I could not find this in your indexed sources."
@@ -45,26 +45,17 @@ def build_prompt(question: str, hits: list[Hit]) -> str:
 def answer(
     question: str,
     hits: list[Hit],
-    model: str = DEFAULT_LLM_MODEL,
-    host: str = DEFAULT_HOST,
+    llm: Any,
+    *,
     min_cosine: float = 0.0,
 ) -> str:
     best_cosine = max((hit.cosine for hit in hits), default=0.0)
     if not hits or best_cosine < min_cosine:
         return REFUSAL
-    payload = {
-        "model": model,
-        "prompt": build_prompt(question, hits),
-        "stream": False,
-        # Grounded QA wants the fast path: thinking models otherwise burn
-        # a hidden chain-of-thought before the (short) cited answer.
-        "think": False,
-        "options": dict(ANSWER_OPTIONS),
-    }
+    prompt = build_prompt(question, hits)
     # Small models occasionally return an empty completion; one retry.
     for _ in range(2):
-        data = post_json(host, "/api/generate", payload)
-        text = str(data.get("response", "")).strip()
+        text = str(llm.generate(prompt, ANSWER_OPTIONS)).strip()
         if text:
             return text
     return REFUSAL
@@ -73,8 +64,8 @@ def answer(
 def answer_stream(
     question: str,
     hits: list[Hit],
-    model: str = DEFAULT_LLM_MODEL,
-    host: str = DEFAULT_HOST,
+    llm: Any,
+    *,
     min_cosine: float = 0.0,
 ) -> Iterator[str]:
     """Same contract as :func:`answer`, but yields text pieces as they arrive."""
@@ -82,16 +73,8 @@ def answer_stream(
     if not hits or best_cosine < min_cosine:
         yield REFUSAL
         return
-    payload = {
-        "model": model,
-        "prompt": build_prompt(question, hits),
-        "stream": True,
-        "think": False,
-        "options": dict(ANSWER_OPTIONS),
-    }
     emitted = False
-    for chunk in post_stream(host, "/api/generate", payload):
-        piece = chunk.get("response", "")
+    for piece in llm.generate_stream(build_prompt(question, hits), ANSWER_OPTIONS):
         if piece:
             emitted = True
             yield str(piece)

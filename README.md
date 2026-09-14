@@ -18,22 +18,26 @@ search (SQLite FTS5 BM25 + embeddings + RRF fusion) in a single SQLite file.
 ## Quickstart
 
 ```bash
-# 1. local models via Ollama (embedding ~330MB, LLM ~3GB)
-ollama pull embeddinggemma:300m
-ollama pull qwen3.5:4b
+# 1. install ([onnx] for CPU embeddings; add [mlx] on Apple Silicon to run the
+#    answer model in-process — no Ollama needed at all)
+uv tool install 'ragdesk[onnx,mlx] @ git+https://github.com/dtduc-git/ragdesk'
 
-# 2. install (pre-release: from source; [onnx] extra for local ONNX models)
-uv tool install 'ragdesk[onnx] @ git+https://github.com/dtduc-git/ragdesk'
-
-# 3. index your stuff (incremental, read-only)
+# 2. index your stuff (incremental, read-only)
 ragdesk index ~/notes ~/repos/myrepo
 
-# no Ollama? EmbeddingGemma runs on CPU via ONNX (downloads ~0.3GB once):
-ragdesk --embedder onnx index ~/notes
-
-# 4. ask (grounded + cited, refuses when context is weak)
+# 3. ask — the backend ladder never re-downloads what you already have:
+#    a running Ollama with qwen3.5:4b (or another model via RAGDESK_LLM) wins;
+#    otherwise MLX runs mlx-community/Qwen3.5-4B-MLX-4bit in-process.
 ragdesk ask "how does the deploy rollback work?"
-ragdesk ask "..." --min-cosine 0.35   # grounding gate (calibrate per embedder)
+ragdesk ask "..." --llm ollama:qwen3.5:9b        # force a specific backend
+ragdesk ask "..." --llm mlx:some/hf-repo         # or a specific MLX repo
+
+# no Ollama and no MLX? Indexing and search still work — only chat needs a model:
+ragdesk --embedder onnx index ~/notes
+# EmbeddingGemma runs on CPU via ONNX (downloads ~0.3GB once)
+
+# 4. grounding gate (calibrate the cosine threshold per embedder)
+ragdesk ask "..." --min-cosine 0.35
 
 # retrieval only
 ragdesk search "oauth pkce desktop"
@@ -109,7 +113,7 @@ with — the index refuses mismatched embeddings.
 | Indexing: local files (native picker), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML) | Sidecar bundling in the DMG |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
-| Grounded cited answers via local Ollama, grounding gate, token streaming | MCP-server expansion path for connectors |
+| Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; grounding gate, token streaming | OpenAI-compatible endpoint (LM Studio / llama.cpp / cloud) |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
 | RAM presets (`light` / `balanced` / `quality`) with per-flag overrides | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |

@@ -112,6 +112,15 @@
           </header>
           <dl class="status-table" id="status-table"></dl>
           <div class="panel-note">
+            <h3>Answer model</h3>
+            <p>
+              ragdesk reuses a running Ollama that already has the model pulled (~2.5GB, zero
+              extra download). Without it, the MLX extra runs the model in-process on Apple
+              Silicon: <code>uv tool install "ragdesk[mlx]"</code>. Override with
+              <code>--llm ollama[:model]</code> or <code>--llm mlx[:hf-repo]</code>.
+            </p>
+          </div>
+          <div class="panel-note">
             <h3>Auto re-index</h3>
             <p>
               Re-scans the local paths you have indexed — incremental, unchanged files are

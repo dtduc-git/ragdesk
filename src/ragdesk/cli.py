@@ -21,6 +21,7 @@ from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
 from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.index import index_paths
+from ragdesk.llm import LLMUnavailable, resolve_llm
 from ragdesk.mcp import McpServer
 from ragdesk.msgraph import MsGraphError, device_flow_connect, resolve_client_id
 from ragdesk.msgraph import sync_onedrive as sync_msgraph
@@ -69,9 +70,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search.add_argument("query")
     p_search.add_argument("--top-k", type=int, default=8)
 
-    p_ask = sub.add_parser("ask", help="cited answer via a local Ollama LLM")
+    p_ask = sub.add_parser("ask", help="cited answer via a local LLM")
     p_ask.add_argument("query")
-    p_ask.add_argument("--model", default=None, help="LLM model (default: from preset)")
+    p_ask.add_argument("--model", default=None, help="Ollama model tag (default: from preset)")
+    p_ask.add_argument(
+        "--llm",
+        default=None,
+        help="backend spec: auto (reuse Ollama with the model, else MLX), "
+        "ollama[:model] or mlx[:hf-repo]",
+    )
     p_ask.add_argument(
         "--min-cosine",
         type=float,
@@ -80,6 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_ask.add_argument("--top-k", type=int, default=6)
     p_ask.add_argument("--stream", action="store_true", help="print tokens as they arrive")
+    p_ask.add_argument("--llm-host", default=DEFAULT_HOST, help="Ollama host override")
 
     p_eval = sub.add_parser("eval", help="retrieval eval on a golden set")
     p_eval.add_argument("--golden", required=True, type=Path)
@@ -150,6 +158,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
     p_serve.add_argument("--port", type=int, default=8765)
     p_serve.add_argument("--llm-model", default=None, help="LLM model (default: from preset)")
+    p_serve.add_argument(
+        "--llm",
+        default="",
+        help="backend spec: auto (default), ollama[:model] or mlx[:hf-repo]",
+    )
     p_serve.add_argument("--llm-host", default=DEFAULT_HOST)
     p_serve.add_argument("--ui", default="", help="serve a built UI directory (browser mode)")
     p_serve.add_argument(
@@ -191,8 +204,9 @@ def main(argv: list[str] | None = None) -> int:
             db=args.db,
             embedder=embedder,
             rerank=settings["rerank"],
-            llm_model=settings["llm"],
+            llm_model=args.llm_model or settings["llm"],
             llm_host=args.llm_host,
+            llm_spec=args.llm,
             preset=settings["preset"],
             ui_dir=args.ui,
         )
@@ -396,12 +410,14 @@ def main(argv: list[str] | None = None) -> int:
             hits = retrieve(
                 store, embedder, args.query, top_k=args.top_k, reranker=reranker
             )
+            spec = args.llm or (f"ollama:{args.model}" if args.model else None)
             try:
+                llm = resolve_llm(spec, preset=settings["preset"], host=args.llm_host)
                 if args.stream:
                     for piece in answer_stream(
                         args.query,
                         hits,
-                        model=settings["llm"],
+                        llm,
                         min_cosine=args.min_cosine,
                     ):
                         print(piece, end="", flush=True)
@@ -411,11 +427,11 @@ def main(argv: list[str] | None = None) -> int:
                         answer(
                             args.query,
                             hits,
-                            model=settings["llm"],
+                            llm,
                             min_cosine=args.min_cosine,
                         )
                     )
-            except OllamaUnavailable as exc:
+            except (OllamaUnavailable, LLMUnavailable) as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             if hits:

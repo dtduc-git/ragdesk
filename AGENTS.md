@@ -26,7 +26,11 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   status/search/ask/index/sync + connections connect/disconnect + optional
   static UI; hosts the auto-index timer), `settings` (app config in
   `~/.config/ragdesk/settings.json`, 0600: `auto_index_hours`, default 1,
-  0 = off), `presets` (RAM tiers), `cli`.
+  0 = off), `llm` (answer backends + the no-double-download ladder: `auto`
+  reuses a running Ollama that already has the preset model, else MLX
+  in-process from the shared HF cache; `--llm`/`RAGDESK_LLM` override),
+  `presets` (RAM tiers; each carries an Ollama tag and an `llm_mlx` repo),
+  `cli`.
 - `desktop/` — Tauri 2 shell (card-catalog UI). Rust spawns `ragdesk serve`
   with `--db $HOME/.ragdesk/index.db`; a watchdog thread respawns it if it
   dies (skipping the respawn when another instance owns the port) and the

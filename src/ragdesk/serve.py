@@ -47,6 +47,7 @@ from ragdesk.gitlab import DEFAULT_BASE_URL as GITLAB_DEFAULT_BASE
 from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.gitlab import whoami as gitlab_whoami
 from ragdesk.index import index_paths
+from ragdesk.llm import LLMUnavailable, llm_status, resolve_llm
 from ragdesk.msgraph import MsGraphError, sync_onedrive
 from ragdesk.msgraph import device_flow_poll_once as ms_poll_once
 from ragdesk.msgraph import device_flow_start as ms_device_start
@@ -104,6 +105,7 @@ class AppState:
         rerank: str = "none",
         llm_model: str = "",
         llm_host: str = "",
+        llm_spec: str = "",
         preset: str = "",
         ui_dir: str = "",
     ) -> None:
@@ -112,6 +114,8 @@ class AppState:
         self.rerank = rerank
         self.llm_model = llm_model
         self.llm_host = llm_host
+        self.llm_spec = llm_spec
+        self.llm: Any = None
         self.preset = preset
         self.ui_dir = Path(ui_dir) if ui_dir else None
         self.github_device: dict[str, Any] | None = None
@@ -163,6 +167,11 @@ class Handler(BaseHTTPRequestHandler):
                         },
                         "rerank": self.state.rerank,
                         "llm_model": self.state.llm_model,
+                        "llm": llm_status(
+                            self.state.llm_spec or None,
+                            preset=self.state.preset or "light",
+                            host=self.state.llm_host,
+                        ),
                         "preset": self.state.preset,
                         "documents": stats["documents"],
                         "chunks": stats["chunks"],
@@ -277,6 +286,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send(404, {"error": f"not found: {self.path}"})
         except OllamaUnavailable as exc:
+            self._send(503, {"error": str(exc)})
+        except LLMUnavailable as exc:
             self._send(503, {"error": str(exc)})
         except (
             GitHubError,
@@ -871,8 +882,7 @@ class Handler(BaseHTTPRequestHandler):
             for piece in answer_stream(
                 query,
                 hits,
-                model=self.state.llm_model,
-                host=self.state.llm_host,
+                LazyLLM(self.state),
                 min_cosine=min_cosine,
             ):
                 self.wfile.write((json.dumps({"delta": piece}) + "\n").encode())
@@ -939,13 +949,7 @@ class Handler(BaseHTTPRequestHandler):
                 top_k=top_k,
                 reranker=self._reranker_for(body.get("rerank")),
             )
-        text = answer(
-            query,
-            hits,
-            model=self.state.llm_model,
-            host=self.state.llm_host,
-            min_cosine=min_cosine,
-        )
+        text = answer(query, hits, LazyLLM(self.state), min_cosine=min_cosine)
         self._send(
             200,
             {
@@ -962,6 +966,38 @@ def make_server(
 ) -> ThreadingHTTPServer:
     handler = type("BoundHandler", (Handler,), {"state": state})
     return ThreadingHTTPServer((host, port), handler)
+
+
+def ensure_llm(state: AppState) -> Any:
+    """Resolve once per process; the ladder never downloads behind your back."""
+    if state.llm is None:
+        state.llm = resolve_llm(
+            state.llm_spec or None,
+            preset=state.preset or "light",
+            host=state.llm_host,
+        )
+    return state.llm
+
+
+class LazyLLM:
+    """Resolves the backend on first real use — a gated refusal never needs one."""
+
+    def __init__(self, state: AppState) -> None:
+        self._state = state
+
+    @property
+    def kind(self) -> str:
+        return str(getattr(ensure_llm(self._state), "kind", ""))
+
+    @property
+    def model(self) -> str:
+        return str(getattr(ensure_llm(self._state), "model", ""))
+
+    def generate(self, prompt: str, options: dict[str, Any]) -> str:
+        return str(ensure_llm(self._state).generate(prompt, options))
+
+    def generate_stream(self, prompt: str, options: dict[str, Any]) -> Any:
+        return ensure_llm(self._state).generate_stream(prompt, options)
 
 
 def run_auto_index(state: AppState) -> dict[str, Any]:

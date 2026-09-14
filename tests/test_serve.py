@@ -29,6 +29,7 @@ def base_url(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("ragdesk.defaults.GOOGLE_CLIENT_SECRET", "")
     monkeypatch.setattr("ragdesk.serve.token_source", lambda: None)
     monkeypatch.setattr("ragdesk.serve.load_token_file", lambda: {})
+    monkeypatch.setattr("ragdesk.llm.mlx_available", lambda: False)
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
     monkeypatch.delenv("GITLAB_TOKEN", raising=False)
     db = tmp_path / "index.db"
@@ -495,7 +496,7 @@ def test_ask_llm_unavailable_surfaces_503(base_url: str):
         request(f"{base_url}/api/ask", {"query": "access tokens"})
     assert excinfo.value.code == 503
     body = json.loads(excinfo.value.read())
-    assert "cannot reach Ollama" in body["error"]
+    assert "no LLM backend" in body["error"]
 
 
 def test_sync_github_requires_repo(base_url: str):
@@ -518,7 +519,7 @@ def test_sync_github_success(base_url: str, monkeypatch):
 
 
 def test_ask_stream(base_url: str, monkeypatch):
-    def fake_stream(question, hits, model="", host="", min_cosine=0.0):
+    def fake_stream(question, hits, llm, min_cosine=0.0):
         yield "Hel"
         yield "lo"
 

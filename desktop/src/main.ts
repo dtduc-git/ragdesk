@@ -34,6 +34,7 @@ type Status = {
   sources: SourceStat[];
   local_paths: PathStat[];
   auto_index: { hours: number; last_run: string };
+  llm: { kind: string; model: string; note: string };
 };
 
 function $<T extends HTMLElement>(id: string): T {
@@ -169,18 +170,24 @@ async function loadStatus(): Promise<void> {
   }
 }
 
+function llmLabel(status: Status): string {
+  return status.llm.kind === "none"
+    ? "no LLM — see Settings"
+    : `${status.llm.model} (${status.llm.kind})`;
+}
+
 function renderStatus(): void {
   if (!status) return;
   $("stat-docs").textContent = String(status.documents);
   $("stat-chunks").textContent = String(status.chunks);
-  $("rail-meta").textContent = `${status.preset} preset · ${status.llm_model}`;
+  $("rail-meta").textContent = `${status.preset} preset · ${llmLabel(status)}`;
 
   const rows: Array<[string, string]> = [
     ["version", status.version],
     ["database", status.db],
     ["embedder", status.embedder.name ?? "not set"],
     ["rerank", status.rerank],
-    ["model", status.llm_model],
+    ["llm", status.llm.kind === "none" ? status.llm.note : `${status.llm.model} (${status.llm.kind})`],
     ["preset", status.preset],
   ];
   $("status-table").innerHTML = rows
