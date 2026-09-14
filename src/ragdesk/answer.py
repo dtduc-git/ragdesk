@@ -15,7 +15,8 @@ from ragdesk.search import Hit
 DEFAULT_LLM_MODEL = "qwen3.5:4b"
 # Grounded answers are short; the cap also stops small models from looping
 # (a 1k-token ramble blocks the Ollama queue for minutes on laptop hardware).
-ANSWER_OPTIONS = {"num_predict": 400, "temperature": 0.2}
+# num_ctx keeps the KV cache small — the 8GB-preset story depends on it.
+ANSWER_OPTIONS = {"num_predict": 400, "temperature": 0.2, "num_ctx": 8192}
 
 REFUSAL = "I could not find this in your indexed sources."
 

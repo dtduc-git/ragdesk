@@ -189,6 +189,7 @@ def test_answer_disables_thinking_and_captures_payload(monkeypatch):
     assert captured["think"] is False
     assert captured["stream"] is False
     assert captured["options"]["num_predict"] == 400
+    assert captured["options"]["num_ctx"] == 8192
     assert "plain prose" in captured["prompt"]
 
 
