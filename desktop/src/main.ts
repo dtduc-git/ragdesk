@@ -331,54 +331,332 @@ $<HTMLFormElement>("search-form").addEventListener("submit", async (event) => {
 
 // --- sources ------------------------------------------------------------------
 
-const SYNC_ENDPOINTS: Record<string, string> = {
-  local: "/api/index",
-  github: "/api/sync/github",
-  confluence: "/api/sync/confluence",
-  gdrive: "/api/sync/gdrive",
+type Connections = {
+  github: { connected: boolean; source: string | null; login: string };
+  confluence: {
+    connected: boolean;
+    source: string | null;
+    base_url: string;
+    email: string;
+    display_name: string;
+  };
+  gdrive: { connected: boolean; email: string };
 };
 
-function renderSyncResult(element: HTMLElement, payload: Record<string, number>): void {
-  const parts = ["scanned", "indexed", "unchanged", "skipped", "chunks"]
-    .filter((key) => key in payload)
-    .map((key) => `${key} ${payload[key]}`);
-  element.textContent = parts.join(" · ") || "done";
+let connections: Connections | null = null;
+let selectedPaths: string[] = [];
+const sourceResults: Record<string, string> = {};
+
+const GITHUB_SOURCE_LABEL: Record<string, string> = {
+  credentials: "saved token",
+  env: "GITHUB_TOKEN env",
+  gh: "gh CLI login",
+  explicit: "token",
+};
+
+function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-document.querySelectorAll<HTMLFormElement>(".source-form").forEach((form) => {
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const kind = form.dataset.source ?? "";
-    const result = form.querySelector<HTMLElement>(".source-result") as HTMLElement;
-    const button = form.querySelector<HTMLButtonElement>("button");
-    const data = new FormData(form);
-    const payload: Record<string, unknown> = {};
-    data.forEach((value, key) => {
-      if (String(value).trim()) payload[key] = String(value).trim();
+function setResult(kind: string, message: string): void {
+  sourceResults[kind] = message;
+  const element = document.querySelector<HTMLElement>(`[data-result="${kind}"]`);
+  if (element) element.textContent = message;
+}
+
+function summarize(payload: Record<string, unknown>): string {
+  const parts = ["scanned", "indexed", "unchanged", "skipped", "chunks"]
+    .filter((key) => typeof payload[key] === "number")
+    .map((key) => `${key} ${payload[key]}`);
+  return parts.length ? parts.join(" · ") : "done";
+}
+
+async function loadConnections(): Promise<void> {
+  try {
+    connections = await get<Connections>("/api/connections");
+  } catch {
+    connections = null;
+  }
+  renderSources();
+}
+
+async function pickPaths(kind: "folder" | "files"): Promise<void> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selection = await open({
+      directory: kind === "folder",
+      multiple: kind === "files",
+      title: kind === "folder" ? "Choose a folder to index" : "Choose files to index",
     });
-    if (kind === "local") {
-      payload.paths = String(payload.paths ?? "")
+    if (!selection) return;
+    for (const path of Array.isArray(selection) ? selection : [selection]) {
+      if (!selectedPaths.includes(path)) selectedPaths.push(path);
+    }
+    renderSources();
+  } catch {
+    toast("Folder picking works in the desktop app; paste a path instead.");
+  }
+}
+
+function localCard(): string {
+  const chips = selectedPaths
+    .map(
+      (path) =>
+        `<span class="path-chip"><code>${escapeHtml(path)}</code><button type="button" class="chip-x" data-action="remove-path" data-path="${escapeHtml(path)}" aria-label="Remove path">×</button></span>`,
+    )
+    .join("");
+  const picker = isTauri()
+    ? `<div class="button-row">
+         <button class="btn" type="button" data-action="pick-folder">Choose folder…</button>
+         <button class="btn" type="button" data-action="pick-files">Choose files…</button>
+       </div>`
+    : "";
+  const count = selectedPaths.length;
+  return `<div class="source-card">
+    <h3>Local files</h3>
+    <p class="source-note">Pick folders or files — everything is read, never modified.</p>
+    <div class="path-list">${chips || `<p class="muted">Nothing selected yet.</p>`}</div>
+    ${picker}
+    <form data-form="local-add" class="field-row">
+      <input name="paths" placeholder="…or paste a path, comma-separated" />
+      <button class="btn" type="submit">Add</button>
+    </form>
+    <form data-form="local-index">
+      <button class="btn btn-primary" type="submit" ${count ? "" : "disabled"}>
+        Index ${count ? `${count} path${count === 1 ? "" : "s"}` : "paths"}
+      </button>
+    </form>
+    <p class="source-result" data-result="local"></p>
+  </div>`;
+}
+
+function githubCard(conn: Connections["github"]): string {
+  if (!conn.connected) {
+    return `<div class="source-card">
+      <h3>GitHub</h3>
+      <p class="source-note">Read-only repository sync. Log in with your <code>gh</code> CLI, or paste a token.</p>
+      <div class="button-row">
+        <button class="btn" type="button" data-action="github-gh">Use gh login</button>
+      </div>
+      <form data-form="github-connect" class="stack">
+        <input name="token" type="password" placeholder="personal access token" />
+        <button class="btn" type="submit">Connect with token</button>
+      </form>
+      <p class="source-result" data-result="github"></p>
+    </div>`;
+  }
+  const label = GITHUB_SOURCE_LABEL[conn.source ?? ""] ?? conn.source ?? "token";
+  return `<div class="source-card is-connected">
+    <h3>GitHub <span class="conn-badge">connected</span></h3>
+    <p class="source-note">${conn.login ? escapeHtml(conn.login) : "token"} · via ${escapeHtml(label)}</p>
+    <div class="button-row">
+      <button class="btn btn-quiet" type="button" data-action="disconnect-github">Disconnect</button>
+    </div>
+    <form data-form="github-sync" class="stack">
+      <input name="repo" placeholder="owner/name" required />
+      <div class="field-row">
+        <input name="ref" placeholder="branch (optional)" />
+        <input name="subdir" placeholder="subfolder (optional)" />
+      </div>
+      <button class="btn btn-primary" type="submit">Sync repo</button>
+    </form>
+    <p class="source-result" data-result="github"></p>
+  </div>`;
+}
+
+function confluenceCard(conn: Connections["confluence"]): string {
+  if (!conn.connected) {
+    return `<div class="source-card">
+      <h3>Confluence</h3>
+      <p class="source-note">Connect once with your site, then sync any space.</p>
+      <form data-form="confluence-connect" class="stack">
+        <input name="base_url" placeholder="https://team.atlassian.net" required />
+        <div class="field-row">
+          <input name="email" placeholder="you@company.com" required />
+          <input name="token" type="password" placeholder="API token" required />
+        </div>
+        <button class="btn" type="submit">Connect</button>
+      </form>
+      <p class="source-result" data-result="confluence"></p>
+    </div>`;
+  }
+  const who = conn.display_name || conn.email;
+  const via = conn.source === "env" ? " · via CONFLUENCE_EMAIL/TOKEN env" : "";
+  return `<div class="source-card is-connected">
+    <h3>Confluence <span class="conn-badge">connected</span></h3>
+    <p class="source-note">${escapeHtml(who)} · ${escapeHtml(conn.base_url)}${via}</p>
+    <div class="button-row">
+      <button class="btn btn-quiet" type="button" data-action="disconnect-confluence">Disconnect</button>
+    </div>
+    <form data-form="confluence-sync" class="stack">
+      <input name="space" placeholder="space key, e.g. DOCS" required />
+      <button class="btn btn-primary" type="submit">Sync space</button>
+    </form>
+    <p class="source-result" data-result="confluence"></p>
+  </div>`;
+}
+
+function gdriveCard(conn: Connections["gdrive"]): string {
+  if (!conn.connected) {
+    return `<div class="source-card">
+      <h3>Google Drive</h3>
+      <p class="source-note">Bring your own OAuth client ID — your browser asks for consent once.</p>
+      <form data-form="gdrive-connect" class="stack">
+        <input name="client_id" placeholder="OAuth client ID" required />
+        <input name="client_secret" type="password" placeholder="client secret (optional)" />
+        <button class="btn" type="submit">Connect Google Drive</button>
+      </form>
+      <p class="source-result" data-result="gdrive"></p>
+    </div>`;
+  }
+  return `<div class="source-card is-connected">
+    <h3>Google Drive <span class="conn-badge">connected</span></h3>
+    <p class="source-note">${conn.email ? escapeHtml(conn.email) : "consent saved"}</p>
+    <div class="button-row">
+      <button class="btn btn-quiet" type="button" data-action="disconnect-gdrive">Disconnect</button>
+    </div>
+    <form data-form="gdrive-sync" class="stack">
+      <input name="folder_id" placeholder="folder id (optional — all files by default)" />
+      <button class="btn btn-primary" type="submit">Sync Drive</button>
+    </form>
+    <p class="source-result" data-result="gdrive"></p>
+  </div>`;
+}
+
+function renderSources(): void {
+  const github = connections?.github ?? { connected: false, source: null, login: "" };
+  const confluence = connections?.confluence ?? {
+    connected: false,
+    source: null,
+    base_url: "",
+    email: "",
+    display_name: "",
+  };
+  const gdrive = connections?.gdrive ?? { connected: false, email: "" };
+  $("source-grid").innerHTML =
+    localCard() + githubCard(github) + confluenceCard(confluence) + gdriveCard(gdrive);
+  for (const [kind, message] of Object.entries(sourceResults)) {
+    const element = document.querySelector<HTMLElement>(`[data-result="${kind}"]`);
+    if (element) element.textContent = message;
+  }
+}
+
+$("source-grid").addEventListener("submit", async (event) => {
+  const form = event.target as HTMLFormElement;
+  if (!(form instanceof HTMLFormElement) || !form.dataset.form) return;
+  event.preventDefault();
+  const kind = form.dataset.form;
+  const provider = kind.split("-")[0];
+  const payload: Record<string, unknown> = {};
+  new FormData(form).forEach((value, key) => {
+    if (String(value).trim()) payload[key] = String(value).trim();
+  });
+  try {
+    if (kind === "local-add") {
+      for (const part of String(payload.paths ?? "")
         .split(",")
-        .map((part) => part.trim())
-        .filter(Boolean);
-      if ((payload.paths as string[]).length === 0) {
-        result.textContent = "Add at least one path.";
+        .map((path) => path.trim())
+        .filter(Boolean)) {
+        if (!selectedPaths.includes(part)) selectedPaths.push(part);
+      }
+      renderSources();
+      return;
+    }
+    if (kind === "local-index") {
+      if (selectedPaths.length === 0) {
+        setResult("local", "Choose at least one path first.");
         return;
       }
-    }
-    if (button) button.disabled = true;
-    result.textContent = "working…";
-    try {
-      const response = await post<Record<string, number>>(SYNC_ENDPOINTS[kind], payload);
-      renderSyncResult(result, response);
+      setResult("local", "working…");
+      const response = await post<Record<string, number>>("/api/index", {
+        paths: selectedPaths,
+      });
+      selectedPaths = [];
+      setResult("local", summarize(response));
+      renderSources();
       await loadStatus();
-    } catch (error) {
-      result.textContent = error instanceof Error ? error.message : String(error);
-      toast(result.textContent);
-    } finally {
-      if (button) button.disabled = false;
+      return;
     }
-  });
+    const endpoints: Record<string, string> = {
+      "github-connect": "/api/connections/github",
+      "github-sync": "/api/sync/github",
+      "confluence-connect": "/api/connections/confluence",
+      "confluence-sync": "/api/sync/confluence",
+      "gdrive-connect": "/api/connections/gdrive",
+      "gdrive-sync": "/api/sync/gdrive",
+    };
+    const endpoint = endpoints[kind];
+    if (!endpoint) return;
+    setResult(provider, "working…");
+    const response = await post<Record<string, unknown>>(endpoint, payload);
+    if (kind.endsWith("-connect")) {
+      const detail = String(response.email ?? response.display_name ?? response.login ?? "");
+      setResult(provider, `connected${detail ? ` — ${detail}` : ""}`);
+      await loadConnections();
+    } else {
+      setResult(provider, summarize(response));
+      await loadStatus();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setResult(provider, message);
+    toast(message);
+  }
+});
+
+$("source-grid").addEventListener("click", async (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
+  if (!target) return;
+  const action = target.dataset.action ?? "";
+  if (action === "pick-folder") {
+    void pickPaths("folder");
+    return;
+  }
+  if (action === "pick-files") {
+    void pickPaths("files");
+    return;
+  }
+  if (action === "remove-path") {
+    selectedPaths = selectedPaths.filter((path) => path !== target.dataset.path);
+    renderSources();
+    return;
+  }
+  if (action.startsWith("disconnect-")) {
+    const provider = action.split("-")[1];
+    setResult(provider, "disconnecting…");
+    try {
+      await post(`/api/connections/${provider}/disconnect`, {});
+      await loadConnections();
+      if (provider === "github" && connections?.github.connected) {
+        const label =
+          GITHUB_SOURCE_LABEL[connections.github.source ?? ""] ??
+          connections.github.source ??
+          "an ambient source";
+        setResult("github", `saved token removed — still connected via ${label}`);
+      } else if (provider === "confluence" && connections?.confluence.connected) {
+        setResult("confluence", "saved credentials removed — still connected via env vars");
+      } else {
+        setResult(provider, "disconnected");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setResult(provider, message);
+      toast(message);
+    }
+    return;
+  }
+  if (action === "github-gh") {
+    setResult("github", "using gh login…");
+    try {
+      const response = await post<{ login?: string }>("/api/connections/github/gh", {});
+      setResult("github", `connected — ${response.login ?? "gh"}`);
+      await loadConnections();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setResult("github", message);
+      toast(message);
+    }
+  }
 });
 
 // --- boot ---------------------------------------------------------------------
@@ -395,6 +673,7 @@ async function boot(): Promise<void> {
   }
   if (status) {
     renderStatus();
+    await loadConnections();
   } else {
     $("rail-meta").textContent = "server offline — start it with: ragdesk serve";
   }

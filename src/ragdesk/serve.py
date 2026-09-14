@@ -7,6 +7,7 @@ auth: the server is loopback-only by design.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -266,6 +267,14 @@ class Handler(BaseHTTPRequestHandler):
         github_entry = credentials.get("github")
         gh_source = token_source()
         confluence_entry = credentials.get("confluence")
+        confluence_store = bool(
+            confluence_entry.get("base_url")
+            and confluence_entry.get("email")
+            and confluence_entry.get("token")
+        )
+        confluence_env = bool(
+            os.environ.get("CONFLUENCE_EMAIL") and os.environ.get("CONFLUENCE_TOKEN")
+        )
         gdrive_payload = load_token_file()
         return {
             "github": {
@@ -274,10 +283,9 @@ class Handler(BaseHTTPRequestHandler):
                 "login": github_entry.get("login", ""),
             },
             "confluence": {
-                "connected": bool(
-                    confluence_entry.get("base_url")
-                    and confluence_entry.get("email")
-                    and confluence_entry.get("token")
+                "connected": confluence_store or confluence_env,
+                "source": (
+                    "credentials" if confluence_store else ("env" if confluence_env else None)
                 ),
                 "base_url": confluence_entry.get("base_url", ""),
                 "email": confluence_entry.get("email", ""),

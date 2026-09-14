@@ -61,7 +61,16 @@ npm run tauri build   # .app + .dmg on macOS
 
 The shell spawns `ragdesk serve` (loopback only) and renders the card-catalog
 UI: streaming chat with citations, hybrid search, source connectors, and the
-status/preset panel. The same UI also runs in a browser for development:
+status/preset panel.
+
+- **Local sources** use a native folder/file picker (multi-select), so you
+  don't paste paths.
+- **Cloud sources have a one-time Connect flow**: GitHub (`gh` login or a
+  token), Confluence (site + email + API token), Google Drive (BYO OAuth
+  client, browser consent). Credentials are stored `0600` under
+  `~/.config/ragdesk/` and can be disconnected from the same card.
+
+The same UI also runs in a browser for development:
 `uv run ragdesk serve --ui desktop/dist`.
 
 ## What works today (honest list)
@@ -69,7 +78,7 @@ status/preset panel. The same UI also runs in a browser for development:
 | Works | Not yet |
 |---|---|
 | Desktop app (Tauri 2): chat, search, sources, settings, streaming answers | PyPI release (v0.1.0 pending) |
-| Indexing: local files, GitHub repos (tarball sync + `gh` token), Confluence spaces, Google Drive (BYO OAuth) | Windows / Linux builds |
+| Indexing: local files (native picker), GitHub repos (connect + tarball sync), Confluence spaces (connect + CQL), Google Drive (connect + doc export) | Windows / Linux builds |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Multilingual reranker (`bge-reranker-v2-m3` not in fastembed yet) |
 | Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Eval badge automation per release |
 | Grounded cited answers via local Ollama, grounding gate, token streaming | MCP-server expansion path for connectors |
@@ -133,7 +142,8 @@ uv run ruff check .
 
 Local-first by default: the index is one SQLite file under `.ragdesk/`.
 Network calls happen only to your local Ollama server; adding cloud providers
-is opt-in and bring-your-own-key. See [SECURITY.md](SECURITY.md).
+is opt-in and bring-your-own-key. Connection credentials live in
+`~/.config/ragdesk/credentials.json` (mode `0600`). See [SECURITY.md](SECURITY.md).
 
 ## License
 

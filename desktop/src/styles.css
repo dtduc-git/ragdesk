@@ -459,6 +459,80 @@ input:focus {
   gap: 8px;
 }
 
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.path-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.path-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+
+.path-chip code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.chip-x {
+  padding: 0 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chip-x:hover {
+  color: var(--flag);
+}
+
+.conn-badge {
+  padding: 1px 5px;
+  border: 1px solid var(--stamp);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--stamp);
+  vertical-align: middle;
+}
+
+.source-card.is-connected {
+  border-top-color: var(--stamp);
+}
+
+.btn-quiet {
+  border-color: var(--rule);
+  color: var(--ink-soft);
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--card);
+  border-color: var(--flag);
+  color: var(--flag);
+}
+
 .source-card .btn {
   align-self: flex-start;
 }

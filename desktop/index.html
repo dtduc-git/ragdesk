@@ -86,58 +86,7 @@
             <p>Everything is read-only. Indexed content never leaves this machine.</p>
           </header>
 
-          <div class="source-grid">
-            <form class="source-card source-form" data-source="local">
-              <h3>Local files</h3>
-              <p class="source-note">Files or folders on this machine, comma-separated.</p>
-              <input name="paths" placeholder="/Users/you/notes, /Users/you/repo" />
-              <button class="btn" type="submit">Index</button>
-              <p class="source-result" aria-live="polite"></p>
-            </form>
-
-            <form class="source-card source-form" data-source="github">
-              <h3>GitHub</h3>
-              <p class="source-note">
-                Uses your token from <code>GITHUB_TOKEN</code> or <code>gh auth login</code>.
-              </p>
-              <input name="repo" placeholder="owner/name" />
-              <div class="field-row">
-                <input name="ref" placeholder="branch (optional)" />
-                <input name="subdir" placeholder="subfolder (optional)" />
-              </div>
-              <button class="btn" type="submit">Sync repo</button>
-              <p class="source-result" aria-live="polite"></p>
-            </form>
-
-            <form class="source-card source-form" data-source="confluence">
-              <h3>Confluence</h3>
-              <p class="source-note">Space key plus an email and API token.</p>
-              <div class="field-row">
-                <input name="base_url" placeholder="https://team.atlassian.net" />
-                <input name="space" placeholder="DOCS" />
-              </div>
-              <div class="field-row">
-                <input name="email" placeholder="you@company.com" />
-                <input name="token" type="password" placeholder="API token" />
-              </div>
-              <button class="btn" type="submit">Sync space</button>
-              <p class="source-result" aria-live="polite"></p>
-            </form>
-
-            <form class="source-card source-form" data-source="gdrive">
-              <h3>Google Drive</h3>
-              <p class="source-note">
-                Bring your own OAuth client ID. Your browser asks for consent once.
-              </p>
-              <div class="field-row">
-                <input name="client_id" placeholder="OAuth client ID" />
-                <input name="folder_id" placeholder="folder id (optional)" />
-              </div>
-              <input name="client_secret" type="password" placeholder="client secret (optional)" />
-              <button class="btn" type="submit">Connect Drive</button>
-              <p class="source-result" aria-live="polite"></p>
-            </form>
-          </div>
+          <div class="source-grid" id="source-grid"></div>
 
           <div class="indexed-list">
             <h3>Indexed</h3>
