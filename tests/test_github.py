@@ -159,6 +159,7 @@ def test_device_flow_poll_once_states(monkeypatch):
 
 def test_resolve_client_id_precedence(monkeypatch):
     monkeypatch.setattr("ragdesk.github.credentials.get", lambda provider: {})
+    monkeypatch.setattr("ragdesk.defaults.GITHUB_CLIENT_ID", "")
     monkeypatch.delenv("RAGDESK_GITHUB_CLIENT_ID", raising=False)
     assert resolve_client_id() is None
     monkeypatch.setenv("RAGDESK_GITHUB_CLIENT_ID", "env-cid")

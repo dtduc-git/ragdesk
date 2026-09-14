@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ragdesk — thiết kế kết nối nguồn (OAuth)",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "one-time",
+        "label": "Một lần: đăng ký app",
+        "focus": ["consoles", "defaults"],
+        "note": "Builder đăng ký 3 OAuth app một lần; client ID công khai đi kèm mọi bản build."
+      },
+      {
+        "id": "per-machine",
+        "label": "Mỗi máy: consent",
+        "focus": ["app", "serve", "ghub", "atlassian", "gdrive", "creds"],
+        "note": "User bấm Connect, browser hỏi consent, refresh token lưu cục bộ."
+      },
+      {
+        "id": "local-state",
+        "label": "Token nằm trên máy",
+        "focus": ["serve", "creds"],
+        "note": "credentials.json (0600) giữ token; nội dung index là file SQLite riêng."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "consoles",
+      "type": "external",
+      "label": "Provider consoles",
+      "sublabel": "GitHub · Atlassian · Google",
+      "tag": "1 lần",
+      "pos": [40, 120],
+      "size": [200, 72]
+    },
+    {
+      "id": "defaults",
+      "type": "backend",
+      "label": "defaults.py",
+      "sublabel": "client ID công khai",
+      "tag": "đi kèm build",
+      "pos": [430, 120],
+      "size": [200, 72]
+    },
+    {
+      "id": "app",
+      "type": "frontend",
+      "label": "Desktop app",
+      "sublabel": "Tauri · Sources cards",
+      "tag": "bạn bấm Connect",
+      "pos": [70, 350],
+      "size": [180, 72]
+    },
+    {
+      "id": "serve",
+      "type": "backend",
+      "label": "ragdesk serve",
+      "sublabel": "loopback API :8765",
+      "pos": [320, 350],
+      "size": [190, 72]
+    },
+    {
+      "id": "creds",
+      "type": "database",
+      "label": "credentials.json",
+      "sublabel": "refresh token · PAT",
+      "tag": "0600 · cục bộ",
+      "pos": [320, 500],
+      "size": [210, 72]
+    },
+    {
+      "id": "ghub",
+      "type": "external",
+      "label": "GitHub",
+      "sublabel": "device flow (RFC 8628)",
+      "brand": "github",
+      "pos": [900, 150],
+      "size": [180, 72]
+    },
+    {
+      "id": "atlassian",
+      "type": "external",
+      "label": "Atlassian",
+      "sublabel": "OAuth 2.0 3LO + PKCE",
+      "pos": [900, 300],
+      "size": [180, 72]
+    },
+    {
+      "id": "gdrive",
+      "type": "external",
+      "label": "Google Drive",
+      "sublabel": "OAuth PKCE + loopback",
+      "pos": [900, 450],
+      "size": [180, 72]
+    }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Một lần · vai trò builder", "wraps": ["consoles", "defaults"] },
+    { "kind": "region", "label": "Mỗi máy · vai trò user (cũng chính bro)", "wraps": ["app", "serve", "creds"] },
+    { "kind": "region", "label": "Nhà cung cấp · consent diễn ra ở browser", "wraps": ["ghub", "atlassian", "gdrive"] }
+  ],
+  "connections": [
+    { "id": "register-once", "from": "consoles", "to": "defaults", "label": "đăng ký 1 lần → client ID", "variant": "dashed" },
+    { "id": "ship-default", "from": "defaults", "to": "serve", "label": "client ID đọc lúc chạy", "variant": "dashed", "fromSide": "bottom", "toSide": "top" },
+    { "id": "ui-to-api", "from": "app", "to": "serve", "label": "HTTP loopback", "variant": "emphasis" },
+    { "id": "connect-github", "from": "serve", "to": "ghub", "label": "device code → token", "variant": "emphasis" },
+    { "id": "connect-atlassian", "from": "serve", "to": "atlassian", "label": "browser consent → token", "variant": "emphasis", "labelDx": -80 },
+    { "id": "connect-gdrive", "from": "serve", "to": "gdrive", "label": "browser consent → token", "variant": "emphasis" },
+    { "id": "store-token", "from": "serve", "to": "creds", "label": "lưu token (0600)", "fromSide": "bottom", "toSide": "top" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Một lần · builder (bro)",
+      "items": [
+        "Đăng ký 3 OAuth app: GitHub OAuth app, Atlassian 3LO, Google Desktop client (~10 phút)",
+        "client ID là công khai → dán vào src/ragdesk/defaults.py hoặc set env",
+        "Từ đó mọi bản build đều one-click; user không đăng ký gì"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Mỗi máy · user (cũng chính bro)",
+      "items": [
+        "Bấm Connect → browser mở trang consent (~30 giây)",
+        "refresh token lưu ở ~/.config/ragdesk/credentials.json (0600)",
+        "Bro giữ cả 2 vai: đăng ký một lần, consent mỗi máy / mỗi account"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Caveat từng provider",
+      "items": [
+        "GitHub: device flow, không cần verification, không trần user",
+        "Atlassian: app mặc định private (chỉ bro); muốn user khác phải bật Sharing",
+        "Google Drive: cảnh báo 'unverified' + trần 100 users",
+        "Không đăng ký gì vẫn dùng được: gh CLI / PAT, Confluence API token"
+      ]
+    }
+  ]
+}

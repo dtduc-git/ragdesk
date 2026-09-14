@@ -14,7 +14,7 @@ Maintainers: fill these in at release time, or set the environment variables
 ``GDRIVE_CLIENT_ID/SECRET``) / let users bring their own via the Sources UI.
 """
 
-GITHUB_CLIENT_ID = ""
+GITHUB_CLIENT_ID = "Ov23liI2iSz3dhYO9yaM"
 
 ATLASSIAN_CLIENT_ID = ""
 ATLASSIAN_CLIENT_SECRET = ""
