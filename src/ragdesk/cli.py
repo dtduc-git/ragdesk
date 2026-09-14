@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from ragdesk import __version__
+from ragdesk import settings as app_settings
 from ragdesk.answer import answer, answer_stream
 from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import get_embedder
@@ -29,7 +30,7 @@ from ragdesk.presets import DEFAULT_PRESET, PRESETS
 from ragdesk.presets import resolve as resolve_preset
 from ragdesk.rerank import get_reranker
 from ragdesk.search import retrieve
-from ragdesk.serve import AppState, make_server
+from ragdesk.serve import AppState, auto_index_due, make_server, run_auto_index
 from ragdesk.store import Store
 from ragdesk.web import WebError, crawl_site
 
@@ -207,6 +208,16 @@ def main(argv: list[str] | None = None) -> int:
                 os._exit(0)
 
             threading.Thread(target=watch_parent, daemon=True).start()
+
+        def auto_index_loop() -> None:
+            while True:
+                time.sleep(60)
+                values = app_settings.load()
+                if auto_index_due(values):
+                    summary = run_auto_index(state)
+                    print(f"auto-index: {summary}", flush=True)
+
+        threading.Thread(target=auto_index_loop, daemon=True).start()
         try:
             server.serve_forever()
         except KeyboardInterrupt:

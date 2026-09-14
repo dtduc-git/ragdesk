@@ -317,6 +317,63 @@ def test_connect_gitlab_and_sync(base_url: str, monkeypatch):
     assert payload["connected"] is False
 
 
+def test_settings_and_auto_index(base_url: str, tmp_path: Path):
+    status, payload = request(f"{base_url}/api/status")
+    assert status == 200
+    assert payload["auto_index"]["hours"] == 1
+
+    status, payload = request(f"{base_url}/api/settings", {"auto_index_hours": 6})
+    assert payload["auto_index_hours"] == 6
+    _, payload = request(f"{base_url}/api/status")
+    assert payload["auto_index"]["hours"] == 6
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/settings", {"auto_index_hours": "soon"})
+    assert excinfo.value.code == 400
+
+
+def test_auto_index_due():
+    from datetime import UTC, datetime, timedelta
+
+    from ragdesk.serve import auto_index_due
+
+    assert auto_index_due({"auto_index_hours": 0, "auto_index_last": ""}) is False
+    assert auto_index_due({"auto_index_hours": 1, "auto_index_last": ""}) is True
+    fresh = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    assert auto_index_due({"auto_index_hours": 1, "auto_index_last": fresh}) is False
+    stale = (datetime.now(UTC) - timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+    assert auto_index_due({"auto_index_hours": 1, "auto_index_last": stale}) is True
+
+
+def test_auto_index_reindexes_changed_local_paths(base_url: str, tmp_path: Path):
+    from ragdesk import settings
+    from ragdesk.serve import run_auto_index
+
+    db = tmp_path / "auto.db"
+    docs = tmp_path / "auto-docs"
+    docs.mkdir()
+    note = docs / "note.md"
+    note.write_text("first version about widgets")
+    embedder = HashingEmbedder()
+    with Store(db) as store:
+        index_paths(store, embedder, [docs])
+    note.write_text("second version about gadgets")
+
+    state = AppState(
+        db=str(db),
+        embedder=embedder,
+        rerank="none",
+        llm_model="test-model",
+        llm_host="http://127.0.0.1:9",
+    )
+    summary = run_auto_index(state)
+    assert summary["indexed"] == 1
+    assert summary["roots"] == [str(docs)]
+    with Store(db) as store:
+        assert "gadgets" in (store.document_text(str(note)) or "")
+    assert settings.load()["auto_index_last"]
+
+
 def test_sync_gitlab_requires_project(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/gitlab", {})

@@ -11,11 +11,12 @@ import os
 import threading
 import time
 import urllib.parse
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from ragdesk import __version__, credentials
+from ragdesk import __version__, credentials, settings
 from ragdesk.answer import REFUSAL, answer, answer_stream
 from ragdesk.confluence import (
     ConfluenceError,
@@ -167,6 +168,10 @@ class Handler(BaseHTTPRequestHandler):
                         "chunks": stats["chunks"],
                         "sources": store.sources(),
                         "local_paths": store.local_paths(),
+                        "auto_index": {
+                            "hours": settings.load()["auto_index_hours"],
+                            "last_run": settings.load()["auto_index_last"],
+                        },
                     },
                 )
             return
@@ -215,6 +220,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/index":
                 self._handle_index(body)
+            elif self.path == "/api/settings":
+                self._handle_settings(body)
             elif self.path == "/api/connections/github":
                 self._handle_connect_github(body)
             elif self.path == "/api/connections/github/gh":
@@ -288,6 +295,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _reranker_for(self, override: str | None):
         return get_reranker(override or self.state.rerank)
+
+    def _handle_settings(self, body: dict[str, Any]) -> None:
+        try:
+            hours = int(body.get("auto_index_hours", 1))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "auto_index_hours must be a number"})
+            return
+        hours = max(0, min(hours, 168))
+        settings.save({"auto_index_hours": hours})
+        self._send(200, {"auto_index_hours": hours})
 
     def _handle_index(self, body: dict[str, Any]) -> None:
         paths = [Path(p) for p in body.get("paths", [])]
@@ -945,3 +962,36 @@ def make_server(
 ) -> ThreadingHTTPServer:
     handler = type("BoundHandler", (Handler,), {"state": state})
     return ThreadingHTTPServer((host, port), handler)
+
+
+def run_auto_index(state: AppState) -> dict[str, Any]:
+    """Re-index the recorded local paths; called by the serve auto-index timer."""
+    with state.lock, Store(state.db) as store:
+        roots = [
+            Path(entry["path"]) for entry in store.local_paths() if Path(entry["path"]).exists()
+        ]
+        stats = index_paths(store, state.embedder, roots) if roots else None
+    settings.save(
+        {"auto_index_last": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")}
+    )
+    return {
+        "roots": [str(root) for root in roots],
+        "indexed": stats.indexed if stats else 0,
+        "unchanged": stats.unchanged if stats else 0,
+        "chunks": stats.chunks if stats else 0,
+    }
+
+
+def auto_index_due(values: dict) -> bool:
+    """True when the stored interval has elapsed since the last auto run."""
+    hours = float(values.get("auto_index_hours") or 0)
+    if hours <= 0:
+        return False
+    last = str(values.get("auto_index_last") or "")
+    if not last:
+        return True
+    try:
+        ran_at = datetime.strptime(last, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    except ValueError:
+        return True
+    return (datetime.now(UTC) - ran_at).total_seconds() >= hours * 3600

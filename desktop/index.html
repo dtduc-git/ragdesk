@@ -112,6 +112,22 @@
           </header>
           <dl class="status-table" id="status-table"></dl>
           <div class="panel-note">
+            <h3>Auto re-index</h3>
+            <p>
+              Re-scans the local paths you have indexed — incremental, unchanged files are
+              skipped. Connectors keep their manual sync buttons.
+            </p>
+            <select id="auto-index-hours">
+              <option value="0">Off</option>
+              <option value="1">Every hour</option>
+              <option value="3">Every 3 hours</option>
+              <option value="6">Every 6 hours</option>
+              <option value="12">Every 12 hours</option>
+              <option value="24">Every 24 hours</option>
+            </select>
+            <p class="source-result" id="auto-index-last">not run yet</p>
+          </div>
+          <div class="panel-note">
             <h3>Presets</h3>
             <p>
               Launch with <code>--preset light</code> (8GB machines), <code>balanced</code> (16GB,

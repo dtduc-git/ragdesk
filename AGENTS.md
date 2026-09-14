@@ -24,13 +24,19 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   `_build_env.py` for release builds), `mcp` (stdio MCP server exposing
   search/document/sources to Claude Code & co), `serve` (loopback JSON API:
   status/search/ask/index/sync + connections connect/disconnect + optional
-  static UI), `presets` (RAM tiers), `cli`.
+  static UI; hosts the auto-index timer), `settings` (app config in
+  `~/.config/ragdesk/settings.json`, 0600: `auto_index_hours`, default 1,
+  0 = off), `presets` (RAM tiers), `cli`.
 - `desktop/` — Tauri 2 shell (card-catalog UI). Rust spawns `ragdesk serve`
   with `--db $HOME/.ragdesk/index.db`; a watchdog thread respawns it if it
   dies (skipping the respawn when another instance owns the port) and the
   child's output goes to `~/.ragdesk/serve.log`; env overrides: `RAGDESK_BIN`,
   `RAGDESK_DB`, `RAGDESK_LLM_MODEL`, `RAGDESK_PROJECT`. Browser mode:
   `ragdesk serve --ui desktop/dist`.
+- Auto-index: `serve` runs a 60s timer; when `auto_index_hours` (Settings tab,
+  default 1, 0 = off) has elapsed since `auto_index_last`, it re-indexes the
+  recorded local roots via `run_auto_index` (connectors stay manual until
+  their sync params are persisted).
 - Connections: GitHub has three paths (device code with `RAGDESK_GITHUB_CLIENT_ID`
   or a saved client ID, `gh` login, or a pasted token); Confluence and GDrive
   connect flows validate before saving to `~/.config/ragdesk/credentials.json`

@@ -31,6 +31,7 @@ type Status = {
   chunks: number;
   sources: SourceStat[];
   local_paths: PathStat[];
+  auto_index: { hours: number; last_run: string };
 };
 
 function $<T extends HTMLElement>(id: string): T {
@@ -112,6 +113,17 @@ $("theme-toggle").addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
+$("auto-index-hours").addEventListener("change", async (event) => {
+  const hours = Number((event.target as HTMLSelectElement).value);
+  try {
+    await post("/api/settings", { auto_index_hours: hours });
+    toast(hours === 0 ? "Auto re-index off" : `Auto re-index every ${hours}h`);
+    await loadStatus();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
+  }
+});
+
 // --- toast --------------------------------------------------------------------
 
 let toastTimer: number | undefined;
@@ -177,6 +189,10 @@ function renderStatus(): void {
     .join("");
 
   const table = $("indexed-table");
+  ($("auto-index-hours") as HTMLSelectElement).value = String(status.auto_index.hours);
+  $("auto-index-last").textContent = status.auto_index.last_run
+    ? `last auto run ${status.auto_index.last_run} UTC`
+    : "not run yet";
   if (status.sources.length === 0) {
     table.innerHTML = `<p class="muted">Nothing indexed yet. Add a source.</p>`;
     return;
