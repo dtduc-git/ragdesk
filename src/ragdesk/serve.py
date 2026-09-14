@@ -46,6 +46,11 @@ from ragdesk.gitlab import DEFAULT_BASE_URL as GITLAB_DEFAULT_BASE
 from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.gitlab import whoami as gitlab_whoami
 from ragdesk.index import index_paths
+from ragdesk.msgraph import MsGraphError, sync_onedrive
+from ragdesk.msgraph import device_flow_poll_once as ms_poll_once
+from ragdesk.msgraph import device_flow_start as ms_device_start
+from ragdesk.msgraph import resolve_client_id as resolve_ms_client_id
+from ragdesk.msgraph import whoami as ms_whoami
 from ragdesk.notion import NotionError, sync_notion
 from ragdesk.notion import resolve_token as notion_resolve_token
 from ragdesk.notion import whoami as notion_whoami
@@ -109,6 +114,7 @@ class AppState:
         self.preset = preset
         self.ui_dir = Path(ui_dir) if ui_dir else None
         self.github_device: dict[str, Any] | None = None
+        self.msgraph_device: dict[str, Any] | None = None
         self.lock = threading.Lock()
 
 
@@ -232,6 +238,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_connect_gitlab(body)
             elif self.path == "/api/sync/gitlab":
                 self._handle_sync_gitlab(body)
+            elif self.path == "/api/connections/msgraph":
+                self._handle_connect_msgraph(body)
+            elif self.path == "/api/connections/msgraph/device/start":
+                self._handle_msgraph_device_start()
+            elif self.path == "/api/connections/msgraph/device/poll":
+                self._handle_msgraph_device_poll()
+            elif self.path == "/api/sync/msgraph":
+                self._handle_sync_msgraph(body)
             elif self.path.endswith("/disconnect") and self.path.startswith(
                 "/api/connections/"
             ):
@@ -263,6 +277,7 @@ class Handler(BaseHTTPRequestHandler):
             WebError,
             NotionError,
             GitLabError,
+            MsGraphError,
         ) as exc:
             self._send(502, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface errors to the UI
@@ -342,6 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         gdrive_payload = load_token_file()
         notion_entry = credentials.get("notion")
         gitlab_entry = credentials.get("gitlab")
+        msgraph_entry = credentials.get("msgraph")
         return {
             "github": {
                 "connected": gh_source is not None or bool(github_entry.get("token")),
@@ -375,6 +391,11 @@ class Handler(BaseHTTPRequestHandler):
                 or bool(os.environ.get("GITLAB_TOKEN")),
                 "name": gitlab_entry.get("name", ""),
                 "base_url": gitlab_entry.get("base_url", GITLAB_DEFAULT_BASE),
+            },
+            "msgraph": {
+                "connected": bool(msgraph_entry.get("refresh_token")),
+                "account": msgraph_entry.get("account", ""),
+                "client_id_set": resolve_ms_client_id() is not None,
             },
         }
 
@@ -546,7 +567,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"connected": True, "email": email})
 
     def _handle_disconnect(self, provider: str) -> None:
-        if provider not in ("github", "confluence", "gdrive", "notion", "gitlab"):
+        if provider not in ("github", "confluence", "gdrive", "notion", "gitlab", "msgraph"):
             self._send(404, {"error": f"unknown provider: {provider}"})
             return
         credentials.clear(provider)
@@ -639,6 +660,84 @@ class Handler(BaseHTTPRequestHandler):
             200,
             {
                 "project": project,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_connect_msgraph(self, body: dict[str, Any]) -> None:
+        client_id = str(body.get("client_id", "")).strip()
+        if not client_id:
+            self._send(400, {"error": "client_id required (Azure app registration)"})
+            return
+        credentials.set_provider("msgraph", {"client_id": client_id})
+        self._send(200, {"saved": True, "client_id_set": True})
+
+    def _handle_msgraph_device_start(self) -> None:
+        client_id = resolve_ms_client_id()
+        if client_id is None:
+            self._send(
+                400,
+                {
+                    "error": "no Microsoft client id: create an Azure app registration "
+                    "(public client) and save its Application ID, or set "
+                    "RAGDESK_MS_CLIENT_ID"
+                },
+            )
+            return
+        data = ms_device_start(client_id)
+        interval = int(data.get("interval", 5) or 5)
+        self.state.msgraph_device = {
+            "device_code": str(data.get("device_code", "")),
+            "client_id": client_id,
+            "interval": interval,
+        }
+        self._send(
+            200,
+            {
+                "user_code": data.get("user_code", ""),
+                "verification_uri": data.get("verification_uri", "https://microsoft.com/devicelogin"),
+                "interval": interval,
+                "expires_in": data.get("expires_in", 900),
+            },
+        )
+
+    def _handle_msgraph_device_poll(self) -> None:
+        flow = self.state.msgraph_device
+        if not flow:
+            self._send(400, {"error": "no device flow in progress"})
+            return
+        status, payload = ms_poll_once(flow["client_id"], flow["device_code"])
+        if status == "pending":
+            self._send(200, {"connected": False, "pending": True})
+            return
+        if status == "slow_down":
+            flow["interval"] = int(flow.get("interval", 5)) + 5
+            self._send(200, {"connected": False, "pending": True, "interval": flow["interval"]})
+            return
+        token = str(payload.get("access_token", ""))
+        account = ms_whoami(token)
+        updates: dict[str, Any] = {"client_id": flow["client_id"], "account": account}
+        if payload.get("refresh_token"):
+            updates["refresh_token"] = str(payload["refresh_token"])
+        credentials.set_provider("msgraph", updates)
+        self.state.msgraph_device = None
+        self._send(200, {"connected": True, "login": account})
+
+    def _handle_sync_msgraph(self, body: dict[str, Any]) -> None:
+        site = str(body.get("site", "")).strip()
+        folder_id = str(body.get("folder_id", "")).strip()
+        with self.state.lock, Store(self.state.db) as store:
+            stats = sync_onedrive(
+                store, self.state.embedder, site=site, folder_id=folder_id
+            )
+        self._send(
+            200,
+            {
+                "site": site or "onedrive",
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,

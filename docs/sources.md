@@ -12,6 +12,7 @@ equivalents below) and connect what you need.
 | Google Drive | browser consent (OAuth, PKCE) | no (a client ID ships with the app) | refresh token in `gdrive.json` (0600) |
 | Notion | internal integration token | no (you create the integration, 1 min) | token in `credentials.json` (0600) |
 | GitLab | personal access token (`read_api`) | no | token in `credentials.json` (0600) |
+| Microsoft (OneDrive / SharePoint) | device flow (Azure public client) | one Azure app registration (~2 min) | refresh token in `credentials.json` (0600) |
 | Website | none | no | — |
 
 Credential resolution order everywhere: **explicit input → environment
@@ -137,6 +138,28 @@ Read-only repository sync (archive download, incremental by archive digest).
 
 CLI: `ragdesk gitlab group/name --ref main --base-url https://gitlab.example.com`
 
+## Microsoft (OneDrive & SharePoint)
+
+Read-only sync of text files; `.docx` and `.pptx` are converted to text
+locally (no upload, no conversion service).
+
+1. **Azure app registration** (once): Azure Portal → *Microsoft Entra ID →
+   App registrations → New registration* (any account type) → copy the
+   **Application (client) ID**.
+2. *Authentication* → **Allow public client flows: Yes** — the device flow
+   needs this.
+3. *API permissions* → Microsoft Graph → **delegated** `Files.Read.All` and
+   `Sites.Read.All` (consent happens in the browser on first connect;
+   `offline_access` is implicit).
+4. Save the client ID: `RAGDESK_MS_CLIENT_ID` in `.env`, or paste it once in
+   the app card.
+5. Sources → Microsoft → **Connect Microsoft** → open
+   `microsoft.com/devicelogin`, enter the code, approve.
+6. **Sync Microsoft files**: leave both fields empty for all of OneDrive, or
+   give a OneDrive folder ID / SharePoint site (`contoso.sharepoint.com:/sites/Team`).
+
+CLI: `ragdesk msgraph --folder-id <ID>` (or `--site hostname:/sites/x`).
+
 ## Notion
 
 Indexes the pages you explicitly share with an integration — Notion never
@@ -171,4 +194,6 @@ JavaScript rendering.
 | Google token stops working after ~7 days | The consent screen is in *Testing*; publish it to production (see above). |
 | Notion sync finds `0 pages` | The pages aren't shared with the integration — add the connection on each page. |
 | GitLab `401/403` | The token is missing the `read_api` scope, or it expired. |
+| Microsoft: *"AADSTS7000218: … public client flows"* | Enable **Allow public client flows** in the app registration (Authentication). |
+| Microsoft: consent screen says *need admin approval* | Your tenant blocks user consent; an admin must approve the app (or use a personal account). |
 | `not HTML (...)` during crawl | The link points at a binary/JS-only asset; those are skipped by design. |

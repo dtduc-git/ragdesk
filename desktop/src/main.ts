@@ -389,14 +389,25 @@ type Connections = {
   gdrive: { connected: boolean; email: string; oauth_ready: boolean };
   notion: { connected: boolean; name: string };
   gitlab: { connected: boolean; name: string; base_url: string };
+  msgraph: { connected: boolean; account: string; client_id_set: boolean };
 };
 
 type DeviceFlow = { userCode: string; verificationUri: string; interval: number };
 
 let connections: Connections | null = null;
 let selectedPaths: string[] = [];
-let deviceFlow: DeviceFlow | null = null;
-let deviceTimer: number | undefined;
+const deviceFlows: Record<string, DeviceFlow> = {};
+const deviceTimers: Record<string, number> = {};
+const DEVICE_ENDPOINTS: Record<string, { start: string; poll: string }> = {
+  github: {
+    start: "/api/connections/github/device/start",
+    poll: "/api/connections/github/device/poll",
+  },
+  msgraph: {
+    start: "/api/connections/msgraph/device/start",
+    poll: "/api/connections/msgraph/device/poll",
+  },
+};
 const reveal: Record<string, boolean> = {};
 const sourceResults: Record<string, string> = {};
 
@@ -424,40 +435,42 @@ async function openExternal(url: string): Promise<void> {
   window.open(url, "_blank", "noopener");
 }
 
-function cancelDeviceFlow(): void {
-  deviceFlow = null;
-  window.clearTimeout(deviceTimer);
+function cancelDeviceFlow(provider: string): void {
+  delete deviceFlows[provider];
+  window.clearTimeout(deviceTimers[provider]);
 }
 
-function startDevicePolling(): void {
-  window.clearTimeout(deviceTimer);
-  if (!deviceFlow) return;
-  deviceTimer = window.setTimeout(async () => {
-    if (!deviceFlow) return;
+function startDevicePolling(provider: string): void {
+  window.clearTimeout(deviceTimers[provider]);
+  const flow = deviceFlows[provider];
+  if (!flow) return;
+  const endpoints = DEVICE_ENDPOINTS[provider];
+  deviceTimers[provider] = window.setTimeout(async () => {
+    if (!deviceFlows[provider]) return;
     try {
       const response = await post<{
         connected?: boolean;
         pending?: boolean;
         login?: string;
         interval?: number;
-      }>("/api/connections/github/device/poll", {});
+      }>(endpoints.poll, {});
       if (response.connected) {
-        const login = response.login ?? "github";
-        cancelDeviceFlow();
-        setResult("github", `connected — ${login}`);
+        const account = response.login ?? provider;
+        cancelDeviceFlow(provider);
+        setResult(provider, `connected — ${account}`);
         await loadConnections();
         return;
       }
-      if (response.interval) deviceFlow.interval = response.interval;
-      startDevicePolling();
+      if (response.interval) deviceFlows[provider].interval = response.interval;
+      startDevicePolling(provider);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      cancelDeviceFlow();
-      setResult("github", message);
+      cancelDeviceFlow(provider);
+      setResult(provider, message);
       toast(message);
       renderSources();
     }
-  }, Math.max(deviceFlow.interval, 3) * 1000);
+  }, Math.max(flow.interval, 3) * 1000);
 }
 
 function setResult(kind: string, message: string): void {
@@ -532,50 +545,58 @@ function localCard(): string {
   </div>`;
 }
 
-async function startGithubDevice(): Promise<void> {
-  setResult("github", "requesting a code…");
+async function startDevice(provider: string): Promise<void> {
+  const labels: Record<string, string> = { github: "GitHub", msgraph: "Microsoft" };
+  const label = labels[provider] ?? provider;
+  setResult(provider, "requesting a code…");
   try {
     const response = await post<{
       user_code: string;
       verification_uri: string;
       interval: number;
-    }>("/api/connections/github/device/start", {});
-    deviceFlow = {
+    }>(DEVICE_ENDPOINTS[provider].start, {});
+    deviceFlows[provider] = {
       userCode: response.user_code,
       verificationUri: response.verification_uri,
       interval: response.interval || 5,
     };
-    setResult("github", "enter the code shown in your browser");
+    setResult(provider, "enter the code shown in your browser");
     renderSources();
-    void openExternal(deviceFlow.verificationUri);
-    startDevicePolling();
+    void openExternal(response.verification_uri);
+    startDevicePolling(provider);
+    void label;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    setResult("github", message);
+    setResult(provider, message);
     toast(message);
   }
+}
+
+function deviceBox(provider: string, label: string): string {
+  const flow = deviceFlows[provider];
+  return `<div class="device-box">
+        <p class="source-note">Enter this code on ${label}:</p>
+        <p class="device-code">${escapeHtml(flow.userCode)}</p>
+        <div class="button-row">
+          <button class="btn" type="button" data-action="open-device-page" data-provider="${provider}">Open ${label}</button>
+          <button class="btn btn-quiet" type="button" data-action="${provider}-device-cancel">Cancel</button>
+        </div>
+        <p class="muted">Waiting for approval…</p>
+      </div>`;
 }
 
 function githubCard(conn: Connections["github"]): string {
   if (!conn.connected) {
     let primary: string;
-    if (deviceFlow) {
-      primary = `<div class="device-box">
-        <p class="source-note">Enter this code on GitHub:</p>
-        <p class="device-code">${escapeHtml(deviceFlow.userCode)}</p>
-        <div class="button-row">
-          <button class="btn" type="button" data-action="open-device-page">Open GitHub</button>
-          <button class="btn btn-quiet" type="button" data-action="github-device-cancel">Cancel</button>
-        </div>
-        <p class="muted">Waiting for approval…</p>
-      </div>`;
+    if (deviceFlows.github) {
+      primary = deviceBox("github", "GitHub");
     } else if (conn.device_flow_ready) {
       primary = `<button class="btn btn-primary" type="button" data-action="github-device-start">Connect with a code</button>`;
     } else {
       primary = `<button class="btn btn-primary" type="button" data-action="reveal-github">Connect with a code</button>`;
     }
     const setup =
-      !deviceFlow && !conn.device_flow_ready && reveal.github
+      !deviceFlows.github && !conn.device_flow_ready && reveal.github
         ? `<form data-form="github-client-id" class="stack">
              <p class="source-note">Create a GitHub OAuth app with device flow enabled, then paste its client ID once.</p>
              <input name="client_id" placeholder="OAuth client ID" required />
@@ -583,7 +604,7 @@ function githubCard(conn: Connections["github"]): string {
            </form>`
         : "";
     const gh =
-      conn.gh_available && !deviceFlow
+      conn.gh_available && !deviceFlows.github
         ? `<button class="btn btn-quiet" type="button" data-action="github-gh">Use gh login instead</button>`
         : "";
     return `<div class="source-card">
@@ -762,6 +783,49 @@ function gitlabCard(conn: Connections["gitlab"]): string {
   </div>`;
 }
 
+function msgraphCard(conn: Connections["msgraph"]): string {
+  if (!conn.connected) {
+    let primary: string;
+    if (deviceFlows.msgraph) {
+      primary = deviceBox("msgraph", "Microsoft");
+    } else if (conn.client_id_set) {
+      primary = `<button class="btn btn-primary" type="button" data-action="msgraph-device-start">Connect Microsoft</button>`;
+    } else {
+      primary = `<button class="btn btn-primary" type="button" data-action="reveal-msgraph">Connect Microsoft</button>`;
+    }
+    const setup =
+      !conn.client_id_set && reveal.msgraph
+        ? `<form data-form="msgraph-client-id" class="stack">
+             <p class="source-note">Create an Azure app registration (public client; delegated Files.Read.All, Sites.Read.All, offline_access) and paste its Application (client) ID once.</p>
+             <input name="client_id" placeholder="Azure Application (client) ID" required />
+             <button class="btn" type="submit">Save &amp; connect</button>
+           </form>`
+        : "";
+    return `<div class="source-card">
+      <h3>Microsoft</h3>
+      <p class="source-note">OneDrive &amp; SharePoint, read-only. Microsoft shows a code, you approve in the browser.</p>
+      ${primary}
+      ${setup}
+      <p class="source-result" data-result="msgraph"></p>
+    </div>`;
+  }
+  return `<div class="source-card is-connected">
+    <h3>Microsoft <span class="conn-badge">connected</span></h3>
+    <p class="source-note">${conn.account ? escapeHtml(conn.account) : "account"} · OneDrive + SharePoint</p>
+    <div class="button-row">
+      <button class="btn btn-quiet" type="button" data-action="disconnect-msgraph">Disconnect</button>
+    </div>
+    <form data-form="msgraph-sync" class="stack">
+      <div class="field-row">
+        <input name="folder_id" placeholder="OneDrive folder id (optional)" />
+        <input name="site" placeholder="site hostname:/sites/x (optional)" />
+      </div>
+      <button class="btn btn-primary" type="submit">Sync Microsoft files</button>
+    </form>
+    <p class="source-result" data-result="msgraph"></p>
+  </div>`;
+}
+
 function notionCard(conn: Connections["notion"]): string {
   if (!conn.connected) {
     return `<div class="source-card">
@@ -829,12 +893,18 @@ function renderSources(): void {
   const gdrive = connections?.gdrive ?? { connected: false, email: "", oauth_ready: false };
   const notion = connections?.notion ?? { connected: false, name: "" };
   const gitlab = connections?.gitlab ?? { connected: false, name: "", base_url: "" };
+  const msgraph = connections?.msgraph ?? {
+    connected: false,
+    account: "",
+    client_id_set: false,
+  };
   $("source-grid").innerHTML =
     localCard() +
     githubCard(github) +
     gitlabCard(gitlab) +
     confluenceCard(confluence) +
     gdriveCard(gdrive) +
+    msgraphCard(msgraph) +
     notionCard(notion) +
     webCard();
   for (const [kind, message] of Object.entries(sourceResults)) {
@@ -886,7 +956,17 @@ $("source-grid").addEventListener("submit", async (event) => {
       }
       await post("/api/connections/github/client-id", { client_id: payload.client_id });
       await loadConnections();
-      void startGithubDevice();
+      void startDevice("github");
+      return;
+    }
+    if (kind === "msgraph-client-id") {
+      if (!payload.client_id) {
+        setResult("msgraph", "paste the Azure client ID first");
+        return;
+      }
+      await post("/api/connections/msgraph", { client_id: payload.client_id });
+      await loadConnections();
+      void startDevice("msgraph");
       return;
     }
     const endpoints: Record<string, string> = {
@@ -901,6 +981,7 @@ $("source-grid").addEventListener("submit", async (event) => {
       "notion-sync": "/api/sync/notion",
       "gitlab-connect": "/api/connections/gitlab",
       "gitlab-sync": "/api/sync/gitlab",
+      "msgraph-sync": "/api/sync/msgraph",
       "web-sync": "/api/sync/web",
     };
     const endpoint = endpoints[kind];
@@ -941,7 +1022,7 @@ $("source-grid").addEventListener("click", async (event) => {
   }
   if (action.startsWith("disconnect-")) {
     const provider = action.split("-")[1];
-    if (provider === "github") cancelDeviceFlow();
+    if (provider === "github" || provider === "msgraph") cancelDeviceFlow(provider);
     setResult(provider, "disconnecting…");
     try {
       await post(`/api/connections/${provider}/disconnect`, {});
@@ -964,11 +1045,15 @@ $("source-grid").addEventListener("click", async (event) => {
     }
     return;
   }
-  if (action === "github-device-start") {
-    void startGithubDevice();
+  if (action.endsWith("-device-start") && action !== "open-device-page") {
+    void startDevice(action.replace("-device-start", ""));
     return;
   }
-  if (action === "reveal-github" || action === "reveal-gdrive") {
+  if (
+    action === "reveal-github" ||
+    action === "reveal-gdrive" ||
+    action === "reveal-msgraph"
+  ) {
     reveal[action.replace("reveal-", "")] = true;
     renderSources();
     return;
@@ -1004,13 +1089,15 @@ $("source-grid").addEventListener("click", async (event) => {
     }
     return;
   }
-  if (action === "github-device-cancel") {
-    cancelDeviceFlow();
+  if (action.endsWith("-device-cancel")) {
+    cancelDeviceFlow(action.replace("-device-cancel", ""));
     renderSources();
     return;
   }
   if (action === "open-device-page") {
-    if (deviceFlow) void openExternal(deviceFlow.verificationUri);
+    const provider = target.dataset.provider ?? "github";
+    const flow = deviceFlows[provider];
+    if (flow) void openExternal(flow.verificationUri);
     return;
   }
   if (action === "github-gh") {

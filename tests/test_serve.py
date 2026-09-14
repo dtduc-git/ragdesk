@@ -318,6 +318,61 @@ def test_sync_gitlab_requires_project(base_url: str):
     assert excinfo.value.code == 400
 
 
+def test_msgraph_device_flow(base_url: str, monkeypatch):
+    from ragdesk.index import IndexStats
+
+    monkeypatch.delenv("RAGDESK_MS_CLIENT_ID", raising=False)
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/connections/msgraph/device/start", {})
+    assert excinfo.value.code == 400  # no client id yet
+
+    status, payload = request(
+        f"{base_url}/api/connections/msgraph", {"client_id": "ms-client-1"}
+    )
+    assert payload["saved"] is True
+
+    monkeypatch.setattr(
+        "ragdesk.serve.ms_device_start",
+        lambda client_id: {
+            "device_code": "dc-ms",
+            "user_code": "WXYZ-1234",
+            "verification_uri": "https://microsoft.com/devicelogin",
+            "interval": 1,
+        },
+    )
+    status, payload = request(f"{base_url}/api/connections/msgraph/device/start", {})
+    assert payload["user_code"] == "WXYZ-1234"
+
+    monkeypatch.setattr(
+        "ragdesk.serve.ms_poll_once", lambda cid, dc: ("pending", {})
+    )
+    status, payload = request(f"{base_url}/api/connections/msgraph/device/poll", {})
+    assert payload["pending"] is True
+
+    monkeypatch.setattr(
+        "ragdesk.serve.ms_poll_once",
+        lambda cid, dc: ("token", {"access_token": "at", "refresh_token": "rt"}),
+    )
+    monkeypatch.setattr("ragdesk.serve.ms_whoami", lambda token: "duke@outlook.com")
+    status, payload = request(f"{base_url}/api/connections/msgraph/device/poll", {})
+    assert payload["connected"] is True
+    assert payload["login"] == "duke@outlook.com"
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["msgraph"]["connected"] is True
+    assert connections["msgraph"]["account"] == "duke@outlook.com"
+
+    monkeypatch.setattr(
+        "ragdesk.serve.sync_onedrive",
+        lambda store, embedder, **kwargs: IndexStats(files_scanned=1, indexed=1, chunks=2),
+    )
+    status, payload = request(f"{base_url}/api/sync/msgraph", {})
+    assert status == 200
+    assert payload["indexed"] == 1
+
+    status, payload = request(f"{base_url}/api/connections/msgraph/disconnect", {})
+    assert payload["connected"] is False
+
+
 def test_eval_endpoint(base_url: str):
     status, payload = request(
         f"{base_url}/api/eval", {"golden": str(FIXTURES / "golden.jsonl")}

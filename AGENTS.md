@@ -12,8 +12,9 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   `retrieve` adds the optional rerank stage), `rerank` (LexicalReranker
   baseline; FastEmbedReranker + OnnxReranker = multilingual gte behind the
   `onnx` extra), `index` (incremental
-  local files), `github` / `gitlab` / `confluence` / `gdrive` / `notion`
-  connectors, `web` (same-host HTML crawl, capped pages/depth), `archive`
+  local files), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
+  `msgraph` (OneDrive + SharePoint, device flow) connectors, `web` (same-host
+  HTML crawl, capped pages/depth), `archive`
   (shared repo-tarball extraction), `htmlutil` (shared HTML→text),
   `evaluate` (recall@5 / nDCG@10 / MRR), `answer` (Ollama LLM: non-stream +
   stream, grounding gate), `credentials` (0600 store under `~/.config/ragdesk/`),

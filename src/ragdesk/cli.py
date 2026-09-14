@@ -18,6 +18,8 @@ from ragdesk.github import GitHubError, sync_github
 from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.index import index_paths
 from ragdesk.mcp import McpServer
+from ragdesk.msgraph import MsGraphError, device_flow_connect, resolve_client_id
+from ragdesk.msgraph import sync_onedrive as sync_msgraph
 from ragdesk.notion import NotionError, sync_notion
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
 from ragdesk.presets import DEFAULT_PRESET, PRESETS
@@ -121,6 +123,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--token", default=None, help="default: GITLAB_TOKEN env or saved connection"
     )
     p_gl.add_argument("--base-url", default="https://gitlab.com", help="self-hosted GitLab URL")
+
+    p_ms = sub.add_parser("msgraph", help="index OneDrive/SharePoint files (read-only)")
+    p_ms.add_argument("--folder-id", default="", help="OneDrive folder id (default: all files)")
+    p_ms.add_argument("--site", default="", help="SharePoint site as hostname:/sites/name")
+    p_ms.add_argument("--client-id", default=None, help="Azure application (client) id")
 
     p_notion = sub.add_parser(
         "notion", help="index Notion pages shared with an integration (read-only)"
@@ -277,6 +284,41 @@ def main(argv: list[str] | None = None) -> int:
                     base_url=args.base_url,
                 )
             except GitLabError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            print(
+                f"scanned={stats.files_scanned} indexed={stats.indexed} "
+                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
+            )
+            return 0
+
+        if args.command == "msgraph":
+            from ragdesk import credentials as credentials_module
+
+            try:
+                client_id = resolve_client_id(args.client_id)
+                if not credentials_module.get("msgraph").get("refresh_token"):
+                    if client_id is None:
+                        raise MsGraphError(
+                            "no Microsoft client id: set RAGDESK_MS_CLIENT_ID "
+                            "or pass --client-id (see docs/sources.md)"
+                        )
+
+                    def show_code(start: dict) -> None:
+                        print(
+                            f"Open {start.get('verification_uri')} and enter code: "
+                            f"{start.get('user_code')}"
+                        )
+
+                    device_flow_connect(client_id, on_code=show_code)
+                    print("connected.")
+                stats = sync_msgraph(
+                    store,
+                    embedder,
+                    site=args.site,
+                    folder_id=args.folder_id,
+                )
+            except MsGraphError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             print(
