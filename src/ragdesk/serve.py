@@ -334,6 +334,8 @@ class Handler(BaseHTTPRequestHandler):
             "gdrive": {
                 "connected": bool(gdrive_payload.get("refresh_token")),
                 "email": gdrive_payload.get("email", ""),
+                "oauth_ready": bool(credentials.get("gdrive").get("client_id"))
+                or bool(os.environ.get("GDRIVE_CLIENT_ID")),
             },
         }
 

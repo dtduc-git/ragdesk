@@ -551,6 +551,26 @@ input:focus {
   color: var(--stamp);
 }
 
+details.alt {
+  border-top: 1px solid var(--rule);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+details.alt summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+details.alt summary:hover {
+  color: var(--stamp);
+}
+
+details.alt[open] summary {
+  margin-bottom: 8px;
+}
+
 .source-card .btn {
   align-self: flex-start;
 }

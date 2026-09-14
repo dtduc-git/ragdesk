@@ -345,8 +345,12 @@ type Connections = {
     base_url: string;
     email: string;
     display_name: string;
+    oauth_ready: boolean;
+    oauth_connected: boolean;
+    site_name: string;
+    site_url: string;
   };
-  gdrive: { connected: boolean; email: string };
+  gdrive: { connected: boolean; email: string; oauth_ready: boolean };
 };
 
 type DeviceFlow = { userCode: string; verificationUri: string; interval: number };
@@ -355,6 +359,7 @@ let connections: Connections | null = null;
 let selectedPaths: string[] = [];
 let deviceFlow: DeviceFlow | null = null;
 let deviceTimer: number | undefined;
+const reveal: Record<string, boolean> = {};
 const sourceResults: Record<string, string> = {};
 
 const GITHUB_SOURCE_LABEL: Record<string, string> = {
@@ -489,11 +494,35 @@ function localCard(): string {
   </div>`;
 }
 
+async function startGithubDevice(): Promise<void> {
+  setResult("github", "requesting a code…");
+  try {
+    const response = await post<{
+      user_code: string;
+      verification_uri: string;
+      interval: number;
+    }>("/api/connections/github/device/start", {});
+    deviceFlow = {
+      userCode: response.user_code,
+      verificationUri: response.verification_uri,
+      interval: response.interval || 5,
+    };
+    setResult("github", "enter the code shown in your browser");
+    renderSources();
+    void openExternal(deviceFlow.verificationUri);
+    startDevicePolling();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setResult("github", message);
+    toast(message);
+  }
+}
+
 function githubCard(conn: Connections["github"]): string {
   if (!conn.connected) {
-    const options: string[] = [];
+    let primary: string;
     if (deviceFlow) {
-      options.push(`<div class="device-box">
+      primary = `<div class="device-box">
         <p class="source-note">Enter this code on GitHub:</p>
         <p class="device-code">${escapeHtml(deviceFlow.userCode)}</p>
         <div class="button-row">
@@ -501,38 +530,37 @@ function githubCard(conn: Connections["github"]): string {
           <button class="btn btn-quiet" type="button" data-action="github-device-cancel">Cancel</button>
         </div>
         <p class="muted">Waiting for approval…</p>
-      </div>`);
+      </div>`;
+    } else if (conn.device_flow_ready) {
+      primary = `<button class="btn btn-primary" type="button" data-action="github-device-start">Connect with a code</button>`;
     } else {
-      if (conn.gh_available) {
-        options.push(
-          `<button class="btn" type="button" data-action="github-gh">Use gh login</button>`,
-        );
-      }
-      if (conn.device_flow_ready) {
-        options.push(
-          `<button class="btn" type="button" data-action="github-device-start">Connect with a code</button>`,
-        );
-      }
+      primary = `<button class="btn btn-primary" type="button" data-action="reveal-github">Connect with a code</button>`;
     }
     const setup =
-      !deviceFlow && !conn.device_flow_ready
+      !deviceFlow && !conn.device_flow_ready && reveal.github
         ? `<form data-form="github-client-id" class="stack">
-             <p class="source-note">No <code>gh</code> CLI? Create a GitHub OAuth app with device flow enabled, save its client ID, then connect with a code.</p>
-             <div class="field-row">
-               <input name="client_id" placeholder="OAuth client ID" />
-               <button class="btn" type="submit">Save</button>
-             </div>
+             <p class="source-note">Create a GitHub OAuth app with device flow enabled, then paste its client ID once.</p>
+             <input name="client_id" placeholder="OAuth client ID" required />
+             <button class="btn" type="submit">Save &amp; get a code</button>
            </form>`
+        : "";
+    const gh =
+      conn.gh_available && !deviceFlow
+        ? `<button class="btn btn-quiet" type="button" data-action="github-gh">Use gh login instead</button>`
         : "";
     return `<div class="source-card">
       <h3>GitHub</h3>
-      <p class="source-note">Read-only repository sync. Connect with a code, your <code>gh</code> CLI, or a token.</p>
-      ${options.length ? `<div class="button-row">${options.join("")}</div>` : ""}
-      <form data-form="github-connect" class="stack">
-        <input name="token" type="password" placeholder="personal access token" />
-        <button class="btn" type="submit">Connect with token</button>
-      </form>
+      <p class="source-note">One click: GitHub shows a code, you approve in the browser, done.</p>
+      ${primary}
       ${setup}
+      ${gh}
+      <details class="alt">
+        <summary>Use a personal access token</summary>
+        <form data-form="github-connect" class="stack">
+          <input name="token" type="password" placeholder="personal access token" />
+          <button class="btn" type="submit">Connect with token</button>
+        </form>
+      </details>
       <p class="source-result" data-result="github"></p>
     </div>`;
   }
@@ -557,25 +585,47 @@ function githubCard(conn: Connections["github"]): string {
 
 function confluenceCard(conn: Connections["confluence"]): string {
   if (!conn.connected) {
+    const primary = conn.oauth_ready
+      ? `<button class="btn btn-primary" type="button" data-action="confluence-oauth-start">Connect with Atlassian</button>`
+      : `<button class="btn btn-primary" type="button" data-action="reveal-confluence">Connect with Atlassian</button>`;
+    const setup =
+      !conn.oauth_ready && reveal.confluence
+        ? `<form data-form="confluence-oauth" class="stack">
+             <p class="source-note">Create an Atlassian OAuth 2.0 (3LO) app with redirect URL <code>http://127.0.0.1:8788/callback</code>, then paste its credentials once.</p>
+             <input name="client_id" placeholder="Atlassian client ID" required />
+             <input name="client_secret" type="password" placeholder="Atlassian client secret" required />
+             <button class="btn" type="submit">Save &amp; connect</button>
+           </form>`
+        : "";
     return `<div class="source-card">
       <h3>Confluence</h3>
-      <p class="source-note">Connect once with your site, then sync any space.</p>
-      <form data-form="confluence-connect" class="stack">
-        <input name="base_url" placeholder="https://team.atlassian.net" required />
-        <div class="field-row">
-          <input name="email" placeholder="you@company.com" required />
-          <input name="token" type="password" placeholder="API token" required />
-        </div>
-        <button class="btn" type="submit">Connect</button>
-      </form>
+      <p class="source-note">One click: Atlassian asks for consent in your browser.</p>
+      ${primary}
+      ${setup}
+      <details class="alt">
+        <summary>Use a site URL + API token</summary>
+        <form data-form="confluence-connect" class="stack">
+          <input name="base_url" placeholder="https://team.atlassian.net" required />
+          <div class="field-row">
+            <input name="email" placeholder="you@company.com" required />
+            <input name="token" type="password" placeholder="API token" required />
+          </div>
+          <button class="btn" type="submit">Connect</button>
+        </form>
+      </details>
       <p class="source-result" data-result="confluence"></p>
     </div>`;
   }
-  const who = conn.display_name || conn.email;
-  const via = conn.source === "env" ? " · via CONFLUENCE_EMAIL/TOKEN env" : "";
+  const who = conn.site_name || conn.display_name || conn.email;
+  const where = conn.site_url || conn.base_url;
+  const via = conn.oauth_connected
+    ? "Atlassian OAuth"
+    : conn.source === "env"
+      ? "env vars"
+      : "API token";
   return `<div class="source-card is-connected">
     <h3>Confluence <span class="conn-badge">connected</span></h3>
-    <p class="source-note">${escapeHtml(who)} · ${escapeHtml(conn.base_url)}${via}</p>
+    <p class="source-note">${escapeHtml(who)} · ${escapeHtml(where)} · ${via}</p>
     <div class="button-row">
       <button class="btn btn-quiet" type="button" data-action="disconnect-confluence">Disconnect</button>
     </div>
@@ -589,14 +639,23 @@ function confluenceCard(conn: Connections["confluence"]): string {
 
 function gdriveCard(conn: Connections["gdrive"]): string {
   if (!conn.connected) {
+    const primary = conn.oauth_ready
+      ? `<button class="btn btn-primary" type="button" data-action="gdrive-oauth-start">Connect Google Drive</button>`
+      : `<button class="btn btn-primary" type="button" data-action="reveal-gdrive">Connect Google Drive</button>`;
+    const setup =
+      !conn.oauth_ready && reveal.gdrive
+        ? `<form data-form="gdrive-connect" class="stack">
+             <p class="source-note">Create a Google OAuth client (type “Desktop app”) and paste its ID once.</p>
+             <input name="client_id" placeholder="OAuth client ID" required />
+             <input name="client_secret" type="password" placeholder="client secret (optional)" />
+             <button class="btn" type="submit">Save &amp; connect</button>
+           </form>`
+        : "";
     return `<div class="source-card">
       <h3>Google Drive</h3>
-      <p class="source-note">Bring your own OAuth client ID — your browser asks for consent once.</p>
-      <form data-form="gdrive-connect" class="stack">
-        <input name="client_id" placeholder="OAuth client ID" required />
-        <input name="client_secret" type="password" placeholder="client secret (optional)" />
-        <button class="btn" type="submit">Connect Google Drive</button>
-      </form>
+      <p class="source-note">One click: Google asks for consent in your browser.</p>
+      ${primary}
+      ${setup}
       <p class="source-result" data-result="gdrive"></p>
     </div>`;
   }
@@ -628,8 +687,12 @@ function renderSources(): void {
     base_url: "",
     email: "",
     display_name: "",
+    oauth_ready: false,
+    oauth_connected: false,
+    site_name: "",
+    site_url: "",
   };
-  const gdrive = connections?.gdrive ?? { connected: false, email: "" };
+  const gdrive = connections?.gdrive ?? { connected: false, email: "", oauth_ready: false };
   $("source-grid").innerHTML =
     localCard() + githubCard(github) + confluenceCard(confluence) + gdriveCard(gdrive);
   for (const [kind, message] of Object.entries(sourceResults)) {
@@ -680,14 +743,15 @@ $("source-grid").addEventListener("submit", async (event) => {
         return;
       }
       await post("/api/connections/github/client-id", { client_id: payload.client_id });
-      setResult("github", "client ID saved — you can connect with a code now");
       await loadConnections();
+      void startGithubDevice();
       return;
     }
     const endpoints: Record<string, string> = {
       "github-connect": "/api/connections/github",
       "github-sync": "/api/sync/github",
       "confluence-connect": "/api/connections/confluence",
+      "confluence-oauth": "/api/connections/confluence/oauth",
       "confluence-sync": "/api/sync/confluence",
       "gdrive-connect": "/api/connections/gdrive",
       "gdrive-sync": "/api/sync/gdrive",
@@ -696,7 +760,7 @@ $("source-grid").addEventListener("submit", async (event) => {
     if (!endpoint) return;
     setResult(provider, "working…");
     const response = await post<Record<string, unknown>>(endpoint, payload);
-    if (kind.endsWith("-connect")) {
+    if (kind.endsWith("-connect") || kind.endsWith("-oauth")) {
       const detail = String(response.email ?? response.display_name ?? response.login ?? "");
       setResult(provider, `connected${detail ? ` — ${detail}` : ""}`);
       await loadConnections();
@@ -754,25 +818,29 @@ $("source-grid").addEventListener("click", async (event) => {
     return;
   }
   if (action === "github-device-start") {
-    setResult("github", "requesting a code…");
+    void startGithubDevice();
+    return;
+  }
+  if (action === "reveal-github" || action === "reveal-confluence" || action === "reveal-gdrive") {
+    reveal[action.replace("reveal-", "")] = true;
+    renderSources();
+    return;
+  }
+  if (action === "gdrive-oauth-start" || action === "confluence-oauth-start") {
+    const provider = action.startsWith("gdrive") ? "gdrive" : "confluence";
+    const endpoint =
+      provider === "gdrive"
+        ? "/api/connections/gdrive"
+        : "/api/connections/confluence/oauth";
+    setResult(provider, "waiting for browser consent…");
     try {
-      const response = await post<{
-        user_code: string;
-        verification_uri: string;
-        interval: number;
-      }>("/api/connections/github/device/start", {});
-      deviceFlow = {
-        userCode: response.user_code,
-        verificationUri: response.verification_uri,
-        interval: response.interval || 5,
-      };
-      setResult("github", "enter the code shown in your browser");
-      renderSources();
-      void openExternal(deviceFlow.verificationUri);
-      startDevicePolling();
+      const response = await post<Record<string, unknown>>(endpoint, {});
+      const detail = String(response.email ?? response.display_name ?? "");
+      setResult(provider, `connected${detail ? ` — ${detail}` : ""}`);
+      await loadConnections();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setResult("github", message);
+      setResult(provider, message);
       toast(message);
     }
     return;
