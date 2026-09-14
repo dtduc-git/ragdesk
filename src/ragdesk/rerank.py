@@ -51,7 +51,7 @@ class FastEmbedReranker:
     """Cross-encoder reranker via fastembed (ONNX Runtime).
 
     The model downloads on first use (~0.08-1.1 GB depending on model).
-    Requires the ``rerank`` extra: ``pip install 'ragdesk[rerank]'``.
+    Requires the ``onnx`` extra: ``pip install 'ragdesk[onnx]'``.
     """
 
     def __init__(self, model: str = DEFAULT_RERANK_MODEL) -> None:
@@ -65,8 +65,8 @@ class FastEmbedReranker:
                 from fastembed.rerank.cross_encoder import TextCrossEncoder
             except ImportError as exc:
                 raise RuntimeError(
-                    "fastembed is not installed. Install the rerank extra: "
-                    "pip install 'ragdesk[rerank]'"
+                    "fastembed is not installed. Install the onnx extra: "
+                    "pip install 'ragdesk[onnx]'"
                 ) from exc
             self._encoder = TextCrossEncoder(model_name=self.model)
         return self._encoder

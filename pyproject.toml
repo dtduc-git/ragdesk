@@ -37,7 +37,7 @@ Issues = "https://github.com/dtduc-git/ragdesk/issues"
 Changelog = "https://github.com/dtduc-git/ragdesk/releases"
 
 [project.optional-dependencies]
-rerank = [
+onnx = [
     "fastembed>=0.8.0",
 ]
 

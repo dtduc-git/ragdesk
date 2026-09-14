@@ -1,0 +1,9 @@
+{"query": "how does RRF fusion rank chunks from the two lanes", "relevant": ["src/ragdesk/search.py"]}
+{"query": "what error do I get if the index was built with a different embedder", "relevant": ["src/ragdesk/store.py"]}
+{"query": "paragraph aware chunking with character overlap", "relevant": ["src/ragdesk/chunk.py"]}
+{"query": "grounding gate refuses to answer when context is weak", "relevant": ["src/ragdesk/answer.py"]}
+{"query": "incremental indexing by content hash skip unchanged files", "relevant": ["src/ragdesk/index.py"]}
+{"query": "how is recall computed from the golden set of queries", "relevant": ["src/ragdesk/evaluate.py"]}
+{"query": "lexical reranker shared token overlap baseline", "relevant": ["src/ragdesk/rerank.py"]}
+{"query": "install onnx extra local models EmbeddingGemma", "relevant": ["README.md"]}
+{"query": "where is the retrieval recall gate wired into CI", "relevant": [".github/workflows/ci.yml"]}

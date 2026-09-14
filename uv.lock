@@ -943,7 +943,7 @@ name = "ragdesk"
 source = { editable = "." }
 
 [package.optional-dependencies]
-rerank = [
+onnx = [
     { name = "fastembed" },
 ]
 
@@ -954,8 +954,8 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "fastembed", marker = "extra == 'rerank'", specifier = ">=0.8.0" }]
-provides-extras = ["rerank"]
+requires-dist = [{ name = "fastembed", marker = "extra == 'onnx'", specifier = ">=0.8.0" }]
+provides-extras = ["onnx"]
 
 [package.metadata.requires-dev]
 dev = [

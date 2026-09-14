@@ -159,5 +159,12 @@ def test_get_embedder_specs():
     assert get_embedder("hash:128").dim == 128
     assert get_embedder("hash").dim == 4096
     assert get_embedder("ollama:embeddinggemma:300m").name == "ollama:embeddinggemma:300m"
+    assert get_embedder("onnx").name.startswith("onnx:onnx-community/embeddinggemma")
+    assert get_embedder("onnx:some/repo").repo == "some/repo"
     with pytest.raises(ValueError):
         get_embedder("not-a-spec")
+
+
+def test_embed_query_matches_embed_for_single_text():
+    embedder = HashingEmbedder(dim=64)
+    assert embedder.embed_query("hello world") == embedder.embed(["hello world"])[0]

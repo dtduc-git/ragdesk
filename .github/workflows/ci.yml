@@ -22,3 +22,9 @@ jobs:
           uv run ragdesk --embedder hash --db .ragdesk/eval.db index fixtures/docs
           uv run ragdesk --embedder hash --db .ragdesk/eval.db eval \
             --golden fixtures/golden.jsonl --min-recall 0.8
+      - name: Retrieval eval (repo golden, offline embedder)
+        run: |
+          uv run ragdesk --embedder hash --db .ragdesk/eval-repo.db index \
+            README.md AGENTS.md SECURITY.md src .github fixtures/docs
+          uv run ragdesk --embedder hash --db .ragdesk/eval-repo.db eval \
+            --golden fixtures/golden_repo.jsonl --min-recall 0.8

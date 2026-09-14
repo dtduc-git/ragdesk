@@ -21,11 +21,14 @@ search (SQLite FTS5 BM25 + embeddings + RRF fusion) in a single SQLite file.
 ollama pull embeddinggemma:300m
 ollama pull qwen3.5:4b
 
-# 2. install (pre-release: from source)
-uv tool install git+https://github.com/dtduc-git/ragdesk
+# 2. install (pre-release: from source; [onnx] extra for local ONNX models)
+uv tool install 'ragdesk[onnx] @ git+https://github.com/dtduc-git/ragdesk'
 
 # 3. index your stuff (incremental, read-only)
 ragdesk index ~/notes ~/repos/myrepo
+
+# no Ollama? EmbeddingGemma runs on CPU via ONNX (downloads ~0.3GB once):
+ragdesk --embedder onnx index ~/notes
 
 # 4. ask (grounded + cited, refuses when context is weak)
 ragdesk ask "how does the deploy rollback work?"
@@ -49,43 +52,47 @@ ragdesk stats
 |---|---|
 | Incremental local file indexing (hash-based) | Desktop UI (Tauri) |
 | Hybrid retrieval: FTS5 BM25 + dense + RRF | GitHub / Confluence / Google Drive connectors |
-| Reranking: `lexical` baseline + `fastembed` cross-encoder (`[rerank]` extra) | Multilingual reranker (`bge-reranker-v2-m3` is not in fastembed yet, upstream qdrant/fastembed#494) |
-| Cited answers via local Ollama LLM + grounding gate | ONNX embedder backend (EmbeddingGemma int8 direct) |
-| Eval harness + CI gate (`--min-recall`) | RAM presets + model manager |
+| Reranking: `lexical` baseline + `fastembed` cross-encoder (`[onnx]` extra) | Multilingual reranker (`bge-reranker-v2-m3` is not in fastembed yet, upstream qdrant/fastembed#494) |
+| ONNX embedder: EmbeddingGemma-300M int8, CPU (`[onnx]` extra) | RAM presets + model manager |
+| Cited answers via local Ollama LLM + grounding gate | Confluence / GDrive connectors |
+| Eval harness + CI gate (`--min-recall`) | Published eval badge automation |
 | Fail-closed embedder/dimension guard | |
 
 ## Eval
 
-Measured on the in-repo fixtures (`fixtures/golden.jsonl`, 7 queries) with the
-deterministic offline `hash-4096` embedder — this is the CI baseline, not a
-quality claim:
+Every number below is reproducible from the repo. `fixtures/` is a tiny
+7-query smoke corpus; `fixtures/golden_repo.jsonl` is a 9-query golden set over
+this repository's own docs and source.
 
-| preset | recall@5 | nDCG@10 | MRR@10 |
+| corpus / preset | recall@5 | nDCG@10 | MRR@10 |
 |---|---|---|---|
-| fixtures / hash-4096 | 1.000 | 1.000 | 1.000 |
+| fixtures (7 queries) / hash-4096 — CI gate | 1.000 | 1.000 | 1.000 |
+| repo (9 queries) / hash-4096 | 0.889 | 0.846 | 0.796 |
+| repo (9 queries) / EmbeddingGemma-300M int8 (ONNX) | 1.000 | 0.918 | 0.889 |
+| repo (9 queries) / EmbeddingGemma + `lexical` rerank | 1.000 | 0.862 | 0.815 |
 
-CI gates `recall@5 >= 0.8` on this harness, so retrieval regressions fail the
-build.
+Honest notes: the tiny fixtures corpus saturates, so the repo golden set is the
+one that says something. The dependency-free `lexical` reranker **lowers**
+nDCG/MRR here — it is a test baseline, not a quality feature; a real
+cross-encoder reranker is the next milestone. CI gates `recall@5 >= 0.8` on
+both harnesses, so retrieval regressions fail the build.
 
-Reproduce:
+Reproduce (first run downloads the ~0.3 GB int8 model):
 
 ```bash
-uv run ragdesk --embedder hash --db /tmp/eval.db index fixtures/docs
-uv run ragdesk --embedder hash --db /tmp/eval.db eval --golden fixtures/golden.jsonl
+uv run ragdesk --embedder onnx --db /tmp/eval.db index README.md AGENTS.md SECURITY.md src .github fixtures/docs
+uv run ragdesk --embedder onnx --db /tmp/eval.db eval --golden fixtures/golden_repo.jsonl
+uv run ragdesk --embedder onnx --db /tmp/eval.db --rerank lexical eval --golden fixtures/golden_repo.jsonl
 ```
-
-Real-corpus numbers (EmbeddingGemma + Ollama) land with the eval badge in an
-upcoming release.
 
 ## Roadmap
 
 1. Multilingual reranker backend (`bge-reranker-v2-m3` / `gte-multilingual-reranker-base`
    via ONNX or llama.cpp — not in fastembed yet)
-2. ONNX embedder backend (EmbeddingGemma-300M int8)
-3. GitHub connector (device flow, RFC 8628)
-4. Tauri desktop shell + RAM presets (8GB floor, model manager)
-5. Confluence connector (API token), Google Drive (BYO OAuth client + PKCE)
-6. Published eval badge per release
+2. GitHub connector (device flow, RFC 8628)
+3. Tauri desktop shell + RAM presets (8GB floor, model manager)
+4. Confluence connector (API token), Google Drive (BYO OAuth client + PKCE)
+5. Published eval badge per release
 
 ## Non-goals
 

@@ -45,7 +45,7 @@ def hybrid_search(
     pool: int = 50,
 ) -> list[Hit]:
     """BM25 + dense lanes, RRF-fused, chunk-level."""
-    query_vec = embedder.embed([query])[0]
+    query_vec = embedder.embed_query(query)
     dense_rows = store.dense_search(query_vec, pool)
     bm25_rows = store.bm25_search(query, pool)
 

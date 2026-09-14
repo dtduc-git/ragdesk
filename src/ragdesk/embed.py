@@ -16,6 +16,9 @@ from ragdesk.ollama import post_json
 
 DEFAULT_OLLAMA_MODEL = "embeddinggemma:300m"
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+DEFAULT_ONNX_REPO = "onnx-community/embeddinggemma-300m-ONNX"
+ONNX_QUERY_PROMPT = "task: search result | query: "
+ONNX_DOC_PROMPT = "title: none | text: "
 
 # Toy-embedder stopwords only: without this, stopword overlap between unrelated
 # documents dominates the hashing vector (and signed hashing can cancel to 0).
@@ -45,6 +48,8 @@ class Embedder(Protocol):
 
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
+    def embed_query(self, text: str) -> list[float]: ...
+
 
 class HashingEmbedder:
     """Deterministic bag-of-tokens hashing embedder (tests/CI only).
@@ -71,6 +76,9 @@ class HashingEmbedder:
             vectors.append([v / norm for v in vec])
         return vectors
 
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed([text])[0]
+
 
 class OllamaEmbedder:
     """Real embedder via a local Ollama server."""
@@ -93,9 +101,96 @@ class OllamaEmbedder:
             self.dim = len(embeddings[0])
         return embeddings
 
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed([text])[0]
+
+
+class OnnxEmbedder:
+    """EmbeddingGemma-300M via ONNX Runtime (int8 by default), CPU-only.
+
+    Downloads the tokenizer + model from Hugging Face on first use
+    (~0.3 GB). Requires the ``onnx`` extra. Uses the model's recommended
+    query/document prompts, which matters for retrieval quality.
+    """
+
+    def __init__(self, repo: str = DEFAULT_ONNX_REPO, variant: str = "quantized") -> None:
+        self.name = f"onnx:{repo}:{variant}"
+        self.repo = repo
+        self.variant = variant
+        self.dim = 768
+        self._tokenizer = None
+        self._session = None
+        self._output_index = 0
+
+    def _load(self) -> None:
+        if self._session is not None:
+            return
+        try:
+            import numpy as np  # noqa: F401
+            import onnxruntime as ort
+            from huggingface_hub import hf_hub_download
+            from tokenizers import Tokenizer
+        except ImportError as exc:
+            raise RuntimeError(
+                "onnx embedder dependencies missing. Install the onnx extra: "
+                "pip install 'ragdesk[onnx]'"
+            ) from exc
+
+        tokenizer = Tokenizer.from_file(hf_hub_download(self.repo, "tokenizer.json"))
+        tokenizer.enable_truncation(max_length=2048)
+        tokenizer.enable_padding()
+
+        model_path = hf_hub_download(
+            self.repo, f"model_{self.variant}.onnx", subfolder="onnx"
+        )
+        try:
+            hf_hub_download(
+                self.repo, f"model_{self.variant}.onnx_data", subfolder="onnx"
+            )
+        except Exception:  # noqa: BLE001 - external data file exists for some variants only
+            pass
+
+        self._tokenizer = tokenizer
+        self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        self._output_index = self._find_sentence_embedding()
+
+    def _find_sentence_embedding(self) -> int:
+        outputs = self._session.get_outputs()
+        names = [output.name for output in outputs]
+        if "sentence_embedding" in names:
+            return names.index("sentence_embedding")
+        for index, output in enumerate(outputs):
+            if len(output.shape) == 2:
+                return index
+        raise RuntimeError(
+            f"ONNX model exposes no sentence embedding output (outputs: {names})"
+        )
+
+    def _embed_prefixed(self, texts: list[str], prefix: str) -> list[list[float]]:
+        self._load()
+        import numpy as np
+
+        encodings = self._tokenizer.encode_batch([prefix + text for text in texts])
+        input_ids = np.array([enc.ids for enc in encodings], dtype=np.int64)
+        attention_mask = np.array([enc.attention_mask for enc in encodings], dtype=np.int64)
+        outputs = self._session.run(
+            None, {"input_ids": input_ids, "attention_mask": attention_mask}
+        )
+        vectors: list[list[float]] = []
+        for vec in outputs[self._output_index].tolist():
+            norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+            vectors.append([v / norm for v in vec])
+        return vectors
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self._embed_prefixed(texts, ONNX_DOC_PROMPT)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed_prefixed([text], ONNX_QUERY_PROMPT)[0]
+
 
 def get_embedder(spec: str) -> Embedder:
-    """Build an embedder from a spec: ``ollama[:model]`` or ``hash[:dim]``."""
+    """Build an embedder from a spec: ``ollama[:model]``, ``onnx[:repo]`` or ``hash[:dim]``."""
     if spec == "hash" or spec.startswith("hash:"):
         dim = int(spec.split(":", 1)[1]) if ":" in spec else 4096
         return HashingEmbedder(dim)
@@ -103,4 +198,10 @@ def get_embedder(spec: str) -> Embedder:
         return OllamaEmbedder()
     if spec.startswith("ollama:"):
         return OllamaEmbedder(model=spec.split(":", 1)[1])
-    raise ValueError(f"unknown embedder spec: {spec!r} (use ollama[:model] or hash[:dim])")
+    if spec == "onnx":
+        return OnnxEmbedder()
+    if spec.startswith("onnx:"):
+        return OnnxEmbedder(repo=spec.split(":", 1)[1])
+    raise ValueError(
+        f"unknown embedder spec: {spec!r} (use ollama[:model], onnx[:repo] or hash[:dim])"
+    )

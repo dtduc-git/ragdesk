@@ -6,10 +6,11 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
 ## Layout
 
 - `src/ragdesk/` — package. `chunk` (paragraph-aware + overlap), `embed`
-  (HashingEmbedder for CI, OllamaEmbedder for real; shared `tokenize`),
+  (HashingEmbedder for CI, OllamaEmbedder for real, OnnxEmbedder =
+  EmbeddingGemma int8 with query/doc prompts; shared `tokenize`),
   `store` (SQLite: FTS5 + float32 vectors + fail-closed embedder guard),
   `search` (BM25 + dense + RRF; `retrieve` adds the optional rerank stage),
-  `rerank` (LexicalReranker baseline; FastEmbedReranker behind the `rerank`
+  `rerank` (LexicalReranker baseline; FastEmbedReranker behind the `onnx`
   extra), `index` (incremental local files), `evaluate` (recall@5 / nDCG@10 /
   MRR), `answer` (Ollama LLM + grounding gate), `cli`.
 - `fixtures/` — tiny corpus + golden set for the offline CI eval.
@@ -23,6 +24,9 @@ uv run pytest
 uv run ruff check .
 uv run ragdesk --embedder hash --db /tmp/eval.db index fixtures/docs
 uv run ragdesk --embedder hash --db /tmp/eval.db eval --golden fixtures/golden.jsonl
+# repo golden (real numbers; --embedder onnx downloads ~0.3GB on first run)
+uv run ragdesk --embedder hash --db /tmp/eval-repo.db index README.md AGENTS.md SECURITY.md src .github fixtures/docs
+uv run ragdesk --embedder hash --db /tmp/eval-repo.db eval --golden fixtures/golden_repo.jsonl
 ```
 
 ## Conventions
