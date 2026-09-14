@@ -16,6 +16,7 @@ from ragdesk.evaluate import evaluate, format_report, load_golden
 from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
 from ragdesk.index import index_paths
+from ragdesk.notion import NotionError, sync_notion
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
 from ragdesk.presets import DEFAULT_PRESET, PRESETS
 from ragdesk.presets import resolve as resolve_preset
@@ -108,6 +109,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gd.add_argument("--client-secret", default="", help="default: GDRIVE_CLIENT_SECRET env")
     p_gd.add_argument(
         "--no-browser", action="store_true", help="do not run the interactive OAuth flow"
+    )
+
+    p_notion = sub.add_parser(
+        "notion", help="index Notion pages shared with an integration (read-only)"
+    )
+    p_notion.add_argument(
+        "--token", default=None, help="default: NOTION_TOKEN env or saved connection"
     )
 
     p_web = sub.add_parser("web", help="crawl a docs site and index it (read-only)")
@@ -233,6 +241,18 @@ def main(argv: list[str] | None = None) -> int:
                     interactive=not args.no_browser,
                 )
             except GdriveError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            print(
+                f"scanned={stats.files_scanned} indexed={stats.indexed} "
+                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
+            )
+            return 0
+
+        if args.command == "notion":
+            try:
+                stats = sync_notion(store, embedder, token=args.token)
+            except NotionError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             print(

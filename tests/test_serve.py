@@ -29,6 +29,7 @@ def base_url(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("ragdesk.defaults.GOOGLE_CLIENT_SECRET", "")
     monkeypatch.setattr("ragdesk.serve.token_source", lambda: None)
     monkeypatch.setattr("ragdesk.serve.load_token_file", lambda: {})
+    monkeypatch.delenv("NOTION_TOKEN", raising=False)
     db = tmp_path / "index.db"
     embedder = HashingEmbedder()
     with Store(db) as store:
@@ -281,6 +282,33 @@ def test_sync_web_requires_url(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/web", {})
     assert excinfo.value.code == 400
+
+
+def test_connect_notion_and_sync(base_url: str, monkeypatch):
+    from ragdesk.index import IndexStats
+
+    monkeypatch.setattr("ragdesk.serve.notion_whoami", lambda token: "Duke's bot")
+    status, payload = request(
+        f"{base_url}/api/connections/notion", {"token": "ntn_test"}
+    )
+    assert status == 200
+    assert payload["display_name"] == "Duke's bot"
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["notion"]["connected"] is True
+    assert connections["notion"]["name"] == "Duke's bot"
+
+    monkeypatch.setattr(
+        "ragdesk.serve.sync_notion",
+        lambda store, embedder, **kwargs: IndexStats(files_scanned=2, indexed=2, chunks=6),
+    )
+    status, payload = request(f"{base_url}/api/sync/notion", {})
+    assert status == 200
+    assert payload["indexed"] == 2
+
+    status, payload = request(f"{base_url}/api/connections/notion/disconnect", {})
+    assert payload["connected"] is False
+    _, connections = request(f"{base_url}/api/connections")
+    assert connections["notion"]["connected"] is False
 
 
 def test_ask_llm_unavailable_surfaces_503(base_url: str):

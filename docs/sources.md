@@ -10,6 +10,7 @@ equivalents below) and connect what you need.
 | GitHub | device code (default), `gh` login, or a token | no (a client ID ships with the app) | token in `credentials.json` (0600) |
 | Confluence | API token (default) or your own Atlassian OAuth app | no for API token | token / app credentials in `credentials.json` (0600) |
 | Google Drive | browser consent (OAuth, PKCE) | no (a client ID ships with the app) | refresh token in `gdrive.json` (0600) |
+| Notion | internal integration token | no (you create the integration, 1 min) | token in `credentials.json` (0600) |
 | Website | none | no | — |
 
 Credential resolution order everywhere: **explicit input → environment
@@ -123,6 +124,21 @@ apps cannot keep secrets; PKCE protects the flow), which is why the build may
 bake them into release artifacts.
 </details>
 
+## Notion
+
+Indexes the pages you explicitly share with an integration — Notion never
+exposes anything else.
+
+1. Create an internal integration at
+   [notion.so/my-integrations](https://www.notion.so/my-integrations) and copy
+   its token (`ntn_…`).
+2. **Share pages**: open each page (or a parent page) in Notion → `•••` →
+   *Connections* → add your integration. Child pages inherit the share.
+3. Sources → Notion → paste the token → **Connect Notion** → **Sync pages**.
+
+Re-syncs skip pages whose `last_edited_time` is unchanged, so only edits are
+re-fetched. CLI: `ragdesk notion` (or `NOTION_TOKEN=… ragdesk notion`).
+
 ## Website (web crawl)
 
 Index a docs site: same host, HTML only, capped pages and depth, no
@@ -140,4 +156,5 @@ JavaScript rendering.
 | Confluence `401/403` | API tokens are per-user; re-create the token and check the email matches. |
 | Google warning screen | Expected while unverified: **Advanced → Go to ragdesk (unsafe)**. |
 | Google token stops working after ~7 days | The consent screen is in *Testing*; publish it to production (see above). |
+| Notion sync finds `0 pages` | The pages aren't shared with the integration — add the connection on each page. |
 | `not HTML (...)` during crawl | The link points at a binary/JS-only asset; those are skipped by design. |

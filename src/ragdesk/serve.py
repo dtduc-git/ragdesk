@@ -42,6 +42,9 @@ from ragdesk.github import (
 )
 from ragdesk.github import whoami as github_whoami
 from ragdesk.index import index_paths
+from ragdesk.notion import NotionError, sync_notion
+from ragdesk.notion import resolve_token as notion_resolve_token
+from ragdesk.notion import whoami as notion_whoami
 from ragdesk.ollama import OllamaUnavailable
 from ragdesk.rerank import get_reranker
 from ragdesk.search import Hit, retrieve
@@ -217,6 +220,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_connect_confluence_oauth(body)
             elif self.path == "/api/connections/gdrive":
                 self._handle_connect_gdrive(body)
+            elif self.path == "/api/connections/notion":
+                self._handle_connect_notion(body)
+            elif self.path == "/api/sync/notion":
+                self._handle_sync_notion()
             elif self.path.endswith("/disconnect") and self.path.startswith(
                 "/api/connections/"
             ):
@@ -239,7 +246,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, {"error": f"not found: {self.path}"})
         except OllamaUnavailable as exc:
             self._send(503, {"error": str(exc)})
-        except (GitHubError, ConfluenceError, GdriveError, WebError) as exc:
+        except (GitHubError, ConfluenceError, GdriveError, WebError, NotionError) as exc:
             self._send(502, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface errors to the UI
             self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
@@ -316,6 +323,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             confluence_source = None
         gdrive_payload = load_token_file()
+        notion_entry = credentials.get("notion")
         return {
             "github": {
                 "connected": gh_source is not None or bool(github_entry.get("token")),
@@ -339,6 +347,10 @@ class Handler(BaseHTTPRequestHandler):
                 "connected": bool(gdrive_payload.get("refresh_token")),
                 "email": gdrive_payload.get("email", ""),
                 "oauth_ready": bool(gdrive_client_credentials()[0]),
+            },
+            "notion": {
+                "connected": notion_resolve_token() is not None,
+                "name": notion_entry.get("name", ""),
             },
         }
 
@@ -510,7 +522,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"connected": True, "email": email})
 
     def _handle_disconnect(self, provider: str) -> None:
-        if provider not in ("github", "confluence", "gdrive"):
+        if provider not in ("github", "confluence", "gdrive", "notion"):
             self._send(404, {"error": f"unknown provider: {provider}"})
             return
         credentials.clear(provider)
@@ -562,6 +574,29 @@ class Handler(BaseHTTPRequestHandler):
             200,
             {
                 "space": space,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_connect_notion(self, body: dict[str, Any]) -> None:
+        token = str(body.get("token", "")).strip()
+        if not token:
+            self._send(400, {"error": "token required"})
+            return
+        name = notion_whoami(token)
+        credentials.set_provider("notion", {"token": token, "name": name})
+        self._send(200, {"connected": True, "display_name": name})
+
+    def _handle_sync_notion(self) -> None:
+        with self.state.lock, Store(self.state.db) as store:
+            stats = sync_notion(store, self.state.embedder)
+        self._send(
+            200,
+            {
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,

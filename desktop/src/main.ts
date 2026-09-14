@@ -364,6 +364,7 @@ type Connections = {
     site_url: string;
   };
   gdrive: { connected: boolean; email: string; oauth_ready: boolean };
+  notion: { connected: boolean; name: string };
 };
 
 type DeviceFlow = { userCode: string; verificationUri: string; interval: number };
@@ -704,6 +705,35 @@ function gdriveCard(conn: Connections["gdrive"]): string {
   </div>`;
 }
 
+function notionCard(conn: Connections["notion"]): string {
+  if (!conn.connected) {
+    return `<div class="source-card">
+      <h3>Notion</h3>
+      <p class="source-note">
+        Create an internal integration at
+        <button class="link-like" type="button" data-action="open-notion-integrations">notion.so/my-integrations</button>
+        and share the pages with it — Notion exposes only what you share.
+      </p>
+      <form data-form="notion-connect" class="stack">
+        <input name="token" type="password" placeholder="integration token (ntn_…)" required />
+        <button class="btn btn-primary" type="submit">Connect Notion</button>
+      </form>
+      <p class="source-result" data-result="notion"></p>
+    </div>`;
+  }
+  return `<div class="source-card is-connected">
+    <h3>Notion <span class="conn-badge">connected</span></h3>
+    <p class="source-note">${conn.name ? escapeHtml(conn.name) : "integration"} · only shared pages are indexed</p>
+    <div class="button-row">
+      <button class="btn btn-quiet" type="button" data-action="disconnect-notion">Disconnect</button>
+    </div>
+    <form data-form="notion-sync" class="stack">
+      <button class="btn btn-primary" type="submit">Sync pages</button>
+    </form>
+    <p class="source-result" data-result="notion"></p>
+  </div>`;
+}
+
 function webCard(): string {
   return `<div class="source-card">
     <h3>Website</h3>
@@ -740,11 +770,13 @@ function renderSources(): void {
     site_url: "",
   };
   const gdrive = connections?.gdrive ?? { connected: false, email: "", oauth_ready: false };
+  const notion = connections?.notion ?? { connected: false, name: "" };
   $("source-grid").innerHTML =
     localCard() +
     githubCard(github) +
     confluenceCard(confluence) +
     gdriveCard(gdrive) +
+    notionCard(notion) +
     webCard();
   for (const [kind, message] of Object.entries(sourceResults)) {
     const element = document.querySelector<HTMLElement>(`[data-result="${kind}"]`);
@@ -806,6 +838,8 @@ $("source-grid").addEventListener("submit", async (event) => {
       "confluence-sync": "/api/sync/confluence",
       "gdrive-connect": "/api/connections/gdrive",
       "gdrive-sync": "/api/sync/gdrive",
+      "notion-connect": "/api/connections/notion",
+      "notion-sync": "/api/sync/notion",
       "web-sync": "/api/sync/web",
     };
     const endpoint = endpoints[kind];
@@ -884,6 +918,10 @@ $("source-grid").addEventListener("click", async (event) => {
   }
   if (action === "open-atlassian-console") {
     void openExternal("https://developer.atlassian.com/console/myapps/");
+    return;
+  }
+  if (action === "open-notion-integrations") {
+    void openExternal("https://www.notion.so/my-integrations");
     return;
   }
   if (action === "gdrive-oauth-start" || action === "confluence-oauth-start") {
