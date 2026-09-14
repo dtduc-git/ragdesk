@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ragdesk</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/src/styles.css" />
     <script type="module" src="/src/main.ts" defer></script>
   </head>
@@ -22,6 +23,7 @@
           <button class="nav-item is-active" data-tab="chat" type="button">Chat</button>
           <button class="nav-item" data-tab="search" type="button">Search</button>
           <button class="nav-item" data-tab="sources" type="button">Sources</button>
+          <button class="nav-item" data-tab="indexed" type="button">Indexed</button>
           <button class="nav-item" data-tab="settings" type="button">Settings</button>
         </nav>
 
@@ -89,9 +91,17 @@
           <div class="source-grid" id="source-grid"></div>
 
           <div class="indexed-list">
-            <h3>Indexed</h3>
-            <ul id="indexed-sources"></ul>
+            <h3>Want per-source numbers?</h3>
+            <p class="muted">Open the <strong>Indexed</strong> tab for documents, chunks and last-index time per source.</p>
           </div>
+        </section>
+
+        <section class="panel" id="panel-indexed">
+          <header class="panel-head">
+            <h2>Indexed</h2>
+            <p>What is embedded locally, per source — documents, chunks, and when it was last indexed.</p>
+          </header>
+          <div class="stats-table" id="indexed-table"></div>
         </section>
 
         <section class="panel" id="panel-settings">

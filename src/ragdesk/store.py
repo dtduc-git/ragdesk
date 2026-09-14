@@ -159,8 +159,10 @@ class Store:
 
     def sources(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            "SELECT source, COUNT(*) AS documents FROM documents "
-            "GROUP BY source ORDER BY source"
+            "SELECT d.source AS source, COUNT(DISTINCT d.id) AS documents, "
+            "COUNT(c.id) AS chunks, MAX(d.indexed_at) AS indexed_at "
+            "FROM documents d LEFT JOIN chunks c ON c.doc_id = d.id "
+            "GROUP BY d.source ORDER BY d.source"
         ).fetchall()
         return [dict(row) for row in rows]
 

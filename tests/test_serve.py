@@ -67,7 +67,12 @@ def test_status(base_url: str):
     assert payload["chunks"] == 3
     assert payload["embedder"]["name"] == "hash-4096"
     assert payload["llm_model"] == "test-model"
-    assert payload["sources"] == [{"source": "local", "documents": 3}]
+    assert len(payload["sources"]) == 1
+    local = payload["sources"][0]
+    assert local["source"] == "local"
+    assert local["documents"] == 3
+    assert local["chunks"] == 3
+    assert local["indexed_at"]
 
 
 def test_search(base_url: str):

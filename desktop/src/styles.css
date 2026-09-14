@@ -606,35 +606,49 @@ details.alt[open] summary {
 }
 
 .indexed-list h3 {
-  margin: 0 0 10px;
+  margin: 0 0 6px;
   font-size: 13px;
 }
 
-.indexed-list ul {
+.indexed-list p {
   margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
-.indexed-list li {
-  display: flex;
-  justify-content: space-between;
+.stats-table {
+  margin-top: 24px;
+  border-top: 1px solid var(--rule);
+}
+
+.stats-row {
+  display: grid;
+  grid-template-columns: 1fr 110px 90px 170px;
   gap: 12px;
-  font-size: 13px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--rule);
+  align-items: baseline;
 }
 
-.indexed-list code {
+.stats-row span {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
 }
 
-.indexed-list span {
-  color: var(--ink-soft);
-  font-family: var(--font-mono);
+.stats-row span:nth-child(n + 2) {
+  text-align: right;
+}
+
+.stats-head span {
   font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.stats-total span {
+  font-weight: 600;
+}
+
+.stats-total {
+  border-bottom: none;
 }
 
 /* --- settings -------------------------------------------------------------- */

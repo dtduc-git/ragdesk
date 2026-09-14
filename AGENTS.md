@@ -66,8 +66,9 @@ uv run python -m ragdesk.buildenv && uv build
 
 ## Roadmap order
 
-reranker → ONNX embedder → GitHub connector → Tauri shell + RAM presets →
-Confluence/GDrive → eval badge per release.
+sources (Notion → GitLab → OneDrive/SharePoint → S3) → multilingual reranker →
+MCP server → release v0.1.0 (sidecar bundling + DMG release workflow + PyPI
+trusted publisher) → eval badge automation → Windows/Linux builds.
 
 ## Notes
 

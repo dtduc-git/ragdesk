@@ -16,7 +16,7 @@ type Hit = {
   lanes: string;
 };
 
-type SourceStat = { source: string; documents: number };
+type SourceStat = { source: string; documents: number; chunks: number; indexed_at: string };
 
 type Status = {
   version: string;
@@ -133,17 +133,30 @@ function renderStatus(): void {
     )
     .join("");
 
-  const list = $("indexed-sources");
+  const table = $("indexed-table");
   if (status.sources.length === 0) {
-    list.innerHTML = `<li class="muted">Nothing indexed yet. Add a source.</li>`;
-  } else {
-    list.innerHTML = status.sources
-      .map(
-        (entry) =>
-          `<li><code>${escapeHtml(entry.source)}</code><span>${entry.documents} documents</span></li>`,
-      )
-      .join("");
+    table.innerHTML = `<p class="muted">Nothing indexed yet. Add a source.</p>`;
+    return;
   }
+  const totalDocs = status.sources.reduce((sum, entry) => sum + entry.documents, 0);
+  const totalChunks = status.sources.reduce((sum, entry) => sum + entry.chunks, 0);
+  table.innerHTML = `
+    <div class="stats-row stats-head">
+      <span>Source</span><span>Documents</span><span>Chunks</span><span>Last indexed</span>
+    </div>
+    ${status.sources
+      .map(
+        (entry) => `<div class="stats-row">
+          <span class="stats-source">${escapeHtml(entry.source)}</span>
+          <span>${entry.documents}</span>
+          <span>${entry.chunks}</span>
+          <span>${escapeHtml((entry.indexed_at || "").slice(0, 16))}</span>
+        </div>`,
+      )
+      .join("")}
+    <div class="stats-row stats-total">
+      <span>Total</span><span>${totalDocs}</span><span>${totalChunks}</span><span></span>
+    </div>`;
 }
 
 // --- citations ----------------------------------------------------------------
