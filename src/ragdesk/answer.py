@@ -49,7 +49,14 @@ def answer(
     data = post_json(
         host,
         "/api/generate",
-        {"model": model, "prompt": build_prompt(question, hits), "stream": False},
+        {
+            "model": model,
+            "prompt": build_prompt(question, hits),
+            "stream": False,
+            # Grounded QA wants the fast path: thinking models otherwise burn
+            # a hidden chain-of-thought before the (short) cited answer.
+            "think": False,
+        },
     )
     return data["response"].strip()
 
@@ -66,7 +73,12 @@ def answer_stream(
     if not hits or best_cosine < min_cosine:
         yield REFUSAL
         return
-    payload = {"model": model, "prompt": build_prompt(question, hits), "stream": True}
+    payload = {
+        "model": model,
+        "prompt": build_prompt(question, hits),
+        "stream": True,
+        "think": False,
+    }
     for chunk in post_stream(host, "/api/generate", payload):
         piece = chunk.get("response", "")
         if piece:

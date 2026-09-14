@@ -174,3 +174,17 @@ def test_answer_stream_gate_skips_llm():
     hit = make_hit("a.md", "some context", chunk_id=1)
     assert list(answer_stream("q", [hit], min_cosine=0.99)) == [REFUSAL]
     assert list(answer_stream("q", [])) == [REFUSAL]
+
+
+def test_answer_disables_thinking_and_captures_payload(monkeypatch):
+    captured: dict = {}
+
+    def fake_post_json(host: str, path: str, payload: dict, timeout: float = 300.0) -> dict:
+        captured.update(payload)
+        return {"response": "ok"}
+
+    monkeypatch.setattr("ragdesk.answer.post_json", fake_post_json)
+    hit = make_hit("a.md", "some context", chunk_id=1)
+    assert answer("q", [hit]) == "ok"
+    assert captured["think"] is False
+    assert captured["stream"] is False
