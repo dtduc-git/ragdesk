@@ -11,6 +11,7 @@ from ragdesk import __version__
 from ragdesk.answer import DEFAULT_LLM_MODEL, answer
 from ragdesk.embed import DEFAULT_OLLAMA_MODEL, get_embedder
 from ragdesk.evaluate import evaluate, format_report, load_golden
+from ragdesk.github import GitHubError, sync_github
 from ragdesk.index import index_paths
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
 from ragdesk.rerank import get_reranker
@@ -72,6 +73,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("stats", help="index statistics")
 
+    p_gh = sub.add_parser("github", help="index a GitHub repository (read-only tarball sync)")
+    p_gh.add_argument("repo", help="owner/name")
+    p_gh.add_argument("--ref", default="", help="branch/tag/sha (default: repo default branch)")
+    p_gh.add_argument("--subdir", default="", help="index only a subtree")
+    p_gh.add_argument(
+        "--token", default=None, help="GitHub token (default: GITHUB_TOKEN env or gh auth token)"
+    )
+
     p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
     p_serve.add_argument("--port", type=int, default=8765)
     p_serve.add_argument("--llm-model", default=DEFAULT_LLM_MODEL)
@@ -127,6 +136,25 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"scanned={stats.files_scanned} indexed={stats.indexed} "
                 f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
+            )
+            return 0
+
+        if args.command == "github":
+            try:
+                stats = sync_github(
+                    store,
+                    embedder,
+                    repo=args.repo,
+                    token=args.token,
+                    ref=args.ref,
+                    subdir=args.subdir,
+                )
+            except GitHubError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            print(
+                f"scanned={stats.files_scanned} indexed={stats.indexed} "
+                f"unchanged={stats.unchanged} chunks={stats.chunks}"
             )
             return 0
 

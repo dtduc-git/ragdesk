@@ -157,6 +157,13 @@ class Store:
         chunks = self.conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"]
         return {"documents": docs, "chunks": chunks}
 
+    def sources(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT source, COUNT(*) AS documents FROM documents "
+            "GROUP BY source ORDER BY source"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     # --- search lanes -----------------------------------------------------------
 
     def bm25_search(self, query: str, limit: int) -> list[dict[str, Any]]:

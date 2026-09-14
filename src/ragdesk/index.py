@@ -58,6 +58,15 @@ def is_text_file(path: Path) -> bool:
     return path.suffix == ""
 
 
+def is_indexable(path: Path, size: int) -> bool:
+    """Admission rules shared by local files and connector payloads."""
+    if size > MAX_FILE_BYTES:
+        return False
+    if any(part in SKIP_DIRS for part in path.parts):
+        return False
+    return is_text_file(path)
+
+
 def read_text(path: Path) -> str | None:
     try:
         raw = path.read_bytes()
@@ -71,6 +80,35 @@ def read_text(path: Path) -> str | None:
         return raw.decode("utf-8", errors="replace")
 
 
+def index_document(
+    store: Store,
+    embedder: Embedder,
+    *,
+    source: str,
+    path: str,
+    content: str,
+    mtime: float = 0.0,
+) -> int:
+    """Embed + upsert one document. Returns the chunk count, or 0 if unchanged."""
+    digest = hashlib.sha256(content.encode()).hexdigest()
+    if store.doc_hash(path) == digest:
+        return 0
+    chunks = chunk_text(content)
+    embeddings: list[list[float]] = []
+    for start in range(0, len(chunks), EMBED_BATCH):
+        batch = chunks[start : start + EMBED_BATCH]
+        embeddings.extend(embedder.embed([chunk.text for chunk in batch]))
+    store.upsert_document(
+        source=source,
+        path=path,
+        content_hash=digest,
+        mtime=mtime,
+        texts=[chunk.text for chunk in chunks],
+        embeddings=embeddings,
+    )
+    return len(chunks)
+
+
 def index_paths(store: Store, embedder: Embedder, paths: list[Path]) -> IndexStats:
     store.ensure_embedder(embedder.name, embedder.dim)
     stats = IndexStats()
@@ -81,7 +119,7 @@ def index_paths(store: Store, embedder: Embedder, paths: list[Path]) -> IndexSta
         except OSError:
             stats.skipped += 1
             continue
-        if size > MAX_FILE_BYTES or not is_text_file(file):
+        if not is_indexable(file, size):
             stats.skipped += 1
             continue
         content = read_text(file)
@@ -89,25 +127,17 @@ def index_paths(store: Store, embedder: Embedder, paths: list[Path]) -> IndexSta
             stats.skipped += 1
             continue
 
-        path_str = str(file)
-        digest = hashlib.sha256(content.encode()).hexdigest()
-        if store.doc_hash(path_str) == digest:
-            stats.unchanged += 1
-            continue
-
-        chunks = chunk_text(content)
-        embeddings: list[list[float]] = []
-        for start in range(0, len(chunks), EMBED_BATCH):
-            batch = chunks[start : start + EMBED_BATCH]
-            embeddings.extend(embedder.embed([c.text for c in batch]))
-        store.upsert_document(
+        chunks = index_document(
+            store,
+            embedder,
             source="local",
-            path=path_str,
-            content_hash=digest,
+            path=str(file),
+            content=content,
             mtime=file.stat().st_mtime,
-            texts=[c.text for c in chunks],
-            embeddings=embeddings,
         )
-        stats.indexed += 1
-        stats.chunks += len(chunks)
+        if chunks:
+            stats.indexed += 1
+            stats.chunks += chunks
+        else:
+            stats.unchanged += 1
     return stats

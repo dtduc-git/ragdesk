@@ -99,3 +99,22 @@ def test_ask_llm_unavailable_surfaces_503(base_url: str):
     assert excinfo.value.code == 503
     body = json.loads(excinfo.value.read())
     assert "cannot reach Ollama" in body["error"]
+
+
+def test_sync_github_requires_repo(base_url: str):
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/sync/github", {})
+    assert excinfo.value.code == 400
+
+
+def test_sync_github_success(base_url: str, monkeypatch):
+    from ragdesk.index import IndexStats
+
+    monkeypatch.setattr(
+        "ragdesk.serve.sync_github",
+        lambda *args, **kwargs: IndexStats(files_scanned=2, indexed=1, chunks=3),
+    )
+    status, payload = request(f"{base_url}/api/sync/github", {"repo": "owner/repo"})
+    assert status == 200
+    assert payload["indexed"] == 1
+    assert payload["repo"] == "owner/repo"

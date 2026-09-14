@@ -15,6 +15,7 @@ from typing import Any
 from ragdesk import __version__
 from ragdesk.answer import REFUSAL, answer
 from ragdesk.embed import Embedder
+from ragdesk.github import GitHubError, sync_github
 from ragdesk.index import index_paths
 from ragdesk.ollama import OllamaUnavailable
 from ragdesk.rerank import get_reranker
@@ -107,6 +108,7 @@ class Handler(BaseHTTPRequestHandler):
                         "llm_model": self.state.llm_model,
                         "documents": stats["documents"],
                         "chunks": stats["chunks"],
+                        "sources": store.sources(),
                     },
                 )
             return
@@ -121,6 +123,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/index":
                 self._handle_index(body)
+            elif self.path == "/api/sync/github":
+                self._handle_sync_github(body)
             elif self.path == "/api/search":
                 self._handle_search(body)
             elif self.path == "/api/ask":
@@ -129,6 +133,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, {"error": f"not found: {self.path}"})
         except OllamaUnavailable as exc:
             self._send(503, {"error": str(exc)})
+        except GitHubError as exc:
+            self._send(502, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface errors to the UI
             self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
 
@@ -147,6 +153,31 @@ class Handler(BaseHTTPRequestHandler):
         self._send(
             200,
             {
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_sync_github(self, body: dict[str, Any]) -> None:
+        repo = str(body.get("repo", "")).strip()
+        if not repo:
+            self._send(400, {"error": "repo required (owner/name)"})
+            return
+        with self.state.lock, Store(self.state.db) as store:
+            stats = sync_github(
+                store,
+                self.state.embedder,
+                repo=repo,
+                ref=str(body.get("ref", "")),
+                subdir=str(body.get("subdir", "")),
+            )
+        self._send(
+            200,
+            {
+                "repo": repo,
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,
