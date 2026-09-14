@@ -12,6 +12,7 @@ from ragdesk.answer import DEFAULT_LLM_MODEL, answer
 from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import DEFAULT_OLLAMA_MODEL, get_embedder
 from ragdesk.evaluate import evaluate, format_report, load_golden
+from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
 from ragdesk.index import index_paths
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
@@ -89,6 +90,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cf.add_argument("--token", default=None, help="default: CONFLUENCE_TOKEN env")
     p_cf.add_argument(
         "--api-path", default="/wiki/rest/api/content/search", help="REST path (Server/DC differs)"
+    )
+
+    p_gd = sub.add_parser("gdrive", help="index Google Drive (read-only, BYO OAuth client)")
+    p_gd.add_argument("--folder-id", default="", help="index one folder (default: all files)")
+    p_gd.add_argument("--client-id", default="", help="default: GDRIVE_CLIENT_ID env")
+    p_gd.add_argument("--client-secret", default="", help="default: GDRIVE_CLIENT_SECRET env")
+    p_gd.add_argument(
+        "--no-browser", action="store_true", help="do not run the interactive OAuth flow"
     )
 
     p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
@@ -180,6 +189,25 @@ def main(argv: list[str] | None = None) -> int:
                     api_path=args.api_path,
                 )
             except ConfluenceError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            print(
+                f"scanned={stats.files_scanned} indexed={stats.indexed} "
+                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
+            )
+            return 0
+
+        if args.command == "gdrive":
+            try:
+                stats = sync_gdrive(
+                    store,
+                    embedder,
+                    client_id=args.client_id,
+                    client_secret=args.client_secret,
+                    folder_id=args.folder_id,
+                    interactive=not args.no_browser,
+                )
+            except GdriveError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             print(

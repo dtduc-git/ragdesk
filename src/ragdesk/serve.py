@@ -16,6 +16,7 @@ from ragdesk import __version__
 from ragdesk.answer import REFUSAL, answer
 from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import Embedder
+from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
 from ragdesk.index import index_paths
 from ragdesk.ollama import OllamaUnavailable
@@ -128,6 +129,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_github(body)
             elif self.path == "/api/sync/confluence":
                 self._handle_sync_confluence(body)
+            elif self.path == "/api/sync/gdrive":
+                self._handle_sync_gdrive(body)
             elif self.path == "/api/search":
                 self._handle_search(body)
             elif self.path == "/api/ask":
@@ -136,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, {"error": f"not found: {self.path}"})
         except OllamaUnavailable as exc:
             self._send(503, {"error": str(exc)})
-        except (GitHubError, ConfluenceError) as exc:
+        except (GitHubError, ConfluenceError, GdriveError) as exc:
             self._send(502, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface errors to the UI
             self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
@@ -208,6 +211,26 @@ class Handler(BaseHTTPRequestHandler):
             200,
             {
                 "space": space,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_sync_gdrive(self, body: dict[str, Any]) -> None:
+        with self.state.lock, Store(self.state.db) as store:
+            stats = sync_gdrive(
+                store,
+                self.state.embedder,
+                client_id=str(body.get("client_id", "")),
+                client_secret=str(body.get("client_secret", "")),
+                folder_id=str(body.get("folder_id", "")),
+            )
+        self._send(
+            200,
+            {
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,
