@@ -46,6 +46,17 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   (job: running/progress/detail/error), the Settings tab renders them, and a
   finished job clears `state.llm` so the next ask re-resolves the ladder.
   `llm_setup_options` respects an explicit `--llm mlx:<repo>` override.
+- Ask pipeline: `ask`/`ask_stream` compute an answer-cache key (embedder +
+  model + corpus revision + question), replay a hit instantly, otherwise
+  retrieve → inject up to 3 similar memories (`store.memories`, cosine ≥ 0.35)
+  and the last 3 turns of the chat → `answer*()`; every exchange is recorded
+  in `chats`/`messages`, refusals and cache replays included. Chat/cache/
+  memory tables live in the same SQLite file; `/api/chats` and `/api/memories`
+  (+ `/api/memories/extract` via the local LLM) back the UI.
+- Idle unload: the serve timer releases the embedder session and the LLM after
+  `idle_unload_minutes` (Settings; 0 = never) of no POSTs; ONNX workspace
+  memory does not respond to arena/batch tuning, so dropping the session is
+  the honest way to give RAM back.
 - Connections: GitHub has three paths (device code with `RAGDESK_GITHUB_CLIENT_ID`
   or a saved client ID, `gh` login, or a pasted token); Confluence and GDrive
   connect flows validate before saving to `~/.config/ragdesk/credentials.json`

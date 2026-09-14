@@ -45,9 +45,12 @@ def token_source(explicit: str | None = None) -> tuple[str, str] | None:
     stored = credentials.get("github").get("token")
     if stored:
         return ("credentials", str(stored))
-    token = _token_from_gh()
-    if token:
-        return ("gh", token)
+    from ragdesk import settings  # noqa: PLC0415 - avoid an import cycle at module load
+
+    if not settings.load().get("github_ignore_gh"):
+        token = _token_from_gh()
+        if token:
+            return ("gh", token)
     return None
 
 

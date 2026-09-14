@@ -25,18 +25,39 @@ Write a complete answer in plain prose (no LaTeX, no markdown headings or tables
 Cite the sources you used inline as [1], [2] and so on — but never reply with
 citations alone. If the sources do not contain the answer, say exactly:
 "{refusal}". Never use outside knowledge.
-
+{history}{memory}
 Sources:
 {context}
 
 Question: {question}
 Answer:"""
 
+HISTORY_HEADER = (
+    "Recent conversation (context only — the sources are the only source of truth):\n"
+)
+HISTORY_TURNS = 3
+HISTORY_CHARS = 400
+MEMORY_HEADER = (
+    "Durable notes the user asked you to remember (context, still answer from the sources):\n"
+)
 
-def build_prompt(question: str, hits: list[Hit]) -> str:
+
+def build_prompt(
+    question: str,
+    hits: list[Hit],
+    history: list[tuple[str, str]] | None = None,
+    memory: list[str] | None = None,
+) -> str:
     blocks = [f"[{i}] {hit.path}\n{hit.text}" for i, hit in enumerate(hits, start=1)]
+    lines: list[str] = []
+    for role, text in (history or [])[-HISTORY_TURNS * 2 :]:
+        speaker = "User" if role == "user" else "ragdesk"
+        lines.append(f"{speaker}: {text[:HISTORY_CHARS]}")
+    notes = [f"- {note}" for note in (memory or [])]
     return PROMPT_TEMPLATE.format(
         refusal=REFUSAL,
+        history=(HISTORY_HEADER + "\n".join(lines) + "\n\n") if lines else "",
+        memory=(MEMORY_HEADER + "\n".join(notes) + "\n\n") if notes else "",
         context="\n\n".join(blocks),
         question=question,
     )
@@ -48,11 +69,13 @@ def answer(
     llm: Any,
     *,
     min_cosine: float = 0.0,
+    history: list[tuple[str, str]] | None = None,
+    memory: list[str] | None = None,
 ) -> str:
     best_cosine = max((hit.cosine for hit in hits), default=0.0)
     if not hits or best_cosine < min_cosine:
         return REFUSAL
-    prompt = build_prompt(question, hits)
+    prompt = build_prompt(question, hits, history, memory)
     # Small models occasionally return an empty completion; one retry.
     for _ in range(2):
         text = str(llm.generate(prompt, ANSWER_OPTIONS)).strip()
@@ -67,6 +90,8 @@ def answer_stream(
     llm: Any,
     *,
     min_cosine: float = 0.0,
+    history: list[tuple[str, str]] | None = None,
+    memory: list[str] | None = None,
 ) -> Iterator[str]:
     """Same contract as :func:`answer`, but yields text pieces as they arrive."""
     best_cosine = max((hit.cosine for hit in hits), default=0.0)
@@ -74,7 +99,8 @@ def answer_stream(
         yield REFUSAL
         return
     emitted = False
-    for piece in llm.generate_stream(build_prompt(question, hits), ANSWER_OPTIONS):
+    prompt = build_prompt(question, hits, history, memory)
+    for piece in llm.generate_stream(prompt, ANSWER_OPTIONS):
         if piece:
             emitted = True
             yield str(piece)

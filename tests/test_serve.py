@@ -466,6 +466,261 @@ def test_ensure_llm_blocks_while_downloading(tmp_path: Path):
     assert "downloading" in str(excinfo.value)
 
 
+def test_disconnect_switches_off_the_gh_cli_source(base_url: str, monkeypatch):
+    from ragdesk import settings
+
+    monkeypatch.setattr("ragdesk.serve.token_source", lambda: ("gh", "gh-token"))
+    _, payload = request(f"{base_url}/api/connections")
+    assert payload["github"]["connected"] is True
+
+    status, payload = request(f"{base_url}/api/connections/github/disconnect", {})
+    assert status == 200
+    assert payload == {"connected": False, "ignored_ambient": True}
+    assert settings.load()["github_ignore_gh"] is True
+
+    # the real resolver now skips gh, so refresh keeps it disconnected
+    monkeypatch.setattr("ragdesk.serve.token_source", lambda: None)
+    _, payload = request(f"{base_url}/api/connections")
+    assert payload["github"]["connected"] is False
+
+
+def test_connect_via_gh_clears_the_ignore_flag(base_url: str, monkeypatch):
+    from ragdesk import settings
+
+    settings.save({"github_ignore_gh": True})
+    monkeypatch.setattr("ragdesk.serve._token_from_gh", lambda: "tok")
+    monkeypatch.setattr("ragdesk.serve.github_whoami", lambda token: "duke")
+    status, payload = request(f"{base_url}/api/connections/github/gh", {})
+    assert status == 200
+    assert payload["source"] == "gh"
+    assert settings.load()["github_ignore_gh"] is False
+
+
+def test_release_idle_models_returns_memory(tmp_path: Path):
+    from ragdesk.serve import AppState, release_idle_models
+
+    class FakeEmbedder(HashingEmbedder):
+        loaded = True
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.unloaded = False
+
+        def unload(self) -> None:
+            self.unloaded = True
+            self.loaded = False
+
+    embedder = FakeEmbedder()
+    state = AppState(
+        db=str(tmp_path / "idle.db"),
+        embedder=embedder,
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+        preset="light",
+    )
+    state.llm = object()
+    assert release_idle_models(state, 0) is None  # disabled
+    assert release_idle_models(state, 15) is None  # still fresh
+    state.last_used -= 20 * 60
+    released = release_idle_models(state, 15)
+    assert released is not None and released["released"] is True
+    assert state.llm is None
+    assert embedder.unloaded is True
+    # nothing left to release
+    assert release_idle_models(state, 15) is None
+
+
+def test_settings_accepts_idle_unload(base_url: str):
+    from ragdesk import settings
+
+    status, payload = request(f"{base_url}/api/settings", {"idle_unload_minutes": 60})
+    assert status == 200
+    assert payload["idle_unload_minutes"] == 60
+    assert settings.load()["idle_unload_minutes"] == 60
+    _, status_payload = request(f"{base_url}/api/status")
+    assert status_payload["memory"]["idle_unload_minutes"] == 60
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/settings", {"idle_unload_minutes": "soon"})
+    assert excinfo.value.code == 400
+
+
+def test_chat_history_roundtrip(base_url: str, monkeypatch):
+    monkeypatch.setattr(
+        "ragdesk.serve.answer",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "an answer",
+    )
+    status, payload = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+    assert status == 200
+    chat_id = payload["chat_id"]
+    assert chat_id > 0
+    assert payload["cached"] is False
+
+    status, detail = request(f"{base_url}/api/chats/{chat_id}")
+    assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
+    assert detail["messages"][1]["text"] == "an answer"
+    assert detail["messages"][1]["citations"]
+
+    _, listing = request(f"{base_url}/api/chats")
+    assert listing["chats"][0]["id"] == chat_id
+    assert listing["chats"][0]["title"].startswith("what is oauth")
+
+    request(f"{base_url}/api/ask", {"query": "and pkce?", "chat_id": chat_id})
+    _, detail = request(f"{base_url}/api/chats/{chat_id}")
+    assert len(detail["messages"]) == 4
+
+    _, payload = request(f"{base_url}/api/chats/delete", {"chat_id": chat_id})
+    assert payload["deleted"] == chat_id
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/chats/{chat_id}")
+    assert excinfo.value.code == 404
+
+
+def test_ask_passes_recent_turns_as_history(base_url: str, monkeypatch):
+    seen: dict = {}
+
+    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None):
+        seen["history"] = list(history or [])
+        return "ok"
+
+    monkeypatch.setattr("ragdesk.serve.answer", fake_answer)
+    _, first = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+    request(f"{base_url}/api/ask", {"query": "and pkce?", "chat_id": first["chat_id"]})
+    history = seen["history"]
+    assert [role for role, _ in history] == ["user", "assistant"]
+    assert history[0][1] == "what is oauth?"
+
+
+def test_answer_cache_hits_on_repeat(base_url: str, monkeypatch):
+    calls = {"n": 0}
+
+    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None):
+        calls["n"] += 1
+        return f"answer #{calls['n']}"
+
+    monkeypatch.setattr("ragdesk.serve.answer", fake_answer)
+    _, first = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+    assert first["cached"] is False
+    _, second = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+    assert second["cached"] is True
+    assert second["answer"] == first["answer"]
+    assert calls["n"] == 1
+    _, third = request(f"{base_url}/api/ask", {"query": "how do tokens refresh?"})
+    assert third["cached"] is False
+    assert calls["n"] == 2
+
+
+def test_cache_invalidates_when_the_corpus_changes(base_url: str, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "ragdesk.serve.answer",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "answer v1",
+    )
+    request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+    _, cached = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+    assert cached["cached"] is True
+
+    docs = tmp_path / "newdocs"
+    docs.mkdir()
+    (docs / "extra.md").write_text("oauth refresh tokens rotate frequently")
+    request(f"{base_url}/api/index", {"paths": [str(docs)]})
+
+    monkeypatch.setattr(
+        "ragdesk.serve.answer",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "answer v2",
+    )
+    _, after = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+    assert after["cached"] is False
+    assert after["answer"] == "answer v2"
+
+
+def test_stream_replays_a_cached_answer_without_the_model(base_url: str, monkeypatch):
+    monkeypatch.setattr(
+        "ragdesk.serve.answer",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "cached later",
+    )
+    request(f"{base_url}/api/ask", {"query": "access tokens"})
+
+    def exploding_stream(*args, **kwargs):
+        raise AssertionError("the LLM must not run on a cache hit")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("ragdesk.serve.answer_stream", exploding_stream)
+    req = urllib.request.Request(
+        f"{base_url}/api/ask/stream",
+        data=json.dumps({"query": "access tokens"}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req) as response:
+        lines = [
+            json.loads(line) for line in response.read().decode().splitlines() if line
+        ]
+    text = "".join(line["delta"] for line in lines if "delta" in line)
+    assert text == "cached later"
+    assert lines[-1]["cached"] is True
+    assert lines[-1]["chat_id"] > 0
+
+
+def test_parse_memory_list_tolerates_prose():
+    from ragdesk.serve import parse_memory_list
+
+    assert parse_memory_list('Sure: ["a", "b"] done') == ["a", "b"]
+    assert parse_memory_list("no json here") == []
+    assert parse_memory_list('[{"x": 1}]') == []
+
+
+def test_memory_add_list_delete_and_injection(base_url: str, monkeypatch):
+    prompts: list[str] = []
+
+    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None):
+        prompts.append(str(memory))
+        return "ok"
+
+    monkeypatch.setattr("ragdesk.serve.answer", fake_answer)
+    status, payload = request(
+        f"{base_url}/api/memories", {"text": "I deploy to Kubernetes with ArgoCD"}
+    )
+    assert status == 200
+    assert payload["added"] is True
+    _, duplicate = request(
+        f"{base_url}/api/memories", {"text": "i deploy to kubernetes with argocd"}
+    )
+    assert duplicate["duplicate"] is True
+
+    _, listing = request(f"{base_url}/api/memories")
+    assert [m["text"] for m in listing["memories"]] == ["I deploy to Kubernetes with ArgoCD"]
+
+    request(f"{base_url}/api/ask", {"query": "I deploy to Kubernetes with ArgoCD"})
+    assert "ArgoCD" in prompts[-1]
+
+    request(f"{base_url}/api/ask", {"query": "zzz quantum chemistry orbital shapes"})
+    assert "ArgoCD" not in prompts[-1]
+
+    memory_id = listing["memories"][0]["id"]
+    _, deleted = request(f"{base_url}/api/memories/delete", {"id": memory_id})
+    assert deleted["deleted"] == memory_id
+    _, listing = request(f"{base_url}/api/memories")
+    assert listing["memories"] == []
+
+
+def test_memory_extract_reads_the_latest_chat(base_url: str, monkeypatch):
+    class FakeLLM:
+        def generate(self, prompt: str, options: dict) -> str:
+            return 'sure: ["Duke prefers uv over pip", "Building ragdesk", 42]'
+
+    monkeypatch.setattr("ragdesk.serve.LazyLLM", lambda state: FakeLLM())
+    monkeypatch.setattr(
+        "ragdesk.serve.answer",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "ok",
+    )
+    request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+
+    status, payload = request(f"{base_url}/api/memories/extract", {})
+    assert status == 200
+    assert payload["added"] == ["Duke prefers uv over pip", "Building ragdesk"]
+    _, listing = request(f"{base_url}/api/memories")
+    assert len(listing["memories"]) == 2
+
+
 def test_sync_gitlab_requires_project(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/gitlab", {})
@@ -610,7 +865,7 @@ def test_sync_github_success(base_url: str, monkeypatch):
 
 
 def test_ask_stream(base_url: str, monkeypatch):
-    def fake_stream(question, hits, llm, min_cosine=0.0):
+    def fake_stream(question, hits, llm, min_cosine=0.0, history=None, memory=None):
         yield "Hel"
         yield "lo"
 

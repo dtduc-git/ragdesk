@@ -78,6 +78,12 @@ class HashingEmbedder:
     def embed_query(self, text: str) -> list[float]:
         return self.embed([text])[0]
 
+    # Model-free backends have nothing to release; the protocol stays uniform.
+    loaded = False
+
+    def unload(self) -> None:
+        return None
+
 
 class OllamaEmbedder:
     """Real embedder via a local Ollama server."""
@@ -102,6 +108,11 @@ class OllamaEmbedder:
 
     def embed_query(self, text: str) -> list[float]:
         return self.embed([text])[0]
+
+    loaded = False  # the model lives in the Ollama daemon, not here
+
+    def unload(self) -> None:
+        return None
 
 
 class OnnxEmbedder:
@@ -152,6 +163,20 @@ class OnnxEmbedder:
         self._tokenizer = tokenizer
         self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
         self._output_index = self._find_sentence_embedding()
+
+    @property
+    def loaded(self) -> bool:
+        return self._session is not None
+
+    def unload(self) -> None:
+        """Drop the session so idle RAM goes back to ~nothing; reloads lazily.
+
+        Measured: the session's workspace floor (~1.1GB on the int8 300M model)
+        does not respond to arena/batch/sequence tuning, so releasing the whole
+        session is the only honest way to give memory back.
+        """
+        self._session = None
+        self._tokenizer = None
 
     def _find_sentence_embedding(self) -> int:
         outputs = self._session.get_outputs()

@@ -110,10 +110,14 @@ with — the index refuses mismatched embeddings.
 |---|---|
 | Desktop app (Tauri 2): chat, search, sources, indexed stats (per source and per chosen path), eval panel, dark theme | PyPI release (v0.1.0 pending) |
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) | Connector auto-sync (local paths only for now) |
+| Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Indexing: local files (native picker), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML) | Sidecar bundling in the DMG |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
 | Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | OpenAI-compatible endpoint (LM Studio / llama.cpp / cloud) |
+| Chat history: conversations in SQLite, multi-turn context, resume or start fresh | |
+| Answer cache: an identical question on an unchanged corpus replays instantly | |
+| Memory: durable notes you add (or extract from a chat) ride along with every answer | |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
 | RAM presets (`light` / `balanced` / `quality`) with per-flag overrides | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |

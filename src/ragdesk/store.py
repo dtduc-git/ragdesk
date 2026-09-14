@@ -35,6 +35,34 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     text, content='chunks', content_rowid='id'
 );
 CREATE INDEX IF NOT EXISTS chunks_doc_idx ON chunks(doc_id);
+CREATE TABLE IF NOT EXISTS chats (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY,
+    chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    citations TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS messages_chat_idx ON messages(chat_id);
+CREATE TABLE IF NOT EXISTS answer_cache (
+    key TEXT PRIMARY KEY,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    citations TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY,
+    text TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 TOKEN_RE = re.compile(r"\w+", re.UNICODE)
@@ -169,6 +197,13 @@ class Store:
             return None
         return "\n\n".join(row["text"] for row in rows)
 
+    def corpus_revision(self) -> str:
+        """Latest document write time — changes whenever the index content does."""
+        row = self.conn.execute(
+            "SELECT COALESCE(MAX(indexed_at), '') AS rev FROM documents"
+        ).fetchone()
+        return str(row["rev"])
+
     def sources(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT d.source AS source, COUNT(DISTINCT d.id) AS documents, "
@@ -225,6 +260,135 @@ class Store:
                 }
             )
         return out
+
+    # --- chat history -----------------------------------------------------------
+
+    def create_chat(self, title: str) -> int:
+        with self.conn:
+            cursor = self.conn.execute("INSERT INTO chats (title) VALUES (?)", (title,))
+        return int(cursor.lastrowid)
+
+    def add_message(
+        self, chat_id: int, role: str, text: str, citations: list | None = None
+    ) -> int:
+        with self.conn:
+            cursor = self.conn.execute(
+                "INSERT INTO messages (chat_id, role, text, citations) VALUES (?, ?, ?, ?)",
+                (chat_id, role, text, json.dumps(citations or [])),
+            )
+            self.conn.execute(
+                "UPDATE chats SET updated_at = datetime('now') WHERE id = ?", (chat_id,)
+            )
+        return int(cursor.lastrowid)
+
+    def chats(self, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT c.id, c.title, c.updated_at, COUNT(m.id) AS messages "
+            "FROM chats c LEFT JOIN messages m ON m.chat_id = c.id "
+            "GROUP BY c.id ORDER BY c.updated_at DESC, c.id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def chat(self, chat_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT id, title, created_at, updated_at FROM chats WHERE id = ?", (chat_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        messages = self.conn.execute(
+            "SELECT id, role, text, citations, created_at FROM messages "
+            "WHERE chat_id = ? ORDER BY id",
+            (chat_id,),
+        ).fetchall()
+        return {
+            "chat": dict(row),
+            "messages": [
+                {**dict(message), "citations": json.loads(message["citations"] or "[]")}
+                for message in messages
+            ],
+        }
+
+    def delete_chat(self, chat_id: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+
+    def recent_turns(self, chat_id: int, turns: int = 3) -> list[tuple[str, str]]:
+        """Last ``turns`` exchanges as (role, text), oldest first."""
+        rows = self.conn.execute(
+            "SELECT role, text FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
+            (chat_id, turns * 2),
+        ).fetchall()
+        return [(str(row["role"]), str(row["text"])) for row in reversed(rows)]
+
+    # --- answer cache -----------------------------------------------------------
+
+    def cache_get(self, key: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT question, answer, citations FROM answer_cache WHERE key = ?", (key,)
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "question": row["question"],
+            "answer": row["answer"],
+            "citations": json.loads(row["citations"] or "[]"),
+        }
+
+    def cache_put(self, key: str, question: str, answer: str, citations: list) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO answer_cache (key, question, answer, citations) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET "
+                "answer = excluded.answer, citations = excluded.citations, "
+                "created_at = datetime('now')",
+                (key, question, answer, json.dumps(citations)),
+            )
+            # Answer keys change with the corpus, so old rows are dead weight.
+            self.conn.execute(
+                "DELETE FROM answer_cache WHERE key NOT IN "
+                "(SELECT key FROM answer_cache ORDER BY created_at DESC LIMIT 500)"
+            )
+
+    def cache_clear(self) -> int:
+        with self.conn:
+            cursor = self.conn.execute("DELETE FROM answer_cache")
+        return int(cursor.rowcount)
+
+    # --- memory -----------------------------------------------------------------
+
+    def add_memory(self, text: str, embedding: list[float]) -> int:
+        with self.conn:
+            cursor = self.conn.execute(
+                "INSERT INTO memories (text, embedding) VALUES (?, ?)",
+                (text, array.array("f", embedding).tobytes()),
+            )
+        return int(cursor.lastrowid)
+
+    def memories(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT id, text, created_at FROM memories ORDER BY id DESC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def memory_vectors(self) -> list[tuple[int, str, list[float]]]:
+        rows = self.conn.execute("SELECT id, text, embedding FROM memories").fetchall()
+        out: list[tuple[int, str, list[float]]] = []
+        for row in rows:
+            vector = array.array("f")
+            vector.frombytes(row["embedding"])
+            out.append((int(row["id"]), str(row["text"]), list(vector)))
+        return out
+
+    def delete_memory(self, memory_id: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+
+    def has_memory(self, text: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM memories WHERE lower(text) = lower(?)", (text.strip(),)
+        ).fetchone()
+        return row is not None
 
     # --- search lanes -----------------------------------------------------------
 

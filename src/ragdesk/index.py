@@ -26,7 +26,7 @@ SKIP_DIRS = {
     ".mypy_cache", ".ruff_cache", ".pytest_cache",
 }
 MAX_FILE_BYTES = 1_000_000
-EMBED_BATCH = 32
+EMBED_BATCH = 16  # 32 peaked ~270MB higher in the ONNX workspace for no speed gain
 
 
 @dataclass

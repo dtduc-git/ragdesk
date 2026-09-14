@@ -34,6 +34,7 @@ type Status = {
   sources: SourceStat[];
   local_paths: PathStat[];
   auto_index: { hours: number; last_run: string };
+  memory: { models_loaded: boolean; idle_unload_minutes: number };
   llm: { kind: string; model: string; note: string };
   llm_setup: {
     ollama_model: string;
@@ -132,15 +133,30 @@ $("theme-toggle").addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
-$("auto-index-hours").addEventListener("change", async (event) => {
-  const hours = Number((event.target as HTMLSelectElement).value);
+function markSeg(containerId: string, value: number): void {
+  document.querySelectorAll<HTMLElement>(`#${containerId} .seg-item`).forEach((item) => {
+    item.classList.toggle("is-active", Number(item.dataset.value) === value);
+  });
+}
+
+async function saveSetting(body: Record<string, number>): Promise<void> {
   try {
-    await post("/api/settings", { auto_index_hours: hours });
-    toast(hours === 0 ? "Auto re-index off" : `Auto re-index every ${hours}h`);
+    await post("/api/settings", body);
     await loadStatus();
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error));
+    await loadStatus();
   }
+}
+
+document.querySelectorAll<HTMLElement>(".seg").forEach((group) => {
+  group.addEventListener("click", (event) => {
+    const item = (event.target as HTMLElement).closest<HTMLElement>(".seg-item");
+    if (!item) return;
+    const value = Number(item.dataset.value);
+    if (group.id === "auto-index-seg") void saveSetting({ auto_index_hours: value });
+    if (group.id === "idle-unload-seg") void saveSetting({ idle_unload_minutes: value });
+  });
 });
 
 // --- toast --------------------------------------------------------------------
@@ -187,9 +203,9 @@ async function loadStatus(): Promise<void> {
 }
 
 function llmLabel(status: Status): string {
-  return status.llm.kind === "none"
-    ? "no LLM — see Settings"
-    : `${status.llm.model} (${status.llm.kind})`;
+  if (status.llm.kind === "none") return "no LLM — see Settings";
+  const short = status.llm.model.split("/").pop() ?? status.llm.model;
+  return `${short} (${status.llm.kind})`;
 }
 
 function llmSetupButtons(status: Status): string {
@@ -227,7 +243,11 @@ function renderLlmSetup(status: Status): void {
       status.llm.kind === "mlx" && !status.llm_setup.mlx_cached
         ? `<p class="source-note">The model is not downloaded yet — without this button the first question would fetch it silently.</p>`
         : "";
-    box.innerHTML = `<p class="source-note">active: ${escapeHtml(status.llm.note)}</p>${pending}${buttons}${error}`;
+    box.innerHTML = `
+      <div class="status-line">
+        <span class="status-model"><span class="dot is-hot"></span>${escapeHtml(status.llm.model)}</span>
+        <span class="status-kind">${status.llm.kind === "mlx" ? "in-process on this machine" : "reused from your Ollama"}</span>
+      </div>${pending}${buttons}${error}`;
     return;
   }
   box.innerHTML =
@@ -273,10 +293,15 @@ function renderStatus(): void {
 
   const table = $("indexed-table");
   renderLlmSetup(status);
-  ($("auto-index-hours") as HTMLSelectElement).value = String(status.auto_index.hours);
+  markSeg("auto-index-seg", status.auto_index.hours);
   $("auto-index-last").textContent = status.auto_index.last_run
-    ? `last auto run ${status.auto_index.last_run} UTC`
-    : "not run yet";
+    ? `last run ${status.auto_index.last_run} UTC`
+    : "never ran";
+  markSeg("idle-unload-seg", status.memory.idle_unload_minutes);
+  $("memory-dot").classList.toggle("is-hot", status.memory.models_loaded);
+  $("memory-state").textContent = status.memory.models_loaded
+    ? "in RAM — unloads after the idle stretch"
+    : "released — the next question reloads them";
   if (status.sources.length === 0) {
     table.innerHTML = `<p class="muted">Nothing indexed yet. Add a source.</p>`;
     return;
@@ -360,7 +385,7 @@ document.addEventListener("click", (event) => {
 let streaming = false;
 
 function appendUserMessage(query: string): void {
-  $("chat-empty")?.remove();
+  document.getElementById("chat-empty")?.remove();
   const message = document.createElement("div");
   message.className = "msg msg-user";
   message.textContent = query;
@@ -393,7 +418,7 @@ async function ask(query: string): Promise<void> {
     const response = await fetch(`${API}/api/ask/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, top_k: 6 }),
+      body: JSON.stringify({ query, top_k: 6, chat_id: currentChatId }),
     });
     if (!response.ok || !response.body) {
       const data: unknown = await response.json().catch(() => ({}));
@@ -418,6 +443,8 @@ async function ask(query: string): Promise<void> {
             done?: boolean;
             error?: string;
             hits?: Hit[];
+            cached?: boolean;
+            chat_id?: number;
           };
           if (event.delta) {
             answer.textContent += event.delta;
@@ -429,6 +456,14 @@ async function ask(query: string): Promise<void> {
             answer.classList.remove("streaming");
             answer.classList.toggle("is-refused", answer.textContent === REFUSAL);
             renderCites(cites, event.hits ?? []);
+            if (event.cached) {
+              const badge = document.createElement("span");
+              badge.className = "cache-badge";
+              badge.textContent = "from cache";
+              answer.before(badge);
+            }
+            if (event.chat_id) currentChatId = event.chat_id;
+            void loadChats();
           }
         }
         newline = buffer.indexOf("\n");
@@ -470,14 +505,100 @@ $<HTMLTextAreaElement>("chat-input").addEventListener("keydown", (event) => {
   }
 });
 
-for (const suggestion of SUGGESTIONS) {
-  const chip = document.createElement("button");
-  chip.type = "button";
-  chip.className = "chip";
-  chip.textContent = suggestion;
-  chip.addEventListener("click", () => void ask(suggestion));
-  $("chat-suggestions").append(chip);
+function bindSuggestionChips(): void {
+  const box = $("chat-suggestions");
+  box.innerHTML = "";
+  for (const suggestion of SUGGESTIONS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = suggestion;
+    chip.addEventListener("click", () => void ask(suggestion));
+    box.append(chip);
+  }
 }
+
+bindSuggestionChips();
+
+// --- chat history -------------------------------------------------------------
+
+type ChatMessage = { id: number; role: string; text: string; citations: Hit[] };
+type ChatSummary = { id: number; title: string; updated_at: string; messages: number };
+
+let currentChatId = 0;
+const chatLogTemplate = $("chat-log").innerHTML;
+
+function chatLabel(chat: ChatSummary): string {
+  const when = (chat.updated_at || "").slice(0, 16);
+  return `${chat.title.slice(0, 44)} · ${when}`;
+}
+
+async function loadChats(): Promise<ChatSummary[]> {
+  try {
+    const { chats } = await get<{ chats: ChatSummary[] }>("/api/chats");
+    const select = $<HTMLSelectElement>("chat-history");
+    select.innerHTML =
+      `<option value="0">New conversation</option>` +
+      chats.map((chat) => `<option value="${chat.id}">${escapeHtml(chatLabel(chat))}</option>`).join("");
+    select.value = String(currentChatId);
+    return chats;
+  } catch {
+    return [];
+  }
+}
+
+function resetChatLog(): void {
+  $("chat-log").innerHTML = chatLogTemplate;
+  bindSuggestionChips();
+}
+
+function renderChat(messages: ChatMessage[]): void {
+  if (messages.length === 0) {
+    resetChatLog();
+    return;
+  }
+  $("chat-log").innerHTML = "";
+  for (const message of messages) {
+    if (message.role === "user") {
+      appendUserMessage(message.text);
+      continue;
+    }
+    const { answer, cites } = appendAssistantShell();
+    answer.classList.remove("streaming");
+    answer.textContent = message.text;
+    answer.classList.toggle("is-refused", message.text === REFUSAL);
+    renderCites(cites, message.citations ?? []);
+  }
+}
+
+async function openChat(id: number): Promise<void> {
+  try {
+    const detail = await get<{ messages: ChatMessage[] }>(`/api/chats/${id}`);
+    currentChatId = id;
+    renderChat(detail.messages);
+    $<HTMLSelectElement>("chat-history").value = String(id);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function newChat(): void {
+  currentChatId = 0;
+  resetChatLog();
+  $<HTMLSelectElement>("chat-history").value = "0";
+}
+
+$("chat-history").addEventListener("change", (event) => {
+  const id = Number((event.target as HTMLSelectElement).value);
+  if (id === 0) newChat();
+  else void openChat(id);
+});
+
+$("chat-new").addEventListener("click", () => newChat());
+
+void loadChats().then((chats) => {
+  if (chats.length > 0) void openChat(chats[0].id);
+});
 
 // --- search -------------------------------------------------------------------
 
@@ -1181,6 +1302,8 @@ $("source-grid").addEventListener("click", async (event) => {
           connections.github.source ??
           "an ambient source";
         setResult("github", `saved token removed — still connected via ${label}`);
+      } else if (provider === "github") {
+        setResult("github", "disconnected — the gh CLI login is ignored until you reconnect");
       } else if (provider === "confluence" && connections?.confluence.connected) {
         setResult("confluence", "saved credentials removed — still connected via env vars");
       } else {
@@ -1278,27 +1401,90 @@ $("eval-form").addEventListener("submit", async (event) => {
     const metrics = response.metrics;
     const misses = response.queries.filter((row) => Number(row["recall@5"]) < 1);
     results.innerHTML = `
-      <div class="stats-table">
-        <div class="stats-row stats-head"><span>metric</span><span>value</span><span></span><span></span></div>
+      <div class="score-sheet">
         ${["recall@5", "ndcg@10", "mrr@10"]
           .map(
-            (key) =>
-              `<div class="stats-row"><span>${key}</span><span>${Number(metrics[key] ?? 0).toFixed(3)}</span><span></span><span></span></div>`,
+            (key) => `<div class="score">
+              <span class="score-value">${Number(metrics[key] ?? 0).toFixed(3)}</span>
+              <span class="score-key">${key}</span>
+            </div>`,
           )
           .join("")}
-        <div class="stats-row stats-total"><span>queries</span><span>${Number(metrics.queries ?? 0)}</span><span></span><span></span></div>
       </div>
-      ${
+      <p class="caption">${Number(metrics.queries ?? 0)} queries · ${
         misses.length
-          ? `<p class="muted">${misses.length} miss(es): ${misses
+          ? `${misses.length} missing: ${misses
               .map((row) => escapeHtml(String(row.query)))
-              .join(" · ")}</p>`
-          : `<p class="source-result">all queries found their sources</p>`
-      }`;
+              .join(" · ")}`
+          : "every query found its sources"
+      }</p>`;
   } catch (error) {
     results.innerHTML = `<p class="muted">${escapeHtml(
       error instanceof Error ? error.message : String(error),
     )}</p>`;
+  }
+});
+
+// --- memory -------------------------------------------------------------------
+
+type Memory = { id: number; text: string; created_at: string };
+
+async function loadMemories(): Promise<void> {
+  try {
+    const { memories } = await get<{ memories: Memory[] }>("/api/memories");
+    $("memory-list").innerHTML = memories.length
+      ? memories
+          .map(
+            (memory) => `<div class="memory-item">
+              <span>${escapeHtml(memory.text)}</span>
+              <button class="memory-drop" type="button" data-id="${memory.id}" aria-label="Forget this">×</button>
+            </div>`,
+          )
+          .join("")
+      : `<p class="caption">nothing remembered yet</p>`;
+  } catch {
+    $("memory-list").innerHTML = "";
+  }
+}
+
+$("memory-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $<HTMLInputElement>("memory-input");
+  const text = input.value.trim();
+  if (!text) return;
+  try {
+    const result = await post<{ duplicate?: boolean }>("/api/memories", { text });
+    input.value = "";
+    $("memory-status").textContent = result.duplicate ? "already remembered" : "remembered";
+    await loadMemories();
+  } catch (error) {
+    $("memory-status").textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+$("memory-list").addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>(".memory-drop");
+  if (!button) return;
+  try {
+    await post("/api/memories/delete", { id: Number(button.dataset.id) });
+    await loadMemories();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
+  }
+});
+
+$("memory-extract").addEventListener("click", async () => {
+  $("memory-status").textContent = "reading the latest chat…";
+  try {
+    const result = await post<{ added: string[] }>("/api/memories/extract", {
+      chat_id: currentChatId,
+    });
+    $("memory-status").textContent = result.added.length
+      ? `saved ${result.added.length} note${result.added.length === 1 ? "" : "s"}`
+      : "nothing durable found in the latest chat";
+    await loadMemories();
+  } catch (error) {
+    $("memory-status").textContent = error instanceof Error ? error.message : String(error);
   }
 });
 
@@ -1317,6 +1503,7 @@ async function boot(): Promise<void> {
   if (status) {
     renderStatus();
     await loadConnections();
+    void loadMemories();
   } else {
     $("rail-meta").textContent = "server offline — start it with: ragdesk serve";
   }

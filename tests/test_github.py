@@ -110,6 +110,20 @@ def test_token_source_reports_origin(monkeypatch):
     assert token_source() == ("gh", "cli")
 
 
+def test_token_source_respects_disconnect_flag(monkeypatch):
+    monkeypatch.setattr("ragdesk.github.credentials.get", lambda provider: {})
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.setattr("ragdesk.github._token_from_gh", lambda: "cli")
+    monkeypatch.setattr("ragdesk.settings.load", lambda path=None: {"github_ignore_gh": True})
+    assert token_source() is None
+    # a stored token still wins over the flag
+    monkeypatch.setattr(
+        "ragdesk.github.credentials.get", lambda provider: {"token": "stored"}
+    )
+    assert token_source() == ("credentials", "stored")
+
+
 def test_whoami_rejects_bad_token(monkeypatch):
     def fake_urlopen(request, timeout=None):
         raise urllib.error.HTTPError(request.full_url, 401, "unauthorized", {}, None)

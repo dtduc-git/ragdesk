@@ -46,8 +46,18 @@
       <main class="stage">
         <section class="panel is-active" id="panel-chat">
           <header class="panel-head">
-            <h2>Chat</h2>
-            <p>Answers are drawn only from your indexed sources, with citations.</p>
+            <div class="panel-head-row">
+              <div>
+                <h2>Chat</h2>
+                <p>Answers are drawn only from your indexed sources, with citations.</p>
+              </div>
+              <div class="chat-tools">
+                <select id="chat-history" aria-label="Past conversations">
+                  <option value="0">New conversation</option>
+                </select>
+                <button class="btn btn-quiet" type="button" id="chat-new">＋ New chat</button>
+              </div>
+            </div>
           </header>
           <div class="chat-log" id="chat-log">
             <div class="empty" id="chat-empty">
@@ -110,50 +120,87 @@
             <h2>Settings</h2>
             <p>Read from the running indexer. Change them when you launch the app.</p>
           </header>
-          <dl class="status-table" id="status-table"></dl>
-          <div class="panel-note">
-            <h3>Answer model</h3>
-            <p>
-              ragdesk reuses a running Ollama that already has the model pulled (~2.5GB, zero
-              extra download). Without it, the MLX extra runs the model in-process on Apple
-              Silicon: <code>uv tool install "ragdesk[mlx]"</code>. Override with
-              <code>--llm ollama[:model]</code> or <code>--llm mlx[:hf-repo]</code>.
-            </p>
-            <div id="llm-setup"></div>
-          </div>
-          <div class="panel-note">
-            <h3>Auto re-index</h3>
-            <p>
-              Re-scans the local paths you have indexed — incremental, unchanged files are
-              skipped. Connectors keep their manual sync buttons.
-            </p>
-            <select id="auto-index-hours">
-              <option value="0">Off</option>
-              <option value="1">Every hour</option>
-              <option value="3">Every 3 hours</option>
-              <option value="6">Every 6 hours</option>
-              <option value="12">Every 12 hours</option>
-              <option value="24">Every 24 hours</option>
-            </select>
-            <p class="source-result" id="auto-index-last">not run yet</p>
-          </div>
-          <div class="panel-note">
-            <h3>Presets</h3>
-            <p>
-              Launch with <code>--preset light</code> (8GB machines), <code>balanced</code> (16GB,
-              reranker on) or <code>quality</code> (32GB, larger model). Flags like
-              <code>--embedder</code>, <code>--rerank</code> and <code>--llm-model</code> override
-              the preset.
-            </p>
-          </div>
-          <div class="panel-note">
-            <h3>Retrieval eval</h3>
-            <p>Score the current index against a golden set (JSONL of queries + expected paths).</p>
-            <form id="eval-form" class="field-row">
-              <input id="eval-golden" name="golden" placeholder="path/to/golden.jsonl" value="fixtures/golden_repo.jsonl" />
-              <button class="btn" type="submit">Run eval</button>
-            </form>
-            <div id="eval-results"></div>
+
+          <dl class="spec-sheet" id="status-table"></dl>
+
+          <div class="setting-grid">
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Answer model</h3>
+                <p>Reuses your Ollama model when it is already pulled; otherwise runs MLX in-process.</p>
+              </header>
+              <div id="llm-setup"></div>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Auto re-index</h3>
+                <p>Keeps the folders you chose fresh. Unchanged files are skipped.</p>
+              </header>
+              <div class="seg" id="auto-index-seg" role="group" aria-label="Auto re-index interval">
+                <button class="seg-item" type="button" data-value="0">Off</button>
+                <button class="seg-item" type="button" data-value="1">1h</button>
+                <button class="seg-item" type="button" data-value="3">3h</button>
+                <button class="seg-item" type="button" data-value="6">6h</button>
+                <button class="seg-item" type="button" data-value="12">12h</button>
+                <button class="seg-item" type="button" data-value="24">24h</button>
+              </div>
+              <p class="caption" id="auto-index-last">never ran</p>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Idle unload</h3>
+                <p>Releases the models after a quiet stretch; the next question reloads them.</p>
+              </header>
+              <div class="seg" id="idle-unload-seg" role="group" aria-label="Idle unload delay">
+                <button class="seg-item" type="button" data-value="0">Never</button>
+                <button class="seg-item" type="button" data-value="5">5 min</button>
+                <button class="seg-item" type="button" data-value="15">15 min</button>
+                <button class="seg-item" type="button" data-value="60">1 hour</button>
+              </div>
+              <p class="caption"><span class="dot" id="memory-dot"></span><span id="memory-state">checking…</span></p>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Retrieval eval</h3>
+                <p>Score search quality against a golden set: JSONL of queries and the paths that answer them.</p>
+              </header>
+              <form id="eval-form" class="field-row">
+                <input id="eval-golden" name="golden" placeholder="path/to/golden.jsonl" value="fixtures/golden_repo.jsonl" />
+                <button class="btn btn-primary" type="submit">Run eval</button>
+              </form>
+              <div id="eval-results"></div>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Memory</h3>
+                <p>Notes about you that ride along with every answer. They stay in your local database.</p>
+              </header>
+              <form id="memory-form" class="field-row">
+                <input id="memory-input" placeholder="I deploy with ArgoCD" />
+                <button class="btn" type="submit">Remember</button>
+              </form>
+              <div class="memory-list" id="memory-list"></div>
+              <div class="button-row">
+                <button class="btn btn-quiet" type="button" id="memory-extract">Read the latest chat for facts</button>
+              </div>
+              <p class="caption" id="memory-status"></p>
+            </section>
+
+            <section class="setting-card is-quiet">
+              <header class="setting-head">
+                <h3>Presets</h3>
+                <p>
+                  Launch flags: <code>--preset light</code> for 8GB machines,
+                  <code>balanced</code> for 16GB with the reranker, <code>quality</code> for
+                  32GB and a larger model. <code>--embedder</code>, <code>--rerank</code> and
+                  <code>--llm</code> override them.
+                </p>
+              </header>
+            </section>
           </div>
         </section>
       </main>

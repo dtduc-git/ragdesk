@@ -7,7 +7,11 @@ from pathlib import Path
 
 from ragdesk.credentials import credentials_file
 
-DEFAULTS: dict = {"auto_index_hours": 1, "auto_index_last": ""}
+DEFAULTS: dict = {
+    "auto_index_hours": 1,
+    "auto_index_last": "",
+    "idle_unload_minutes": 15,
+}
 
 
 def settings_file() -> Path:

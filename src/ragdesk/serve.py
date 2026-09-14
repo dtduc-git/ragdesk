@@ -6,7 +6,9 @@ auth: the server is loopback-only by design.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -76,6 +78,15 @@ CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 }
 
+MEMORY_MIN_COSINE = 0.35
+MEMORY_LIMIT = 3
+MEMORY_PROMPT = (
+    "From the conversation below, extract durable facts about the user: "
+    "preferences, projects, constraints, decisions. Reply with a JSON array of "
+    "short strings and nothing else; use [] when there is nothing durable.\n\n"
+    "{conversation}"
+)
+
 MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -136,7 +147,11 @@ class AppState:
         self.ui_dir = Path(ui_dir) if ui_dir else None
         self.github_device: dict[str, Any] | None = None
         self.msgraph_device: dict[str, Any] | None = None
+        self.last_used = time.monotonic()
         self.lock = threading.Lock()
+
+    def touch(self) -> None:
+        self.last_used = time.monotonic()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -205,11 +220,37 @@ class Handler(BaseHTTPRequestHandler):
                             "hours": settings.load()["auto_index_hours"],
                             "last_run": settings.load()["auto_index_last"],
                         },
+                        "memory": {
+                            "models_loaded": self.state.llm is not None
+                            or getattr(self.state.embedder, "loaded", False),
+                            "idle_unload_minutes": settings.load()["idle_unload_minutes"],
+                        },
                     },
                 )
             return
         if self.path == "/api/health":
             self._send(200, {"ok": True})
+            return
+        if self.path == "/api/memories":
+            with Store(self.state.db) as store:
+                self._send(200, {"memories": store.memories()})
+            return
+        if self.path == "/api/chats":
+            with Store(self.state.db) as store:
+                self._send(200, {"chats": store.chats()})
+            return
+        if self.path.startswith("/api/chats/"):
+            try:
+                chat_id = int(self.path.rsplit("/", 1)[-1])
+            except ValueError:
+                self._send(400, {"error": "chat id required"})
+                return
+            with Store(self.state.db) as store:
+                detail = store.chat(chat_id)
+            if detail is None:
+                self._send(404, {"error": "chat not found"})
+                return
+            self._send(200, detail)
             return
         if self.path == "/api/connections":
             self._send(200, self._connections_payload())
@@ -245,6 +286,7 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_POST(self) -> None:
+        self.state.touch()
         try:
             body = self._read_json()
         except json.JSONDecodeError:
@@ -293,6 +335,14 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/connections/"
             ):
                 self._handle_disconnect(self.path.split("/")[3])
+            elif self.path == "/api/memories":
+                self._handle_memory_add(body)
+            elif self.path == "/api/memories/delete":
+                self._handle_memory_delete(body)
+            elif self.path == "/api/memories/extract":
+                self._handle_memory_extract(body)
+            elif self.path == "/api/chats/delete":
+                self._handle_chat_delete(body)
             elif self.path == "/api/sync/github":
                 self._handle_sync_github(body)
             elif self.path == "/api/sync/confluence":
@@ -371,14 +421,26 @@ class Handler(BaseHTTPRequestHandler):
         self._send(202, {"started": True, **self.state.llm_setup})
 
     def _handle_settings(self, body: dict[str, Any]) -> None:
-        try:
-            hours = int(body.get("auto_index_hours", 1))
-        except (TypeError, ValueError):
-            self._send(400, {"error": "auto_index_hours must be a number"})
+        updates: dict[str, Any] = {}
+        if "auto_index_hours" in body:
+            try:
+                hours = int(body["auto_index_hours"])
+            except (TypeError, ValueError):
+                self._send(400, {"error": "auto_index_hours must be a number"})
+                return
+            updates["auto_index_hours"] = max(0, min(hours, 168))
+        if "idle_unload_minutes" in body:
+            try:
+                minutes = int(body["idle_unload_minutes"])
+            except (TypeError, ValueError):
+                self._send(400, {"error": "idle_unload_minutes must be a number"})
+                return
+            updates["idle_unload_minutes"] = max(0, min(minutes, 1440))
+        if not updates:
+            self._send(400, {"error": "nothing to update"})
             return
-        hours = max(0, min(hours, 168))
-        settings.save({"auto_index_hours": hours})
-        self._send(200, {"auto_index_hours": hours})
+        settings.save(updates)
+        self._send(200, updates)
 
     def _handle_index(self, body: dict[str, Any]) -> None:
         paths = [Path(p) for p in body.get("paths", [])]
@@ -513,6 +575,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "gh CLI not found or not logged in (gh auth login)"})
             return
         login = github_whoami(token)
+        settings.save({"github_ignore_gh": False})
         credentials.set_provider("github", {"token": token, "login": login})
         self._send(200, {"connected": True, "source": "gh", "login": login})
 
@@ -665,6 +728,20 @@ class Handler(BaseHTTPRequestHandler):
         credentials.clear(provider)
         if provider == "gdrive":
             GDRIVE_TOKEN_FILE.unlink(missing_ok=True)
+        if provider == "github":
+            # The gh CLI login on this machine is ambient: an explicit disconnect
+            # must switch it off too, or a refresh would silently reconnect.
+            found = token_source()
+            if found and found[0] == "gh":
+                settings.save({"github_ignore_gh": True})
+                self._send(200, {"connected": False, "ignored_ambient": True})
+                return
+            keep = bool(found)
+            self._send(
+                200,
+                {"connected": keep, "ignored_ambient": False, "source": found[0] if found else ""},
+            )
+            return
         self._send(200, {"connected": False})
 
     def _handle_sync_confluence(self, body: dict[str, Any]) -> None:
@@ -921,6 +998,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         top_k = int(body.get("top_k", 6))
         min_cosine = float(body.get("min_cosine", 0.0))
+        chat_id = int(body.get("chat_id") or 0)
         try:
             with self.state.lock, Store(self.state.db) as store:
                 hits = retrieve(
@@ -930,6 +1008,10 @@ class Handler(BaseHTTPRequestHandler):
                     top_k=top_k,
                     reranker=self._reranker_for(body.get("rerank")),
                 )
+                cache_key = self._cache_key(store, query)
+                cached = store.cache_get(cache_key)
+                history = store.recent_turns(chat_id) if chat_id else []
+                memory = None if cached is not None else self._relevant_memories(store, query)
         except Exception as exc:  # noqa: BLE001 - headers not sent yet
             self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
             return
@@ -942,15 +1024,43 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
         try:
-            for piece in answer_stream(
-                query,
-                hits,
-                LazyLLM(self.state),
-                min_cosine=min_cosine,
-            ):
-                self.wfile.write((json.dumps({"delta": piece}) + "\n").encode())
+            if cached is not None:
+                # An identical question on an unchanged corpus: replay instantly.
+                cached_answer = str(cached["answer"])
+                self.wfile.write((json.dumps({"delta": cached_answer}) + "\n").encode())
                 self.wfile.flush()
-            done = {"done": True, "hits": [hit_to_dict(hit) for hit in hits]}
+                chat_id = self._record_exchange(
+                    chat_id, query, cached_answer, list(cached["citations"])
+                )
+                done = {
+                    "done": True,
+                    "hits": cached["citations"],
+                    "cached": True,
+                    "chat_id": chat_id,
+                }
+            else:
+                pieces: list[str] = []
+                for piece in answer_stream(
+                    query,
+                    hits,
+                    LazyLLM(self.state),
+                    min_cosine=min_cosine,
+                    history=history,
+                    memory=memory,
+                ):
+                    pieces.append(str(piece))
+                    self.wfile.write((json.dumps({"delta": piece}) + "\n").encode())
+                    self.wfile.flush()
+                text = "".join(pieces).strip() or REFUSAL
+                citations = [hit_to_dict(hit) for hit in hits]
+                chat_id = self._record_exchange(
+                    chat_id,
+                    query,
+                    text,
+                    citations,
+                    cache_key=None if text == REFUSAL else cache_key,
+                )
+                done = {"done": True, "hits": citations, "cached": False, "chat_id": chat_id}
             self.wfile.write((json.dumps(done) + "\n").encode())
             self.wfile.flush()
         except Exception as exc:  # noqa: BLE001 - headers already sent
@@ -997,11 +1107,44 @@ class Handler(BaseHTTPRequestHandler):
             )
         self._send(200, {"query": query, "hits": [hit_to_dict(hit) for hit in hits]})
 
+    def _cache_key(self, store: Store, query: str) -> str:
+        """Reuse an answer only while the corpus, embedder and model are identical."""
+        fingerprint = "|".join(
+            [
+                str(store.get_meta("embedder.name") or ""),
+                str(self.state.llm_model or ""),
+                str(self.state.llm_spec or ""),
+                str(store.stats()["documents"]),
+                str(store.stats()["chunks"]),
+                store.corpus_revision(),
+            ]
+        )
+        return hashlib.sha256(f"{fingerprint}|{query.strip().lower()}".encode()).hexdigest()
+
+    def _record_exchange(
+        self,
+        chat_id: int,
+        query: str,
+        text: str,
+        citations: list,
+        cache_key: str | None = None,
+    ) -> int:
+        with self.state.lock, Store(self.state.db) as store:
+            if not chat_id:
+                title = query if len(query) <= 60 else f"{query[:57]}…"
+                chat_id = store.create_chat(title)
+            store.add_message(chat_id, "user", query)
+            store.add_message(chat_id, "assistant", text, citations)
+            if cache_key:
+                store.cache_put(cache_key, query, text, citations)
+        return chat_id
+
     def _handle_ask(self, body: dict[str, Any]) -> None:
         query = str(body.get("query", "")).strip()
         if not query:
             self._send(400, {"error": "query required"})
             return
+        chat_id = int(body.get("chat_id") or 0)
         top_k = int(body.get("top_k", 6))
         min_cosine = float(body.get("min_cosine", 0.0))
         with self.state.lock, Store(self.state.db) as store:
@@ -1012,16 +1155,118 @@ class Handler(BaseHTTPRequestHandler):
                 top_k=top_k,
                 reranker=self._reranker_for(body.get("rerank")),
             )
-        text = answer(query, hits, LazyLLM(self.state), min_cosine=min_cosine)
+            cache_key = self._cache_key(store, query)
+            cached = store.cache_get(cache_key)
+            history = store.recent_turns(chat_id) if chat_id else []
+            memory = None if cached is not None else self._relevant_memories(store, query)
+        if cached is not None:
+            text = str(cached["answer"])
+            citations = list(cached["citations"])
+            from_cache = True
+        else:
+            citations = [hit_to_dict(hit) for hit in hits]
+            text = answer(
+                query,
+                hits,
+                LazyLLM(self.state),
+                min_cosine=min_cosine,
+                history=history,
+                memory=memory,
+            )
+            from_cache = False
+        chat_id = self._record_exchange(
+            chat_id,
+            query,
+            text,
+            citations,
+            cache_key=None if from_cache or text == REFUSAL else cache_key,
+        )
         self._send(
             200,
             {
                 "query": query,
                 "answer": text,
                 "refused": text == REFUSAL,
-                "hits": [hit_to_dict(hit) for hit in hits],
+                "hits": citations,
+                "cached": from_cache,
+                "chat_id": chat_id,
             },
         )
+
+    def _relevant_memories(self, store: Store, query: str) -> list[str]:
+        """Top durable notes for this question; empty when nothing is close."""
+        vectors = store.memory_vectors()
+        if not vectors:
+            return []
+        query_vec = self.state.embedder.embed_query(query)
+        q_norm = math.sqrt(sum(v * v for v in query_vec)) or 1.0
+        scored: list[tuple[float, str]] = []
+        for _memory_id, text, vector in vectors:
+            dot = sum(a * b for a, b in zip(query_vec, vector, strict=False))
+            norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+            score = dot / (q_norm * norm)
+            if score >= MEMORY_MIN_COSINE:
+                scored.append((score, text))
+        scored.sort(key=lambda item: -item[0])
+        return [text for _score, text in scored[:MEMORY_LIMIT]]
+
+    def _handle_memory_add(self, body: dict[str, Any]) -> None:
+        text = str(body.get("text", "")).strip()[:400]
+        if not text:
+            self._send(400, {"error": "text required"})
+            return
+        with self.state.lock, Store(self.state.db) as store:
+            if store.has_memory(text):
+                self._send(200, {"added": False, "duplicate": True})
+                return
+            memory_id = store.add_memory(text, self.state.embedder.embed_query(text))
+        self._send(200, {"added": True, "id": memory_id})
+
+    def _handle_memory_delete(self, body: dict[str, Any]) -> None:
+        memory_id = int(body.get("id") or 0)
+        if not memory_id:
+            self._send(400, {"error": "id required"})
+            return
+        with Store(self.state.db) as store:
+            store.delete_memory(memory_id)
+        self._send(200, {"deleted": memory_id})
+
+    def _handle_memory_extract(self, body: dict[str, Any]) -> None:
+        """One LLM pass over the latest conversation, then store what is durable."""
+        chat_id = int(body.get("chat_id") or 0)
+        with self.state.lock, Store(self.state.db) as store:
+            if not chat_id:
+                chats = store.chats(limit=1)
+                chat_id = int(chats[0]["id"]) if chats else 0
+            detail = store.chat(chat_id) if chat_id else None
+        if not detail or not detail["messages"]:
+            self._send(400, {"error": "no conversation to read yet"})
+            return
+        conversation = "\n".join(
+            f"{'User' if message['role'] == 'user' else 'ragdesk'}: {message['text'][:600]}"
+            for message in detail["messages"][-12:]
+        )
+        raw = LazyLLM(self.state).generate(
+            MEMORY_PROMPT.format(conversation=conversation),
+            {"num_predict": 300, "temperature": 0.0},
+        )
+        added: list[str] = []
+        with self.state.lock, Store(self.state.db) as store:
+            for text in parse_memory_list(raw)[:5]:
+                if len(text) < 4 or store.has_memory(text):
+                    continue
+                store.add_memory(text, self.state.embedder.embed_query(text))
+                added.append(text)
+        self._send(200, {"added": added, "raw": "" if added else str(raw)[:300]})
+
+    def _handle_chat_delete(self, body: dict[str, Any]) -> None:
+        chat_id = int(body.get("chat_id") or 0)
+        if not chat_id:
+            self._send(400, {"error": "chat_id required"})
+            return
+        with Store(self.state.db) as store:
+            store.delete_chat(chat_id)
+        self._send(200, {"deleted": chat_id})
 
 
 def make_server(
@@ -1029,6 +1274,24 @@ def make_server(
 ) -> ThreadingHTTPServer:
     handler = type("BoundHandler", (Handler,), {"state": state})
     return ThreadingHTTPServer((host, port), handler)
+
+
+def parse_memory_list(raw: str) -> list[str]:
+    """Pull the JSON array out of an LLM reply; tolerant of prose around it."""
+    start, end = raw.find("["), raw.rfind("]")
+    if start < 0 or end <= start:
+        return []
+    try:
+        data = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [
+        str(item).strip()[:200]
+        for item in data
+        if isinstance(item, str | int | float) and str(item).strip()
+    ]
 
 
 def ensure_llm(state: AppState) -> Any:
@@ -1164,6 +1427,20 @@ class LazyLLM:
 
     def generate_stream(self, prompt: str, options: dict[str, Any]) -> Any:
         return ensure_llm(self._state).generate_stream(prompt, options)
+
+
+def release_idle_models(state: AppState, minutes: float) -> dict[str, Any] | None:
+    """Drop loaded models after an idle stretch; the next use reloads lazily."""
+    if minutes <= 0:
+        return None
+    if state.llm is None and not getattr(state.embedder, "loaded", False):
+        return None
+    idle_seconds = time.monotonic() - state.last_used
+    if idle_seconds < minutes * 60:
+        return None
+    state.embedder.unload()
+    state.llm = None
+    return {"released": True, "idle_seconds": int(idle_seconds)}
 
 
 def run_auto_index(state: AppState) -> dict[str, Any]:
