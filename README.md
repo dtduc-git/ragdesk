@@ -46,6 +46,10 @@ ragdesk search "oauth pkce desktop"
 ragdesk save https://example.com/article
 ragdesk web https://docs.example.com/ --max-pages 50
 
+# email (read-only)
+ragdesk email --mbox ~/Downloads/takeout.mbox    # an exported archive
+ragdesk email --imap imap.gmail.com --user me@gmail.com --folder INBOX --limit 200
+
 # shell completions + man page
 ragdesk completions zsh > ~/.zsh/completions/_ragdesk
 ragdesk man > ~/.local/share/man/man1/ragdesk.1
@@ -169,6 +173,7 @@ with — the index refuses mismatched embeddings.
 | Scoping: `folder:` / `source:` and any front-matter key (`type:runbook service:payments`) as query filters; metadata shows as chips on citations | |
 | Parent-child context: children are embedded, parents (~4k chars) go to the LLM | |
 | Bookmarks: save one page from the Sources tab (or `ragdesk save <url>`), then Open or Refresh it later | |
+| Email: read-only IMAP sync (last N messages, `BODY.PEEK` — nothing is marked read) and mbox files; one document per message, searchable by subject, sender or body | Attachment contents (names are listed); mail writing/deleting |
 | Duplicates: the Indexed tab lists documents that share most of their exact chunks (the same file saved twice), with open-file links | Automatic cleanup — sources stay read-only |
 | Index health: the last run's skips (with reasons), oldest documents, embedder-match check and DB size | |
 | Never index: glob patterns (`*secret*`, `*.pem`) are never read, and saving a pattern removes already-indexed matches | |

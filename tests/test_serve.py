@@ -655,6 +655,53 @@ def test_ensure_llm_blocks_while_downloading(tmp_path: Path):
     assert "downloading" in str(excinfo.value)
 
 
+def test_email_connect_sync_and_mbox(base_url: str, tmp_path: Path, monkeypatch):
+    from ragdesk.index import IndexStats
+
+    monkeypatch.setattr("ragdesk.serve.email_whoami", lambda **kwargs: kwargs["user"])
+    monkeypatch.setattr(
+        "ragdesk.serve.email_sync_imap",
+        lambda store, embedder, **kwargs: IndexStats(
+            files_scanned=2, indexed=2, chunks=2
+        ),
+    )
+    status, payload = request(
+        f"{base_url}/api/connections/email",
+        {"host": "imap.example.com", "user": "me@example.com", "password": "pw"},
+    )
+    assert status == 200 and payload["display_name"] == "me@example.com"
+
+    _, payload = request(f"{base_url}/api/connections")
+    assert payload["email"] == {
+        "connected": True,
+        "host": "imap.example.com",
+        "user": "me@example.com",
+        "folder": "INBOX",
+    }
+
+    status, payload = request(f"{base_url}/api/sync/email", {"limit": 10})
+    assert status == 200
+    assert payload["indexed"] == 2 and payload["folder"] == "INBOX"
+
+    box = tmp_path / "inbox.mbox"
+    box.write_text(
+        "From bank@example.com Mon Sep 15 10:00:00 2026\n"
+        "Subject: Statement\n"
+        "From: bank@example.com\n"
+        "Message-ID: <stmt-1@example.com>\n"
+        "Date: Mon, 15 Sep 2026 10:00:00 +0700\n"
+        "\n"
+        "Your statement is ready.\n"
+    )
+    status, payload = request(f"{base_url}/api/sync/email-mbox", {"path": str(box)})
+    assert status == 200
+    assert payload["indexed"] == 1
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/sync/email-mbox", {"path": ""})
+    assert excinfo.value.code == 400
+
+
 def test_disconnect_switches_off_the_gh_cli_source(base_url: str, monkeypatch):
     from ragdesk import settings
 

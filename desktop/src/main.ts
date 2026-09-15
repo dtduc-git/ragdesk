@@ -871,6 +871,7 @@ type Connections = {
   notion: { connected: boolean; name: string };
   gitlab: { connected: boolean; name: string; base_url: string };
   msgraph: { connected: boolean; account: string; client_id_set: boolean };
+  email: { connected: boolean; host: string; user: string; folder: string };
 };
 
 type DeviceFlow = { userCode: string; verificationUri: string; interval: number };
@@ -1337,6 +1338,48 @@ function notionCard(conn: Connections["notion"]): string {
   </div>`;
 }
 
+function emailCard(conn: Connections["email"]): string {
+  const mboxForm = `<form data-form="email-mbox" class="field-row">
+      <input name="path" placeholder="/path/to/inbox.mbox (optional)" />
+      <button class="btn btn-quiet" type="submit">Index mbox</button>
+    </form>`;
+  if (!conn.connected) {
+    return `<div class="source-card">
+      <h3>Email</h3>
+      <p class="source-note">Read-only via IMAP: nothing is marked as read, nothing is deleted. Gmail needs an app password.</p>
+      <form data-form="email-connect" class="stack">
+        <div class="field-row">
+          <input name="host" placeholder="imap.gmail.com" required />
+          <input name="port" type="number" placeholder="993" />
+        </div>
+        <div class="field-row">
+          <input name="user" placeholder="you@gmail.com" required />
+          <input name="password" type="password" placeholder="app password" required />
+        </div>
+        <button class="btn btn-primary" type="submit">Connect email</button>
+      </form>
+      ${mboxForm}
+      <p class="source-result" data-result="email"></p>
+    </div>`;
+  }
+  return `<div class="source-card is-connected">
+    <h3>Email <span class="conn-badge">connected</span></h3>
+    <p class="source-note">${escapeHtml(conn.user)} · ${escapeHtml(conn.host)}</p>
+    <div class="button-row">
+      <button class="btn btn-quiet" type="button" data-action="disconnect-email">Disconnect</button>
+    </div>
+    <form data-form="email-sync" class="stack">
+      <div class="field-row">
+        <input name="folder" placeholder="INBOX" value="${escapeHtml(conn.folder || "INBOX")}" />
+        <input name="limit" type="number" min="1" max="5000" placeholder="newest 200" />
+      </div>
+      <button class="btn btn-primary" type="submit">Sync email</button>
+    </form>
+    ${mboxForm}
+    <p class="source-result" data-result="email"></p>
+  </div>`;
+}
+
 function notesCard(available: boolean): string {
   if (!available) return "";
   return `<div class="source-card">
@@ -1396,6 +1439,12 @@ function renderSources(): void {
     account: "",
     client_id_set: false,
   };
+  const email = connections?.email ?? {
+    connected: false,
+    host: "",
+    user: "",
+    folder: "INBOX",
+  };
   $("source-grid").innerHTML =
     localCard() +
     githubCard(github) +
@@ -1404,6 +1453,7 @@ function renderSources(): void {
     gdriveCard(gdrive) +
     msgraphCard(msgraph) +
     notionCard(notion) +
+    emailCard(email) +
     notesCard(status?.notes_available ?? false) +
     webCard();
   for (const [kind, message] of Object.entries(sourceResults)) {
@@ -1485,6 +1535,42 @@ $("source-grid").addEventListener("submit", async (event) => {
       await post("/api/connections/msgraph", { client_id: payload.client_id });
       await loadConnections();
       void startDevice("msgraph");
+      return;
+    }
+    if (kind === "email-connect") {
+      setResult("email", "checking the mailbox…");
+      const response = await post<{ display_name: string }>("/api/connections/email", {
+        host: String(payload.host ?? ""),
+        user: String(payload.user ?? ""),
+        password: String(payload.password ?? ""),
+        port: payload.port ? Number(payload.port) : 0,
+      });
+      (form as HTMLFormElement).reset();
+      setResult("email", `connected — ${response.display_name}`);
+      await loadConnections();
+      return;
+    }
+    if (kind === "email-sync") {
+      setResult("email", "reading the mailbox…");
+      const response = await post<Record<string, number>>("/api/sync/email", {
+        folder: String(payload.folder ?? ""),
+        limit: payload.limit ? Number(payload.limit) : 0,
+      });
+      setResult("email", summarize(response));
+      await loadStatus();
+      return;
+    }
+    if (kind === "email-mbox") {
+      if (!payload.path) {
+        setResult("email", "paste the path of an .mbox file first");
+        return;
+      }
+      setResult("email", "reading the archive…");
+      const response = await post<Record<string, number>>("/api/sync/email-mbox", {
+        path: String(payload.path),
+      });
+      setResult("email", summarize(response));
+      await loadStatus();
       return;
     }
     if (kind === "web-save") {

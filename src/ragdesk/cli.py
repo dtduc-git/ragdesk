@@ -16,6 +16,15 @@ from ragdesk import settings as app_settings
 from ragdesk.answer import REFUSAL, answer, answer_stream
 from ragdesk.complete import bash_script, fish_script, man_page, zsh_script
 from ragdesk.confluence import ConfluenceError, sync_confluence
+from ragdesk.email_source import (
+    DEFAULT_FOLDER,
+    DEFAULT_IMAP_PORT,
+    DEFAULT_LIMIT,
+    EmailError,
+    index_mbox,
+    sync_imap,
+)
+from ragdesk.email_source import resolve_imap_credentials as email_credentials
 from ragdesk.embed import get_embedder
 from ragdesk.envfile import load_env_file
 from ragdesk.evaluate import category_metrics, evaluate, format_report, ground_answer, load_golden
@@ -207,6 +216,21 @@ def _build_parser() -> argparse.ArgumentParser:
     p_save.add_argument("url", help="page URL, e.g. https://example.com/article")
     p_save.add_argument("--json", action="store_true", help="machine-readable output")
 
+    p_email = sub.add_parser("email", help="index email (read-only mbox or IMAP)")
+    email_mode = p_email.add_mutually_exclusive_group(required=True)
+    email_mode.add_argument("--mbox", type=Path, help="mbox file to index")
+    email_mode.add_argument("--imap", metavar="HOST", help="IMAP host, e.g. imap.gmail.com")
+    p_email.add_argument("--user", default="", help="IMAP username")
+    p_email.add_argument(
+        "--password",
+        default="",
+        help="IMAP password (prompted or read from the saved connection when omitted)",
+    )
+    p_email.add_argument("--port", type=int, default=DEFAULT_IMAP_PORT)
+    p_email.add_argument("--folder", default=DEFAULT_FOLDER)
+    p_email.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="newest N messages")
+    p_email.add_argument("--json", action="store_true", help="machine-readable output")
+
     p_completions = sub.add_parser(
         "completions", help="print a shell completion script (bash/zsh/fish)"
     )
@@ -280,6 +304,21 @@ def _print_hits(hits) -> None:
         snippet = " ".join(hit.text.split())[:160]
         print(f"{rank}. score={hit.score:.4f} cos={hit.cosine:.3f} [{hit.lanes}] {hit.path}")
         print(f"   {snippet}")
+
+
+def _imap_password(user: str) -> str:
+    """Saved IMAP password, else an interactive prompt (never a CLI argument)."""
+    stored = email_credentials().get("password")
+    if stored:
+        return str(stored)
+    if sys.stdin.isatty():
+        import getpass  # noqa: PLC0415 - only needed interactively
+
+        return getpass.getpass(f"IMAP password for {user or 'the account'}: ")
+    raise EmailError(
+        "no IMAP password: pass --password, connect the account in the app, "
+        "or run interactively to be prompted"
+    )
 
 
 def _standalone_rewrite(llm, question: str, history: list[tuple[str, str]]) -> str:
@@ -566,6 +605,32 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             emit_stats(stats, getattr(args, "json", False), url=args.url)
+            return 0
+
+        if args.command == "email":
+            try:
+                if args.mbox:
+                    stats = index_mbox(
+                        store, embedder, args.mbox, limit=args.limit
+                    )
+                    extra = {"mbox": str(args.mbox)}
+                else:
+                    password = args.password or _imap_password(args.user)
+                    stats = sync_imap(
+                        store,
+                        embedder,
+                        host=args.imap,
+                        user=args.user,
+                        password=password,
+                        port=args.port,
+                        folder=args.folder,
+                        limit=args.limit,
+                    )
+                    extra = {"host": args.imap, "folder": args.folder}
+            except EmailError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            emit_stats(stats, getattr(args, "json", False), **extra)
             return 0
 
         if args.command == "search":

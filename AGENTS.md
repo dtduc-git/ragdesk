@@ -26,7 +26,11 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   on-device Vision framework via the `vision` extra: `en-US` + `vi-VT`, images
   upscaled 2× before recognition, header carries file name + Spotlight capture
   date; non-macOS or no extra → images skip as before), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
-  `msgraph` (OneDrive + SharePoint, device flow) connectors, `web` (same-host
+  `msgraph` (OneDrive + SharePoint, device flow) connectors, `email_source`
+  (read-only email: `index_mbox` iterates one document per message,
+  `sync_imap` uses `select(readonly=True)` + `BODY.PEEK` so nothing is ever
+  marked read; headers + text body only, attachment names are listed not
+  parsed; credentials under the `email` provider), `web` (same-host
   HTML crawl, capped pages/depth; `save_page` = one page, failures raise),
   `archive`
   (shared repo-tarball extraction), `htmlutil` (shared HTML→text),
@@ -137,8 +141,13 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   bash|zsh|fish`, `ragdesk man` (all in `complete.py`, generated from the
   argparse tree so they cannot drift; `complete._subparsers` reads argparse
   internals on purpose).
-- Reliability surfaces: `GET /api/health` (embedder match, last local run +
-  `skipped_samples` from `store.last_index_report()`, oldest documents, db
+- Email surfaces: `POST /api/connections/email {host, port, user, password}`
+  (validated by `email_source.whoami` before saving), `POST /api/sync/email
+  {folder, limit}` (saved credentials; `limit` = newest N messages) and
+  `POST /api/sync/email-mbox {path}`; CLI mirrors as `ragdesk email --mbox
+  FILE` / `--imap HOST --user U` (password prompted, never an argv default).
+  The Sources tab has the card; `credentials.email` holds the app password.
+- Reliability surfaces: `GET /api/health` (embedder match, last local run + `skipped_samples` from `store.last_index_report()`, oldest documents, db
   size, never-index patterns + docs still matching them), `POST
   /api/never-index {patterns}` (saves `settings.never_index` AND prunes matching
   documents — redaction, not just prevention; `index_paths` skips matching files

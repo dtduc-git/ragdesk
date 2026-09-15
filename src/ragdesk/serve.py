@@ -31,6 +31,13 @@ from ragdesk.confluence import (
     sync_confluence,
 )
 from ragdesk.confluence import whoami as confluence_whoami
+from ragdesk.email_source import DEFAULT_FOLDER as EMAIL_DEFAULT_FOLDER
+from ragdesk.email_source import DEFAULT_IMAP_PORT as EMAIL_DEFAULT_PORT
+from ragdesk.email_source import DEFAULT_LIMIT as EMAIL_DEFAULT_LIMIT
+from ragdesk.email_source import EmailError
+from ragdesk.email_source import index_mbox as email_index_mbox
+from ragdesk.email_source import sync_imap as email_sync_imap
+from ragdesk.email_source import whoami as email_whoami
 from ragdesk.embed import Embedder
 from ragdesk.evaluate import evaluate, ground_answer_detail, load_golden
 from ragdesk.gdrive import TOKEN_FILE as GDRIVE_TOKEN_FILE
@@ -453,6 +460,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_connect_gitlab(body)
             elif self.path == "/api/sync/gitlab":
                 self._handle_sync_gitlab(body)
+            elif self.path == "/api/connections/email":
+                self._handle_connect_email(body)
             elif self.path == "/api/connections/msgraph":
                 self._handle_connect_msgraph(body)
             elif self.path == "/api/connections/msgraph/device/start":
@@ -493,6 +502,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_gdrive(body)
             elif self.path == "/api/sync/web":
                 self._handle_sync_web(body)
+            elif self.path == "/api/sync/email":
+                self._handle_sync_email(body)
+            elif self.path == "/api/sync/email-mbox":
+                self._handle_sync_email_mbox(body)
             elif self.path == "/api/save":
                 self._handle_save_page(body)
             elif self.path == "/api/never-index":
@@ -524,6 +537,7 @@ class Handler(BaseHTTPRequestHandler):
             GitLabError,
             MsGraphError,
             NotesError,
+            EmailError,
         ) as exc:
             self._send(502, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface errors to the UI
@@ -722,6 +736,7 @@ class Handler(BaseHTTPRequestHandler):
         notion_entry = credentials.get("notion")
         gitlab_entry = credentials.get("gitlab")
         msgraph_entry = credentials.get("msgraph")
+        email_entry = credentials.get("email")
         return {
             "github": {
                 "connected": gh_source is not None or bool(github_entry.get("token")),
@@ -760,6 +775,12 @@ class Handler(BaseHTTPRequestHandler):
                 "connected": bool(msgraph_entry.get("refresh_token")),
                 "account": msgraph_entry.get("account", ""),
                 "client_id_set": resolve_ms_client_id() is not None,
+            },
+            "email": {
+                "connected": bool(email_entry.get("host") and email_entry.get("user")),
+                "host": email_entry.get("host", ""),
+                "user": email_entry.get("user", ""),
+                "folder": email_entry.get("folder", EMAIL_DEFAULT_FOLDER),
             },
         }
 
@@ -932,7 +953,15 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"connected": True, "email": email})
 
     def _handle_disconnect(self, provider: str) -> None:
-        if provider not in ("github", "confluence", "gdrive", "notion", "gitlab", "msgraph"):
+        if provider not in (
+            "github",
+            "confluence",
+            "gdrive",
+            "notion",
+            "gitlab",
+            "msgraph",
+            "email",
+        ):
             self._send(404, {"error": f"unknown provider: {provider}"})
             return
         credentials.clear(provider)
@@ -1039,6 +1068,90 @@ class Handler(BaseHTTPRequestHandler):
             200,
             {
                 "project": project,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_connect_email(self, body: dict[str, Any]) -> None:
+        host = str(body.get("host", "")).strip()
+        user = str(body.get("user", "")).strip()
+        password = str(body.get("password", ""))
+        port = int(body.get("port") or EMAIL_DEFAULT_PORT)
+        if not host or not user or not password:
+            self._send(400, {"error": "host, user and password are required"})
+            return
+        with self.state.lock:
+            name = email_whoami(host=host, user=user, password=password, port=port)
+        credentials.set_provider(
+            "email",
+            {
+                "host": host,
+                "user": user,
+                "password": password,
+                "port": port,
+                "folder": str(body.get("folder", "")).strip() or EMAIL_DEFAULT_FOLDER,
+                "name": name,
+            },
+        )
+        self._send(200, {"connected": True, "display_name": name})
+
+    def _handle_sync_email(self, body: dict[str, Any]) -> None:
+        entry = credentials.get("email")
+        host = str(body.get("host", "")).strip() or str(entry.get("host", ""))
+        user = str(body.get("user", "")).strip() or str(entry.get("user", ""))
+        password = str(body.get("password", "")) or str(entry.get("password", ""))
+        folder = (
+            str(body.get("folder", "")).strip()
+            or str(entry.get("folder", ""))
+            or EMAIL_DEFAULT_FOLDER
+        )
+        if not host or not user or not password:
+            self._send(
+                400,
+                {"error": "no email connection: connect the account in the app first"},
+            )
+            return
+        limit = int(body.get("limit") or EMAIL_DEFAULT_LIMIT)
+        with self.state.lock, Store(self.state.db) as store:
+            stats = email_sync_imap(
+                store,
+                self.state.embedder,
+                host=host,
+                user=user,
+                password=password,
+                port=int(entry.get("port") or EMAIL_DEFAULT_PORT),
+                folder=folder,
+                limit=limit,
+            )
+        self._send(
+            200,
+            {
+                "host": host,
+                "folder": folder,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_sync_email_mbox(self, body: dict[str, Any]) -> None:
+        path = str(body.get("path", "")).strip()
+        if not path:
+            self._send(400, {"error": "path required (an .mbox file)"})
+            return
+        limit = int(body.get("limit") or 0)
+        with self.state.lock, Store(self.state.db) as store:
+            stats = email_index_mbox(store, self.state.embedder, path, limit=limit)
+        self._send(
+            200,
+            {
+                "path": path,
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,
