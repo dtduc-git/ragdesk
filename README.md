@@ -51,6 +51,27 @@ ragdesk eval --golden fixtures/golden.jsonl
 ragdesk stats
 ```
 
+## Use ragdesk from Claude Code, Claude Desktop or Codex (MCP)
+
+`ragdesk mcp` speaks MCP over stdio, read-only, and reads the same index the
+desktop app uses — the app does not need to be running.
+
+```bash
+# Claude Code
+claude mcp add ragdesk -- ragdesk mcp
+
+# Codex (~/.codex/config.toml)
+[mcp_servers.ragdesk]
+command = "ragdesk"
+args = ["mcp"]
+
+# Claude Desktop (claude_desktop_config.json)
+{ "mcpServers": { "ragdesk": { "command": "ragdesk", "args": ["mcp"] } } }
+```
+
+Tools exposed: `ragdesk_search` (hybrid retrieval), `ragdesk_document` (full
+text of one indexed file), `ragdesk_sources` (document/chunk counts per source).
+
 ## Desktop app (Tauri 2)
 
 ```bash
@@ -108,7 +129,7 @@ with — the index refuses mismatched embeddings.
 
 | Works | Not yet |
 |---|---|
-| Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme | PyPI release (v0.1.0 pending) |
+| Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme — **built from source** (no DMG release yet) | Packaged DMG + notarization (Apple Developer ID) when the project ships binaries |
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) | Connector auto-sync (local paths only for now) |
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Metadata: a `--- key: value ---` front-matter header is parsed, stored per document and filterable — no YAML dependency | |

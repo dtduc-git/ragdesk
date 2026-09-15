@@ -44,7 +44,8 @@ from ragdesk.serve import (
 from ragdesk.store import Store
 from ragdesk.web import WebError, crawl_site
 
-DEFAULT_DB = ".ragdesk/index.db"
+# Same database the desktop app uses, so CLI/TUI/MCP all see one index.
+DEFAULT_DB = str(Path.home() / ".ragdesk" / "index.db")
 
 
 def _build_parser() -> argparse.ArgumentParser:
