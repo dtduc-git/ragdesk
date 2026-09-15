@@ -1518,3 +1518,38 @@ details.alt[open] summary {
   font-size: 12px;
   color: var(--ink-soft);
 }
+
+
+.msg-assistant .answer p {
+  margin: 0 0 10px;
+}
+
+.msg-assistant .answer ul {
+  margin: 4px 0 12px;
+  padding-left: 20px;
+}
+
+.msg-assistant .answer li {
+  margin-bottom: 4px;
+}
+
+.cite-ref {
+  padding: 0 3px;
+  margin-left: 1px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--stamp);
+  background: rgb(46 107 88 / 10%);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.cite-ref:hover {
+  color: var(--card);
+  background: var(--stamp);
+}
+
+.cite.is-flash {
+  border-color: var(--stamp);
+  box-shadow: 0 0 0 2px rgb(46 107 88 / 25%);
+}

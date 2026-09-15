@@ -455,7 +455,7 @@ function citeCard(hit: Hit, rank: number): string {
         `<span class="meta-chip">${escapeHtml(key)}: ${escapeHtml(String(value))}</span>`,
     )
     .join("");
-  return `<article class="cite">
+  return `<article class="cite" data-rank="${rank}">
     <span class="cite-rank">[${rank}]</span>
     <div class="cite-body">
       <div class="cite-top">
@@ -477,8 +477,13 @@ async function openLocal(path: string): Promise<void> {
   try {
     const { openPath } = await import("@tauri-apps/plugin-opener");
     await openPath(path);
-  } catch {
-    // browser mode: opening local files is a desktop affordance
+  } catch (error) {
+    try {
+      await navigator.clipboard.writeText(path);
+      toast(`Could not open the file — path copied instead (${path.split("/").pop()})`);
+    } catch {
+      toast(`Could not open ${path} (${error instanceof Error ? error.message : error})`);
+    }
   }
 }
 
@@ -609,6 +614,7 @@ async function ask(query: string): Promise<void> {
               renderAnswerActions(shellElement, actions, event.answer_id, 0);
               void autoVerify(actions, event.answer_id);
             }
+            renderRichText(answer, answer.textContent ?? "");
             void renderDiagrams(answer, cites, answer.textContent ?? "");
             void loadChats();
           }
@@ -792,6 +798,7 @@ function renderChat(messages: ChatMessage[]): void {
     answer.classList.toggle("is-refused", message.text === REFUSAL);
     renderAnswerActions(element, actions, message.id, message.feedback ?? 0);
     renderCites(cites, message.citations ?? []);
+    renderRichText(answer, message.text);
     void renderDiagrams(answer, cites, message.text);
   }
 }
@@ -1848,6 +1855,52 @@ async function autoVerify(actions: HTMLElement, answerId: number): Promise<void>
     /* the manual Verify button still works */
   }
 }
+
+const CITE_REF_RE = /\[(\d+)\]/g;
+
+function renderRichText(element: HTMLElement, text: string): void {
+  // A deliberately tiny renderer: paragraphs, "- " bullets, **bold** and
+  // clickable [n] references. Everything is escaped first, so no model output
+  // can inject markup.
+  const lines = escapeHtml(text).split("\n");
+  const html: string[] = [];
+  let inList = false;
+  const inline = (value: string) =>
+    value
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(CITE_REF_RE, '<sup class="cite-ref" data-cite="$1">$1</sup>');
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (/^\s*-\s+/.test(line)) {
+      if (!inList) {
+        html.push("<ul>");
+        inList = true;
+      }
+      html.push(`<li>${inline(line.replace(/^\s*-\s+/, ""))}</li>`);
+      continue;
+    }
+    if (inList) {
+      html.push("</ul>");
+      inList = false;
+    }
+    if (line.trim()) html.push(`<p>${inline(line)}</p>`);
+  }
+  if (inList) html.push("</ul>");
+  element.innerHTML = html.join("");
+}
+
+document.addEventListener("click", (event) => {
+  const ref = (event.target as HTMLElement).closest<HTMLElement>(".cite-ref");
+  if (!ref) return;
+  const index = Number(ref.dataset.cite ?? 0);
+  const card = document.querySelector<HTMLElement>(`.cite[data-rank="${index}"]`);
+  if (card) {
+    card.scrollIntoView({ block: "center", behavior: "smooth" });
+    card.classList.add("is-flash");
+    window.setTimeout(() => card.classList.remove("is-flash"), 1200);
+  }
+});
 
 // --- diagrams -----------------------------------------------------------------
 

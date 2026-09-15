@@ -233,7 +233,7 @@ def test_ollama_backend_sends_grounded_payload(monkeypatch):
     assert captured["stream"] is False
     assert captured["options"]["num_predict"] == 400
     assert captured["options"]["num_ctx"] == 8192
-    assert "plain prose" in captured["prompt"]
+    assert "bullets" in captured["prompt"]  # the answer stays scannable
 
 
 def test_answer_retries_empty_response_then_refuses():

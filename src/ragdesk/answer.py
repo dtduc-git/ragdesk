@@ -27,7 +27,9 @@ LENGTH_HINTS = {
 REFUSAL = "I could not find this in your indexed sources."
 
 PROMPT_TEMPLATE = """You are ragdesk, a retrieval assistant. Answer ONLY from the sources below.
-Write a complete answer in plain prose (no LaTeX, no markdown headings or tables).
+Structure the answer for scanning: a one- or two-sentence summary, then short
+paragraphs; when the sources enumerate facts (names, codes, amounts, dates),
+list them as `- ` bullets on their own lines. No LaTeX, no headings, no tables.
 Cite the sources you used inline as [1], [2] and so on — end each factual
 sentence with its citation marker, but never reply with citations alone.
 If the sources do not contain the answer, say exactly:
