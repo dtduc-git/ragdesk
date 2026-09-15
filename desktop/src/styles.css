@@ -1413,3 +1413,58 @@ details.alt[open] summary {
   font-size: 12px;
   white-space: pre-wrap;
 }
+
+
+/* --- answer actions + verify ------------------------------------------------ */
+
+.answer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+}
+
+.answer-actions:empty {
+  display: none;
+}
+
+.action {
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.action:hover {
+  color: var(--ink);
+  border-color: var(--rule);
+}
+
+.action.is-on {
+  color: var(--stamp);
+  border-color: var(--stamp);
+}
+
+.action-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.sentence {
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.sentence.is-grounded {
+  background: rgb(46 107 88 / 12%);
+}
+
+.sentence.is-loose {
+  background: rgb(169 75 57 / 14%);
+  text-decoration: underline dotted var(--flag);
+}

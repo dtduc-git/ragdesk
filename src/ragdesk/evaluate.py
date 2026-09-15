@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ragdesk.embed import Embedder
+from ragdesk.embed import Embedder, tokenize
 from ragdesk.search import Hit, parse_filters, retrieve
 from ragdesk.store import Store
 
@@ -148,7 +148,9 @@ def ground_answer(answer: str, citations: list[str]) -> dict[str, Any]:
     refs = [int(match) for match in _CITATION_RE.findall(answer)]
     citation_valid = bool(refs) and all(1 <= ref <= max_ref for ref in refs)
 
-    corpus_tokens = set(re.findall(r"\w+", " ".join(citations).lower(), flags=re.UNICODE))
+    # Stopword-free overlap keeps the check honest: shared filler words must not
+    # make an invented sentence look grounded.
+    corpus_tokens = set(tokenize(" ".join(citations)))
     sentences = [
         part.strip()
         for part in re.split(r"(?<=[.!?…])\s+", answer)
@@ -156,7 +158,7 @@ def ground_answer(answer: str, citations: list[str]) -> dict[str, Any]:
     ]
     grounded = 0
     for sentence in sentences:
-        tokens = set(re.findall(r"\w+", sentence.lower(), flags=re.UNICODE))
+        tokens = set(tokenize(sentence))
         if not tokens:
             continue
         overlap = len(tokens & corpus_tokens) / len(tokens)
@@ -167,6 +169,31 @@ def ground_answer(answer: str, citations: list[str]) -> dict[str, Any]:
         "grounded_ratio": grounded / len(sentences) if sentences else 0.0,
         "sentences": len(sentences),
     }
+
+
+def ground_answer_detail(answer: str, citations: list[str]) -> dict[str, Any]:
+    """Per-sentence version of :func:`ground_answer` for the Verify button."""
+    summary = ground_answer(answer, citations)
+    corpus_tokens = set(tokenize(" ".join(citations)))
+    sentences = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?…])\s+", answer)
+        if part.strip()
+    ]
+    rows: list[dict[str, Any]] = []
+    for sentence in sentences:
+        tokens = set(tokenize(sentence))
+        overlap = len(tokens & corpus_tokens) / len(tokens) if tokens else 0.0
+        refs = [int(match) for match in _CITATION_RE.findall(sentence)]
+        rows.append(
+            {
+                "text": sentence,
+                "ratio": round(overlap, 3),
+                "grounded": overlap >= 0.5,
+                "citations": refs,
+            }
+        )
+    return {**summary, "sentences_detail": rows}
 
 
 def format_report(metrics: dict[str, float], per_query: list[dict[str, Any]]) -> str:

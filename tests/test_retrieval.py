@@ -261,3 +261,85 @@ def test_prompt_includes_diagram_rules_only_when_asked(tmp_path: Path):
     assert DIAGRAM_NOTE.splitlines()[0] not in plain
     assert "```mermaid" in asked
     assert "accent" in asked
+
+
+def test_chunk_text_tracks_line_starts():
+    from ragdesk.chunk import chunk_text
+
+    text = "line one\n\nline three\n\n" + "x" * 50
+    chunks = chunk_text(text, max_chars=200, overlap=20)
+    assert chunks[0].line_start == 1
+    assert all(chunk.line_start >= 1 for chunk in chunks)
+
+    # a hard-split paragraph keeps pointing at its own line
+    big = ("y" * 120) + "\n\n"
+    parts = chunk_text("head\n\n" + big * 2, max_chars=100, overlap=10)
+    assert any(part.line_start == 3 for part in parts)
+
+
+def test_diversify_caps_chunks_per_document():
+    from ragdesk.search import diversify
+
+    # three chunks of one doc followed by two of another: the cap keeps the
+    # second document in the result instead of letting the first fill it.
+    def chunk(path: str, doc_id: int, chunk_id: int) -> Hit:
+        return Hit(
+            chunk_id=chunk_id,
+            doc_id=doc_id,
+            path=path,
+            source="local",
+            ordinal=chunk_id,
+            text="body",
+            score=1.0,
+            cosine=0.5,
+            lanes="dense",
+        )
+
+    hits = [chunk("big.md", 1, index) for index in range(1, 4)]
+    hits += [chunk("other.md", 2, index) for index in range(4, 6)]
+    picked = diversify(hits, top_k=4)
+    assert sum(1 for item in picked if item.path == "big.md") == 2
+    assert sum(1 for item in picked if item.path == "other.md") == 2
+    # with nothing else to fill from, the cap yields rather than returning fewer hits
+    only_one = [chunk("same.md", 3, index) for index in range(1, 6)]
+    assert len(diversify(only_one, top_k=3)) == 3
+
+
+def test_recency_factor_decays():
+    import time
+
+    from ragdesk.search import recency_factor
+
+    now = time.time()
+    assert recency_factor(now, now=now) > 1.09
+    assert recency_factor(now - 45 * 86_400, now=now) < 1.05
+    assert recency_factor(now - 365 * 86_400, now=now) < 1.01
+    assert recency_factor(0.0, now=now) == 1.0
+
+
+def test_parse_smart_retrieval_tolerates_noise():
+    from ragdesk.serve import parse_smart_retrieval
+
+    parsed = parse_smart_retrieval(
+        'Sure! {"standalone": "how does rrf rank?", "sub_queries": ["rrf fusion", "rank"], '
+        '"hypothetical": "RRF sums 1/(k+rank)."} done'
+    )
+    assert parsed["standalone"] == "how does rrf rank?"
+    assert parsed["sub_queries"] == ["rrf fusion", "rank"]
+    assert "RRF sums" in parsed["hypothetical"]
+    assert parse_smart_retrieval("no json") == {}
+    assert parse_smart_retrieval('{"standalone": "none", "sub_queries": []}') == {}
+
+
+def test_ground_answer_detail_marks_sentences():
+    from ragdesk.evaluate import ground_answer_detail
+
+    citations = ["Access tokens expire after 60 minutes and refresh tokens renew them."]
+    detail = ground_answer_detail(
+        "Access tokens expire after 60 minutes [1]. The moon is made of cheese.",
+        citations,
+    )
+    assert detail["citation_valid"] is True
+    assert detail["sentences_detail"][0]["grounded"] is True
+    assert detail["sentences_detail"][1]["grounded"] is False
+    assert detail["sentences_detail"][0]["citations"] == [1]

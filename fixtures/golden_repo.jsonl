@@ -1,9 +1,12 @@
-{"query": "how does RRF fusion rank chunks from the two lanes", "relevant": ["src/ragdesk/search.py"], "category": "general"}
-{"query": "what error do I get if the index was built with a different embedder", "relevant": ["src/ragdesk/store.py"], "category": "indexing"}
-{"query": "paragraph aware chunking with character overlap", "relevant": ["src/ragdesk/chunk.py"], "category": "indexing"}
-{"query": "grounding gate refuses to answer when context is weak", "relevant": ["src/ragdesk/answer.py"], "category": "answers"}
-{"query": "incremental indexing by content hash skip unchanged files", "relevant": ["src/ragdesk/index.py"], "category": "general"}
-{"query": "how is recall computed from the golden set of queries", "relevant": ["src/ragdesk/evaluate.py"], "category": "eval"}
-{"query": "lexical reranker shared token overlap baseline", "relevant": ["src/ragdesk/rerank.py"], "category": "general"}
-{"query": "install onnx extra local models EmbeddingGemma", "relevant": ["README.md"], "category": "indexing"}
-{"query": "where is the retrieval recall gate wired into CI", "relevant": [".github/workflows/ci.yml"], "category": "eval"}
+{"query": "folder:dtduc-git/ragdesk how does RRF fusion rank chunks from the two lanes", "relevant": ["src/ragdesk/search.py"], "category": "general"}
+{"query": "folder:dtduc-git/ragdesk what error do I get if the index was built with a different embedder", "relevant": ["src/ragdesk/store.py"], "category": "indexing"}
+{"query": "folder:dtduc-git/ragdesk paragraph aware chunking with character overlap", "relevant": ["src/ragdesk/chunk.py"], "category": "indexing"}
+{"query": "folder:dtduc-git/ragdesk grounding gate refuses to answer when context is weak", "relevant": ["src/ragdesk/answer.py"], "category": "answers"}
+{"query": "folder:dtduc-git/ragdesk incremental indexing by content hash skip unchanged files", "relevant": ["src/ragdesk/index.py"], "category": "general"}
+{"query": "folder:dtduc-git/ragdesk how is recall computed from the golden set of queries", "relevant": ["src/ragdesk/evaluate.py"], "category": "eval"}
+{"query": "folder:dtduc-git/ragdesk lexical reranker shared token overlap baseline", "relevant": ["src/ragdesk/rerank.py"], "category": "general"}
+{"query": "folder:dtduc-git/ragdesk install onnx extra local models EmbeddingGemma", "relevant": ["README.md"], "category": "indexing"}
+{"query": "folder:dtduc-git/ragdesk where is the retrieval recall gate wired into CI", "relevant": [".github/workflows/ci.yml"], "category": "eval"}
+{"query": "folder:dtduc-git/ragdesk where is the hybrid_search function defined", "relevant": ["src/ragdesk/search.py"], "category": "code"}
+{"query": "folder:dtduc-git/ragdesk diversify function implementation", "relevant": ["src/ragdesk/search.py"], "category": "code"}
+{"query": "folder:dtduc-git/ragdesk ServeHandler _handle_ask_stream method", "relevant": ["src/ragdesk/serve.py"], "category": "code"}

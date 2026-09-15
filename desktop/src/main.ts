@@ -16,6 +16,7 @@ type Hit = {
   score: number;
   cosine: number;
   lanes: string;
+  line?: number;
 };
 
 type SourceStat = { source: string; documents: number; chunks: number; indexed_at: string };
@@ -429,9 +430,10 @@ function snippet(text: string, length: number): string {
 
 function citeCard(hit: Hit, rank: number): string {
   const openable = hit.source === "local";
+  const where = `${hit.path}${hit.line && hit.line > 1 ? `:${hit.line}` : ""}`;
   const pathTag = openable
-    ? `<code class="cite-path" data-open-path="${escapeHtml(hit.path)}" title="Open file">${escapeHtml(hit.path)}</code>`
-    : `<code class="cite-path">${escapeHtml(hit.path)}</code>`;
+    ? `<code class="cite-path" data-open-path="${escapeHtml(hit.path)}" title="Open file">${escapeHtml(where)}</code>`
+    : `<code class="cite-path">${escapeHtml(where)}</code>`;
   return `<article class="cite">
     <span class="cite-rank">[${rank}]</span>
     <div class="cite-body">
@@ -476,16 +478,20 @@ function appendAssistantShell(): {
   answer: HTMLElement;
   cites: HTMLElement;
   status: HTMLElement;
+  actions: HTMLElement;
+  element: HTMLElement;
 } {
   const message = document.createElement("div");
   message.className = "msg msg-assistant";
-  message.innerHTML = `<div class="answer-status"></div><div class="answer streaming"></div><div class="cites"></div>`;
+  message.innerHTML = `<div class="answer-status"></div><div class="answer streaming"></div><div class="answer-actions"></div><div class="cites"></div>`;
   $("chat-log").append(message);
   message.scrollIntoView({ block: "end" });
   return {
     answer: message.querySelector<HTMLElement>(".answer") as HTMLElement,
     cites: message.querySelector<HTMLElement>(".cites") as HTMLElement,
     status: message.querySelector<HTMLElement>(".answer-status") as HTMLElement,
+    actions: message.querySelector<HTMLElement>(".answer-actions") as HTMLElement,
+    element: message,
   };
 }
 
@@ -498,7 +504,8 @@ async function ask(query: string): Promise<void> {
   $<HTMLButtonElement>("chat-send").disabled = true;
   $("chat-stop").hidden = false;
   appendUserMessage(query);
-  const { answer, cites, status: statusLine } = appendAssistantShell();
+  const { answer, cites, status: statusLine, actions, element: shellElement } =
+    appendAssistantShell();
   const startedAt = Date.now();
   let phase = "working…";
   const ticker = window.setInterval(() => {
@@ -542,6 +549,7 @@ async function ask(query: string): Promise<void> {
             cached?: boolean;
             cached_question?: string;
             chat_id?: number;
+            answer_id?: number;
           };
           if (event.status) {
             phase = event.status;
@@ -570,6 +578,7 @@ async function ask(query: string): Promise<void> {
               answer.before(badge);
             }
             if (event.chat_id) currentChatId = event.chat_id;
+            if (event.answer_id) renderAnswerActions(shellElement, actions, event.answer_id, 0);
             void renderDiagrams(answer, cites, answer.textContent ?? "");
             void loadChats();
           }
@@ -642,7 +651,13 @@ bindSuggestionChips();
 
 // --- chat history -------------------------------------------------------------
 
-type ChatMessage = { id: number; role: string; text: string; citations: Hit[] };
+type ChatMessage = {
+  id: number;
+  role: string;
+  text: string;
+  citations: Hit[];
+  feedback?: number;
+};
 type ChatSummary = { id: number; title: string; updated_at: string; messages: number };
 
 let currentChatId = 0;
@@ -741,10 +756,11 @@ function renderChat(messages: ChatMessage[]): void {
       appendUserMessage(message.text);
       continue;
     }
-    const { answer, cites } = appendAssistantShell();
+    const { answer, cites, actions, element } = appendAssistantShell();
     answer.classList.remove("streaming");
     answer.textContent = message.text;
     answer.classList.toggle("is-refused", message.text === REFUSAL);
+    renderAnswerActions(element, actions, message.id, message.feedback ?? 0);
     renderCites(cites, message.citations ?? []);
     void renderDiagrams(answer, cites, message.text);
   }
@@ -1659,6 +1675,67 @@ $("memory-extract").addEventListener("click", async () => {
     $("memory-status").textContent = error instanceof Error ? error.message : String(error);
   }
 });
+
+function renderAnswerActions(
+  message: HTMLElement,
+  actions: HTMLElement,
+  answerId: number,
+  feedbackValue: number,
+): void {
+  if (!answerId) {
+    actions.innerHTML = "";
+    return;
+  }
+  actions.innerHTML = `
+    <button class="action" type="button" data-thumb="1" aria-label="Good answer" class="${feedbackValue === 1 ? "is-on" : ""}">▲</button>
+    <button class="action" type="button" data-thumb="-1" aria-label="Bad answer" class="${feedbackValue === -1 ? "is-on" : ""}">▼</button>
+    <button class="action action-text" type="button" data-verify="1">Verify</button>
+    <span class="action-note" data-note></span>`;
+  actions.querySelectorAll<HTMLElement>("[data-thumb]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const value =
+        String(button.dataset.thumb) === "1" ? (feedbackValue === 1 ? 0 : 1) : feedbackValue === -1 ? 0 : -1;
+      try {
+        await post("/api/feedback", { message_id: answerId, value });
+        feedbackValue = value;
+        renderAnswerActions(message, actions, answerId, value);
+        const note = actions.querySelector<HTMLElement>("[data-note]");
+        if (note) note.textContent = value === 0 ? "" : "noted — thanks";
+      } catch (error) {
+        toast(error instanceof Error ? error.message : String(error));
+      }
+    });
+  });
+  const verify = actions.querySelector<HTMLElement>("[data-verify]");
+  verify?.addEventListener("click", async () => {
+    try {
+      const verdict = await post<{
+        grounded_ratio: number;
+        citation_valid: boolean;
+        sentences_detail: Array<{ text: string; ratio: number; grounded: boolean }>;
+      }>("/api/verify", { message_id: answerId });
+      const answer = message.querySelector<HTMLElement>(".answer");
+      const original = answer?.textContent ?? "";
+      if (answer) {
+        answer.innerHTML = verdict.sentences_detail
+          .map(
+            (row) =>
+              `<span class="sentence ${row.grounded ? "is-grounded" : "is-loose"}" title="grounded ${Math.round(row.ratio * 100)}%">${escapeHtml(row.text)}</span>`,
+          )
+          .join(" ");
+      }
+      const note = actions.querySelector<HTMLElement>("[data-note]");
+      if (note) {
+        note.textContent = `${Math.round(verdict.grounded_ratio * 100)}% grounded · citations ${verdict.citation_valid ? "valid" : "unclear"}`;
+      }
+      window.setTimeout(() => {
+        if (answer) answer.textContent = original;
+      }, 12000);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+    }
+  });
+}
 
 // --- diagrams -----------------------------------------------------------------
 

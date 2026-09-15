@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS chunks (
     ordinal INTEGER NOT NULL,
     text TEXT NOT NULL,
     embedding BLOB NOT NULL,
-    parent_ordinal INTEGER NOT NULL DEFAULT 0
+    parent_ordinal INTEGER NOT NULL DEFAULT 0,
+    line_start INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS parents (
     doc_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL,
     text TEXT NOT NULL,
     citations TEXT NOT NULL DEFAULT '[]',
+    feedback INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS messages_chat_idx ON messages(chat_id);
@@ -97,7 +99,11 @@ class Store:
     def _migrate(self) -> None:
         """Add columns introduced after the first release."""
         migrations = {
-            "chunks": {"parent_ordinal": "INTEGER NOT NULL DEFAULT 0"},
+            "chunks": {
+                "parent_ordinal": "INTEGER NOT NULL DEFAULT 0",
+                "line_start": "INTEGER NOT NULL DEFAULT 1",
+            },
+            "messages": {"feedback": "INTEGER NOT NULL DEFAULT 0"},
             "answer_cache": {
                 "fingerprint": "TEXT NOT NULL DEFAULT ''",
                 "embedding": "BLOB",
@@ -214,6 +220,7 @@ class Store:
         embeddings: list[list[float]],
         parents: list[str] | None = None,
         parent_index: list[int] | None = None,
+        line_starts: list[int] | None = None,
     ) -> None:
         if len(texts) != len(embeddings):
             raise ValueError("texts and embeddings must have the same length")
@@ -239,10 +246,23 @@ class Store:
                     if parent_index is not None and ordinal < len(parent_index)
                     else 0
                 )
+                line_start = (
+                    int(line_starts[ordinal])
+                    if line_starts is not None and ordinal < len(line_starts)
+                    else 1
+                )
                 chunk = self.conn.execute(
-                    "INSERT INTO chunks (doc_id, ordinal, text, embedding, parent_ordinal) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (doc_id, ordinal, text, array.array("f", vec).tobytes(), parent_ordinal),
+                    "INSERT INTO chunks "
+                    "(doc_id, ordinal, text, embedding, parent_ordinal, line_start) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        doc_id,
+                        ordinal,
+                        text,
+                        array.array("f", vec).tobytes(),
+                        parent_ordinal,
+                        line_start,
+                    ),
                 )
                 self.conn.execute(
                     "INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)",
@@ -371,7 +391,7 @@ class Store:
         if row is None:
             return None
         messages = self.conn.execute(
-            "SELECT id, role, text, citations, created_at FROM messages "
+            "SELECT id, role, text, citations, feedback, created_at FROM messages "
             "WHERE chat_id = ? ORDER BY id",
             (chat_id,),
         ).fetchall()
@@ -382,6 +402,44 @@ class Store:
                 for message in messages
             ],
         }
+
+    def set_feedback(self, message_id: int, value: int) -> bool:
+        with self.conn:
+            cursor = self.conn.execute(
+                "UPDATE messages SET feedback = ? WHERE id = ?", (value, message_id)
+            )
+        return bool(cursor.rowcount)
+
+    def feedback_rows(self) -> list[dict[str, Any]]:
+        """Assistant messages that were rated, with the question that produced them."""
+        rows = self.conn.execute(
+            """
+            SELECT m.id, m.chat_id, m.text, m.citations, m.feedback,
+                   (SELECT u.text FROM messages u
+                    WHERE u.chat_id = m.chat_id AND u.id < m.id AND u.role = 'user'
+                    ORDER BY u.id DESC LIMIT 1) AS question
+            FROM messages m
+            WHERE m.role = 'assistant' AND m.feedback != 0
+            ORDER BY m.id
+            """
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            citations = json.loads(row["citations"] or "[]")
+            out.append(
+                {
+                    "id": int(row["id"]),
+                    "chat_id": int(row["chat_id"]),
+                    "question": str(row["question"] or ""),
+                    "feedback": int(row["feedback"]),
+                    "relevant": [
+                        str(item.get("path", ""))
+                        for item in citations
+                        if item.get("path")
+                    ],
+                }
+            )
+        return out
 
     def delete_chat(self, chat_id: int) -> None:
         with self.conn:
@@ -536,7 +594,7 @@ class Store:
         rows = self.conn.execute(
             f"""
             SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source,
-                   COALESCE(p.text, '') AS parent_text,
+                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime,
                    bm25(chunks_fts) AS score
             FROM chunks_fts
             JOIN chunks c ON c.id = chunks_fts.rowid
@@ -563,7 +621,7 @@ class Store:
         rows = self.conn.execute(
             f"""
             SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source,
-                   COALESCE(p.text, '') AS parent_text
+                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime
             FROM documents d
             JOIN chunks c ON c.doc_id = d.id
             LEFT JOIN parents p ON p.doc_id = d.id AND p.ordinal = c.parent_ordinal
@@ -589,7 +647,7 @@ class Store:
         rows = self.conn.execute(
             f"""
             SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source, c.embedding,
-                   COALESCE(p.text, '') AS parent_text
+                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime
             FROM chunks c JOIN documents d ON d.id = c.doc_id
             LEFT JOIN parents p ON p.doc_id = d.id AND p.ordinal = c.parent_ordinal
             WHERE 1=1{scope}
@@ -615,6 +673,8 @@ class Store:
                         "path": row["path"],
                         "source": row["source"],
                         "parent_text": row["parent_text"],
+                        "line_start": row["line_start"],
+                        "mtime": row["mtime"],
                         "score": score,
                     },
                 )

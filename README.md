@@ -140,30 +140,34 @@ this repository's own docs and source.
 | corpus / preset | recall@5 | nDCG@10 | MRR@10 |
 |---|---|---|---|
 | fixtures (7 queries) / hash-4096 — CI gate | 1.000 | 1.000 | 1.000 |
-| repo (9 queries) / hash-4096 | 0.889 | 0.832 | 0.778 |
-| repo (9 queries) / EmbeddingGemma-300M int8 (ONNX) | 1.000 | 0.918 | 0.889 |
-| repo (9 queries) / EmbeddingGemma + `lexical` rerank | 1.000 | 0.862 | 0.815 |
-| repo (9 queries) / EmbeddingGemma, **HyDE on** (MLX 4B) | 1.000 | 0.848 | 0.796 |
+| repo (12 queries, `folder:`-scoped) / EmbeddingGemma int8, text chunking | **0.917** | **0.874** | **0.833** |
+| repo (12 queries) / + smart retrieval (rewrite + HyDE + sub-queries, one call) | 0.917 | 0.832 | 0.778 |
 
-Per-category breakdown (the `[eval]` row is why categories exist):
+Per-category breakdown (the `[eval]` row is the honest weak spot):
 
 ```
-[answers]  n=1 recall@5=1.000   [eval] n=2 recall@5=0.500
-[general]  n=3 recall@5=1.000   [indexing] n=3 recall@5=1.000
+[answers] n=1 recall@5=1.000   [code] n=3 recall@5=1.000
+[eval]    n=2 recall@5=0.500   [general] n=3 recall@5=1.000
 ```
 
-Measured 2026-09-14/15 on the repo tree; doc edits shift these by ~1 query, and
-they are re-measured on every release.
+Measured 2026-09-15 on the repo tree (824-document corpus including a synced
+repo, hence the `folder:` scoping in the golden set).
 
-Honest notes: the tiny fixtures corpus saturates, so the repo golden set is the
-one that says something. HyDE buys recall (0.889 → 1.000 on the query the plain
-lanes miss) and costs a little ranking precision — that is why it is a toggle,
-off by default. `--answers` scores faithfulness without an LLM judge: every
-sentence of an answer must overlap its cited chunks, and every `[n]` must be in
-range. The dependency-free `lexical` reranker **lowers**
-nDCG/MRR here — it is a test baseline, not a quality feature; a real
-cross-encoder reranker is the next milestone. CI gates `recall@5 >= 0.8` on
-both harnesses, so retrieval regressions fail the build.
+Honest notes:
+
+- **A code-aware chunker (per `def`/`class`) was built and removed.** On this
+  golden set it changed no symbol query and cost ranking precision
+  (`[eval]` MRR 0.625 → 0.267); the path lane plus plain paragraph chunks
+  already answer "where is X defined". Chunks still carry `line_start`, so
+  citations show `file:line`.
+- **Smart retrieval is a toggle, off by default.** One local-model call that
+  rewrites a follow-up, drafts a hypothetical answer and proposes sub-queries.
+  It helped on a noisier corpus (+0.031 nDCG) and cost a little on the current
+  one (−0.042), which is why the reader decides.
+- The dependency-free `lexical` reranker **lowers** nDCG/MRR here — it is a
+  test baseline, not a quality feature.
+- CI gates `recall@5 >= 0.8` on both harnesses, so retrieval regressions fail
+  the build.
 
 Reproduce (first run downloads the ~0.3 GB int8 model):
 

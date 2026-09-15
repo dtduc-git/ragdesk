@@ -22,6 +22,17 @@ TEXT_EXTENSIONS = {
     ".tf", ".hcl", ".sql", ".html", ".css", ".xml", ".csv", ".tmpl", ".tpl",
 }
 TEXT_FILENAMES = {"Dockerfile", "Makefile", "README", "LICENSE", "CHANGELOG", "CONTRIBUTING"}
+TEXT_EXTENSIONS = {
+    ".md", ".markdown", ".rst", ".txt",
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb",
+    ".sh", ".bash", ".zsh",
+    ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg",
+    ".tf", ".hcl", ".sql", ".html", ".css", ".xml", ".csv", ".tmpl", ".tpl",
+}
+TEXT_FILENAMES = {"Dockerfile", "Makefile", "README", "LICENSE", "CHANGELOG", "CONTRIBUTING"}
+# Escape hatch + measurement switch: RAGDESK_CODE_CHUNK=0 uses the plain text
+# chunker for source files too.
+CODE_CHUNKING = os.environ.get("RAGDESK_CODE_CHUNK", "1") != "0"
 SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__",
     ".ragdesk", "dist", "build", "target", ".terraform",
@@ -163,6 +174,7 @@ def index_document(
         embeddings=embeddings,
         parents=parents,
         parent_index=assignment,
+        line_starts=[chunk.line_start for chunk in chunks],
     )
     return len(chunks)
 

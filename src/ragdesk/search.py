@@ -6,7 +6,9 @@ query scoping via ``folder:`` / ``source:`` prefixes.
 
 from __future__ import annotations
 
+import math
 import re
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -18,6 +20,9 @@ if TYPE_CHECKING:
 
 RRF_K = 60
 RERANK_POOL = 30
+MAX_CHUNKS_PER_DOC = 2  # diversity: one long document must not fill every slot
+RECENCY_WEIGHT = 0.10  # a mild nudge for fresh documents, not a re-rank
+RECENCY_TAU_DAYS = 45.0
 
 _FILTER_RE = re.compile(r"(?<![\w-])(folder|source):(\S+)")
 
@@ -61,11 +66,38 @@ class Hit:
     cosine: float
     lanes: str
     parent_text: str = ""
+    line: int = 1
 
     @property
     def context(self) -> str:
         """What the LLM should read: the parent section when one was stored."""
         return self.parent_text or self.text
+
+
+def recency_factor(mtime: float, *, now: float | None = None) -> float:
+    """Fresh documents get a small bonus; older ones settle back to 1.0."""
+    if mtime <= 0:
+        return 1.0
+    age_days = max(0.0, ((now or time.time()) - mtime) / 86_400)
+    return 1.0 + RECENCY_WEIGHT * math.exp(-age_days / RECENCY_TAU_DAYS)
+
+
+def diversify(hits: list[Hit], top_k: int, max_per_doc: int = MAX_CHUNKS_PER_DOC) -> list[Hit]:
+    """Cap how many chunks one document may contribute, then backfill if short."""
+    picked: list[Hit] = []
+    overflow: list[Hit] = []
+    counts: dict[int, int] = {}
+    for hit in hits:
+        if counts.get(hit.doc_id, 0) < max_per_doc:
+            picked.append(hit)
+            counts[hit.doc_id] = counts.get(hit.doc_id, 0) + 1
+        else:
+            overflow.append(hit)
+        if len(picked) >= top_k:
+            break
+    if len(picked) < top_k:
+        picked.extend(overflow[: top_k - len(picked)])
+    return picked[:top_k]
 
 
 def fuse(rankings: list[list[int]], k: int = RRF_K) -> dict[int, float]:
@@ -87,8 +119,9 @@ def hybrid_search(
     query_vec: list[float] | None = None,
     hyde_vec: list[float] | None = None,
     filters: Filters | None = None,
+    extra_queries: list[str] | None = None,
 ) -> list[Hit]:
-    """BM25 + dense (+ HyDE, + path) lanes, RRF-fused, chunk-level."""
+    """BM25 + dense (+ HyDE, + path, + sub-query) lanes, RRF-fused, chunk-level."""
     query_vec = query_vec if query_vec is not None else embedder.embed_query(query)
     lane_rows: list[tuple[str, list[dict]]] = [
         ("bm25", store.bm25_search(query, pool, filters=filters)),
@@ -97,6 +130,9 @@ def hybrid_search(
     ]
     if hyde_vec is not None:
         lane_rows.append(("hyde", store.dense_search(hyde_vec, pool, filters=filters)))
+    for index, sub_query in enumerate(extra_queries or []):
+        sub_vec = embedder.embed_query(sub_query)
+        lane_rows.append((f"sub{index + 1}", store.dense_search(sub_vec, pool, filters=filters)))
 
     payloads: dict[int, dict] = {}
     for _lane, rows in lane_rows:
@@ -106,6 +142,8 @@ def hybrid_search(
     cosine = {row["id"]: row["score"] for row in dense_rows}
     members = {lane: {row["id"] for row in rows} for lane, rows in lane_rows}
     fused = fuse([[row["id"] for row in rows] for _lane, rows in lane_rows])
+    for chunk_id in list(fused):
+        fused[chunk_id] *= recency_factor(float(payloads.get(chunk_id, {}).get("mtime") or 0.0))
     ranked = sorted(fused.items(), key=lambda item: item[1], reverse=True)[:top_k]
 
     hits: list[Hit] = []
@@ -124,6 +162,7 @@ def hybrid_search(
                 cosine=cosine.get(chunk_id, 0.0),
                 lanes=lanes,
                 parent_text=str(row.get("parent_text") or ""),
+                line=int(row.get("line_start") or 1),
             )
         )
     return hits
@@ -140,6 +179,7 @@ def retrieve(
     query_vec: list[float] | None = None,
     hyde_text: str = "",
     filters: Filters | None = None,
+    extra_queries: list[str] | None = None,
 ) -> list[Hit]:
     """Two-stage retrieval: fuse a larger candidate pool, optionally rerank,
     then cut to ``top_k``."""
@@ -154,9 +194,10 @@ def retrieve(
             query_vec=query_vec,
             hyde_vec=hyde_vec,
             filters=filters,
+            extra_queries=extra_queries,
         )
-        return reranker.rerank(query, candidates)[:top_k]
-    return hybrid_search(
+        return diversify(reranker.rerank(query, candidates), top_k)
+    hits = hybrid_search(
         store,
         embedder,
         query,
@@ -164,4 +205,6 @@ def retrieve(
         query_vec=query_vec,
         hyde_vec=hyde_vec,
         filters=filters,
+        extra_queries=extra_queries,
     )
+    return diversify(hits, top_k)

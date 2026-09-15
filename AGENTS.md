@@ -77,6 +77,22 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   keyword slips (`subregion`) are repaired before rendering.
 - Wizard: `/api/status.onboarded` gates the first-run overlay; `system_info()`
   reports RAM + suggested preset; `/api/settings {onboarded}` marks it done.
+- Chunking: `chunk_text` is paragraph-aware and records `line_start` per chunk
+  (citations show `file:line`). A symbol-aware code chunker was measured and
+  removed — the path lane already covers "where is X defined" and the extra
+  fragmentation cost nDCG.
+- Ranking extras: `diversify` caps chunks per document (2 by default, backfills
+  when a query is dominated by one file) and `recency_factor` adds a mild
+  freshness nudge to the RRF score (RECENCY_WEIGHT).
+- Smart retrieval (`serve._smart_retrieval` + `parse_smart_retrieval`): ONE
+  local-model call that rewrites follow-ups, drafts the HyDE text and proposes
+  up to two sub-queries (extra dense lanes). Runs only when it can pay off
+  (history present, multi-part question, or hyde enabled) and is a no-op
+  whenever no model resolves.
+- Trust surface: `POST /api/feedback {message_id, value}` (▲/▼ stored on the
+  message), `GET /api/feedback/golden` (rated answers exported as a golden
+  JSONL), `POST /api/verify {message_id}` (`ground_answer_detail`: per-sentence
+  grounded/loose verdicts against the stored citations, stopword-free overlap).
 - Retrieval lanes (`search.hybrid_search`): BM25 (FTS5), dense cosine, path
   tokens (file names), plus an optional HyDE dense lane — RRF-fused. HyDE text
   comes from `settings.hyde` (Settings toggle, off by default; measured:

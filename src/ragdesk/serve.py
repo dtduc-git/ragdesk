@@ -30,7 +30,7 @@ from ragdesk.confluence import (
 )
 from ragdesk.confluence import whoami as confluence_whoami
 from ragdesk.embed import Embedder
-from ragdesk.evaluate import evaluate, load_golden
+from ragdesk.evaluate import evaluate, ground_answer_detail, load_golden
 from ragdesk.gdrive import TOKEN_FILE as GDRIVE_TOKEN_FILE
 from ragdesk.gdrive import GdriveError, load_token_file, run_loopback_flow, sync_gdrive
 from ragdesk.gdrive import resolve_client_credentials as gdrive_client_credentials
@@ -84,6 +84,17 @@ MEMORY_LIMIT = 3
 # Calibrated with the real embedder: same-intent paraphrases score 0.91-0.93,
 # different intents 0.14-0.35, so 0.88 replays only true paraphrases.
 SEMANTIC_CACHE_MIN_COSINE = 0.88
+SMART_RETRIEVAL_PROMPT = """You prepare a search over the reader's own notes and code.
+Given the conversation so far and the new question, reply with ONLY a JSON object:
+{"standalone": "<the question rewritten to stand alone, same language>",
+ "sub_queries": ["<at most 2 alternative phrasings or sub-questions>"],
+ "hypothetical": "<a short factual paragraph that would answer it, as if from the notes>"}
+Keep every field short. Use the same language as the question.
+
+Conversation:
+{history}
+Question: {question}
+JSON:"""
 HYDE_PROMPT = (
     "Write a short factual paragraph that would answer the question below, as if it "
     "were an excerpt from the reader's own notes. Do not mention being hypothetical.\n\n"
@@ -118,6 +129,7 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         "score": hit.score,
         "cosine": hit.cosine,
         "lanes": hit.lanes,
+        "line": hit.line,
     }
 
 
@@ -273,6 +285,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/health":
             self._send(200, {"ok": True})
             return
+        if self.path == "/api/feedback/golden":
+            with Store(self.state.db) as store:
+                rows = store.feedback_rows()
+            jsonl = "\n".join(
+                json.dumps(
+                    {
+                        "query": row["question"],
+                        "relevant": row["relevant"],
+                        "category": "feedback",
+                    }
+                )
+                for row in rows
+                if row["question"] and row["relevant"]
+            )
+            self._send(200, {"rows": len(rows), "jsonl": jsonl})
+            return
         if self.path == "/api/memories":
             with Store(self.state.db) as store:
                 self._send(200, {"memories": store.memories()})
@@ -377,6 +405,10 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/connections/"
             ):
                 self._handle_disconnect(self.path.split("/")[3])
+            elif self.path == "/api/feedback":
+                self._handle_feedback(body)
+            elif self.path == "/api/verify":
+                self._handle_verify(body)
             elif self.path == "/api/memories":
                 self._handle_memory_add(body)
             elif self.path == "/api/memories/delete":
@@ -1111,20 +1143,23 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             emit({"status": "searching your sources…"})
-            hyde_text = ""
-            if settings.load().get("hyde"):
-                emit({"status": "drafting a hypothetical answer (HyDE)…"})
-                hyde_text = self._hyde_text(query)
             with self.state.lock, Store(self.state.db) as store:
-                query_vec = self.state.embedder.embed_query(query)
+                history = store.recent_turns(chat_id) if chat_id else []
+            smart = self._smart_retrieval(query, history)
+            if smart:
+                emit({"status": "preparing the search (rewrite + draft)…"})
+            search_query = str(smart.get("standalone") or query)
+            with self.state.lock, Store(self.state.db) as store:
+                query_vec = self.state.embedder.embed_query(search_query)
                 hits = retrieve(
                     store,
                     self.state.embedder,
-                    query,
+                    search_query,
                     top_k=top_k,
                     reranker=self._reranker_for(body.get("rerank")),
                     query_vec=query_vec,
-                    hyde_text=hyde_text,
+                    hyde_text=str(smart.get("hypothetical") or ""),
+                    extra_queries=[str(item) for item in (smart.get("sub_queries") or [])],
                     filters=filters,
                 )
                 fingerprint = self._fingerprint(store)
@@ -1178,7 +1213,15 @@ class Handler(BaseHTTPRequestHandler):
                 cache_embedding=None if text == REFUSAL else query_vec,
                 fingerprint=fingerprint,
             )
-            emit({"done": True, "hits": citations, "cached": False, "chat_id": chat_id})
+            emit(
+                {
+                    "done": True,
+                    "hits": citations,
+                    "cached": False,
+                    "chat_id": chat_id,
+                    "answer_id": self.last_answer_id,
+                }
+            )
         except Exception as exc:  # noqa: BLE001 - headers already sent
             try:
                 emit({"error": str(exc)})
@@ -1264,6 +1307,36 @@ class Handler(BaseHTTPRequestHandler):
         """Reuse an answer only while the corpus, embedder and model are identical."""
         return hashlib.sha256(f"{fingerprint}|{query.strip().lower()}".encode()).hexdigest()
 
+    def _smart_retrieval(self, question: str, history: list[tuple[str, str]]) -> dict[str, Any]:
+        """One LLM call that rewrites, decomposes and drafts (HyDE) the query.
+
+        Only runs when it can pay for itself: a follow-up (history present),
+        a multi-part question, or HyDE switched on. Any failure falls back to
+        plain retrieval — this is an enhancement, never a requirement.
+        """
+        values = settings.load()
+        hyde_wanted = bool(values.get("hyde"))
+        multi_part = any(
+            marker in question.lower()
+            for marker in (" and ", " vs ", " both ", " so sánh", " và ", " với ")
+        )
+        if not (hyde_wanted or (history and len(question.split()) <= 12) or multi_part):
+            return {}
+        if self.state.llm_setup.get("running"):
+            return {}
+        convo = "\n".join(
+            f"{'User' if role == 'user' else 'ragdesk'}: {text[:300]}"
+            for role, text in history[-4:]
+        )
+        try:
+            raw = LazyLLM(self.state).generate(
+                SMART_RETRIEVAL_PROMPT.format(history=convo or "(none)", question=question),
+                {"num_predict": 300, "temperature": 0.2},
+            )
+        except Exception:  # noqa: BLE001 - retrieval never depends on this
+            return {}
+        return parse_smart_retrieval(str(raw))
+
     def _hyde_text(self, question: str) -> str:
         """A hypothetical answer used as an extra retrieval lane (optional)."""
         if not settings.load().get("hyde"):
@@ -1294,7 +1367,7 @@ class Handler(BaseHTTPRequestHandler):
                 title = query if len(query) <= 60 else f"{query[:57]}…"
                 chat_id = store.create_chat(title)
             store.add_message(chat_id, "user", query)
-            store.add_message(chat_id, "assistant", text, citations)
+            answer_id = store.add_message(chat_id, "assistant", text, citations)
             if cache_key:
                 store.cache_put(
                     cache_key,
@@ -1304,6 +1377,7 @@ class Handler(BaseHTTPRequestHandler):
                     embedding=cache_embedding,
                     fingerprint=fingerprint,
                 )
+        self.last_answer_id = answer_id
         return chat_id
 
     def _handle_ask(self, body: dict[str, Any]) -> None:
@@ -1314,17 +1388,21 @@ class Handler(BaseHTTPRequestHandler):
         chat_id = int(body.get("chat_id") or 0)
         top_k = int(body.get("top_k", 6))
         min_cosine = float(body.get("min_cosine", 0.0))
-        hyde_text = self._hyde_text(query)
         with self.state.lock, Store(self.state.db) as store:
-            query_vec = self.state.embedder.embed_query(query)
+            history = store.recent_turns(chat_id) if chat_id else []
+        smart = self._smart_retrieval(query, history)
+        search_query = str(smart.get("standalone") or query)
+        with self.state.lock, Store(self.state.db) as store:
+            query_vec = self.state.embedder.embed_query(search_query)
             hits = retrieve(
                 store,
                 self.state.embedder,
-                query,
+                search_query,
                 top_k=top_k,
                 reranker=self._reranker_for(body.get("rerank")),
                 query_vec=query_vec,
-                hyde_text=hyde_text,
+                hyde_text=str(smart.get("hypothetical") or ""),
+                extra_queries=[str(item) for item in (smart.get("sub_queries") or [])],
                 filters=filters,
             )
             fingerprint = self._fingerprint(store)
@@ -1391,6 +1469,34 @@ class Handler(BaseHTTPRequestHandler):
         scored.sort(key=lambda item: -item[0])
         return [text for _score, text in scored[:MEMORY_LIMIT]]
 
+    def _handle_feedback(self, body: dict[str, Any]) -> None:
+        message_id = int(body.get("message_id") or 0)
+        value = int(body.get("value") or 0)
+        if not message_id or value not in (-1, 0, 1):
+            self._send(400, {"error": "message_id and value (-1, 0, 1) required"})
+            return
+        with Store(self.state.db) as store:
+            updated = store.set_feedback(message_id, value)
+        self._send(200, {"updated": updated, "value": value})
+
+    def _handle_verify(self, body: dict[str, Any]) -> None:
+        """Ground every sentence of a stored answer against its own citations."""
+        message_id = int(body.get("message_id") or 0)
+        if not message_id:
+            self._send(400, {"error": "message_id required"})
+            return
+        with Store(self.state.db) as store:
+            row = store.conn.execute(
+                "SELECT text, citations FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+        if row is None:
+            self._send(404, {"error": "message not found"})
+            return
+        citations = json.loads(row["citations"] or "[]")
+        texts = [str(item.get("text", "")) for item in citations]
+        verdict = ground_answer_detail(str(row["text"]), texts)
+        self._send(200, verdict)
+
     def _handle_memory_add(self, body: dict[str, Any]) -> None:
         text = str(body.get("text", "")).strip()[:400]
         if not text:
@@ -1455,6 +1561,32 @@ def make_server(
 ) -> ThreadingHTTPServer:
     handler = type("BoundHandler", (Handler,), {"state": state})
     return ThreadingHTTPServer((host, port), handler)
+
+
+def parse_smart_retrieval(raw: str) -> dict[str, Any]:
+    """Pull the JSON object out of an LLM reply; tolerant of prose around it."""
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        data = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, Any] = {}
+    standalone = str(data.get("standalone") or "").strip()
+    if standalone and standalone.lower() != "none":
+        out["standalone"] = standalone[:300]
+    subs = data.get("sub_queries")
+    if isinstance(subs, list):
+        cleaned = [str(item).strip()[:200] for item in subs if str(item).strip()]
+        if cleaned:
+            out["sub_queries"] = cleaned[:2]
+    hypothetical = str(data.get("hypothetical") or "").strip()
+    if hypothetical and hypothetical.lower() != "none":
+        out["hypothetical"] = hypothetical[:1200]
+    return out
 
 
 def system_info() -> dict[str, Any]:

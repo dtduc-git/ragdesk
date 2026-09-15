@@ -758,6 +758,55 @@ def test_status_reports_activity_shape(base_url: str, tmp_path: Path):
     assert {"kind", "detail", "done", "total", "started"} <= set(activity)
 
 
+def test_feedback_and_golden_export(base_url: str, monkeypatch):
+    monkeypatch.setattr(
+        "ragdesk.serve.answer",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "ok",
+    )
+    _, ask = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
+    request(f"{base_url}/api/ask", {"query": "and pkce?", "chat_id": ask["chat_id"]})
+    _, detail = request(f"{base_url}/api/chats/{ask['chat_id']}")
+    assistant = [row for row in detail["messages"] if row["role"] == "assistant"]
+    assert assistant
+
+    status, payload = request(
+        f"{base_url}/api/feedback", {"message_id": assistant[0]["id"], "value": -1}
+    )
+    assert status == 200 and payload["updated"] is True
+
+    status, golden = request(f"{base_url}/api/feedback/golden")
+    assert status == 200
+    assert golden["rows"] == 1
+    assert '"category": "feedback"' in golden["jsonl"]
+    assert "what is oauth?" in golden["jsonl"]
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/feedback", {"message_id": assistant[0]["id"], "value": 7})
+    assert excinfo.value.code == 400
+
+
+def test_verify_endpoint_scores_sentences(base_url: str, monkeypatch):
+    monkeypatch.setattr(
+        "ragdesk.serve.answer",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: (
+            "Access tokens expire after 60 minutes [1]. The moon is cheese."
+        ),
+    )
+    _, ask = request(f"{base_url}/api/ask", {"query": "how do tokens expire"})
+    _, detail = request(f"{base_url}/api/chats/{ask['chat_id']}")
+    assistant = [row for row in detail["messages"] if row["role"] == "assistant"][0]
+
+    status, verdict = request(f"{base_url}/api/verify", {"message_id": assistant["id"]})
+    assert status == 200
+    assert verdict["sentences_detail"]
+    assert any(row["grounded"] for row in verdict["sentences_detail"])
+    assert any(not row["grounded"] for row in verdict["sentences_detail"])
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/verify", {"message_id": 999999})
+    assert excinfo.value.code == 404
+
+
 def test_sync_gitlab_requires_project(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/gitlab", {})
