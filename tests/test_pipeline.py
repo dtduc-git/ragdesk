@@ -300,7 +300,10 @@ def test_build_prompt_injects_corrections():
     hit = make_hit("docs/auth.md", "tokens expire after 60 minutes", chunk_id=1)
     corrections = [{"question": "when do tokens expire", "answer": "after 90 minutes [1]"}]
     prompt = build_prompt("when do tokens expire", [hit], corrections=corrections)
-    assert "Corrections the user made" in prompt
+    assert "the user fixed an earlier answer" in prompt
     assert "after 90 minutes [1]" in prompt
+    # the correction rides right before the question: small models follow that
+    assert prompt.index("the user fixed an earlier answer") > prompt.index("Sources:")
+    assert prompt.index("after 90 minutes [1]") < prompt.index("Question: when do tokens expire")
     plain = build_prompt("when do tokens expire", [hit])
-    assert "Corrections the user made" not in plain
+    assert "the user fixed an earlier answer" not in plain

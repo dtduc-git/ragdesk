@@ -148,6 +148,36 @@ def test_corrections_endpoints(base_url: str):
     assert payload["corrections"] == []
 
 
+def test_followup_correction_lookup_uses_the_rewrite(base_url: str, monkeypatch):
+    prompts: list[str] = []
+
+    class RecordingLLM:
+        def generate(self, prompt: str, options: dict) -> str:
+            prompts.append(prompt)
+            return "90 minutes. [1]"
+
+        def generate_stream(self, prompt: str, options: dict):
+            prompts.append(prompt)
+            yield "90 minutes. [1]"
+
+    monkeypatch.setattr("ragdesk.serve.LazyLLM", lambda state: RecordingLLM())
+    monkeypatch.setattr(
+        "ragdesk.serve.Handler._smart_retrieval",
+        lambda self, question, history: {
+            "standalone": "the wordier standalone that drifts away",
+            "sub_queries": ["when do access tokens expire"],
+        },
+    )
+    request(
+        f"{base_url}/api/corrections",
+        {"question": "when do access tokens expire", "answer": "90 minutes [1]"},
+    )
+    status, payload = request(f"{base_url}/api/ask", {"query": "and how long do they last?"})
+    assert status == 200
+    assert payload["correction"] == "when do access tokens expire"
+    assert "the user fixed an earlier answer" in prompts[0]
+
+
 def test_ask_injects_a_matching_correction(base_url: str, monkeypatch):
     prompts: list[str] = []
 
@@ -165,7 +195,7 @@ def test_ask_injects_a_matching_correction(base_url: str, monkeypatch):
 
     status, payload = request(f"{base_url}/api/ask", {"query": question})
     assert status == 200
-    assert "Corrections the user made" not in prompts[0]
+    assert "the user fixed an earlier answer" not in prompts[0]
 
     request(
         f"{base_url}/api/corrections",
@@ -176,7 +206,8 @@ def test_ask_injects_a_matching_correction(base_url: str, monkeypatch):
     status, payload = request(f"{base_url}/api/ask", {"query": question})
     assert status == 200
     assert payload["cached"] is False
-    assert "Corrections the user made" in prompts[1]
+    assert payload["correction"] == question
+    assert "the user fixed an earlier answer" in prompts[1]
     assert "90 minutes, per the new policy [1]" in prompts[1]
 
 

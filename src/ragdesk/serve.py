@@ -92,7 +92,8 @@ CORRECTION_CHARS = 2000
 SEMANTIC_CACHE_MIN_COSINE = 0.88
 # Bump when the answer prompt/format changes: cached answers from an older
 # prompt must never be replayed (they would look like the change did nothing).
-ANSWER_PROMPT_VERSION = "answer-v2-structured"
+# v4: the corrections lookup keys on the standalone rewrite, not the raw query.
+ANSWER_PROMPT_VERSION = "answer-v4-corrections"
 SMART_RETRIEVAL_PROMPT = """You prepare a search over the reader's own notes and code.
 Given the conversation so far and the new question, reply with ONLY a JSON object:
 {{"standalone": "<the question rewritten to stand alone, same language>",
@@ -1251,9 +1252,13 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 history = store.recent_turns(chat_id) if chat_id else []
                 if cached is None:
-                    question_vec = self.state.embedder.embed_query(query)
-                    memory = self._relevant_memories(store, query, question_vec)
-                    corrections = self._corrections_for(store, question_vec)
+                    # The rewrite variants are the right key for the lookups: a
+                    # follow-up ("and how long do they last?") matches nothing alone.
+                    memory = self._relevant_memories(store, search_query, query_vec)
+                    corrections = self._corrections_for(
+                        store,
+                        [search_query, *(str(item) for item in (smart.get("sub_queries") or []))],
+                    )
                 else:
                     memory = None
                     corrections = []
@@ -1307,6 +1312,7 @@ class Handler(BaseHTTPRequestHandler):
                     "cached": False,
                     "chat_id": chat_id,
                     "answer_id": self.last_answer_id,
+                    "correction": str(corrections[0]["question"]) if corrections else "",
                 }
             )
         except Exception as exc:  # noqa: BLE001 - headers already sent
@@ -1509,9 +1515,13 @@ class Handler(BaseHTTPRequestHandler):
                 )
             history = store.recent_turns(chat_id) if chat_id else []
             if cached is None:
-                question_vec = self.state.embedder.embed_query(query)
-                memory = self._relevant_memories(store, query, question_vec)
-                corrections = self._corrections_for(store, question_vec)
+                # Same as the streaming path: the rewrite variants are the better
+                # key when the question is a follow-up.
+                memory = self._relevant_memories(store, search_query, query_vec)
+                corrections = self._corrections_for(
+                    store,
+                    [search_query, *(str(item) for item in (smart.get("sub_queries") or []))],
+                )
             else:
                 memory = None
                 corrections = []
@@ -1550,6 +1560,7 @@ class Handler(BaseHTTPRequestHandler):
                 "hits": citations,
                 "cached": from_cache,
                 "cached_question": str(cached["question"]) if from_cache else "",
+                "correction": str(corrections[0]["question"]) if corrections else "",
                 "chat_id": chat_id,
             },
         )
@@ -1573,12 +1584,22 @@ class Handler(BaseHTTPRequestHandler):
         scored.sort(key=lambda item: -item[0])
         return [text for _score, text in scored[:MEMORY_LIMIT]]
 
-    def _corrections_for(
-        self, store: Store, query_vec: list[float]
-    ) -> list[dict[str, Any]]:
-        """The closest user correction for this question, or nothing."""
-        correction = store.nearest_correction(query_vec, CORRECTION_MIN_COSINE)
-        return [correction] if correction else []
+    def _corrections_for(self, store: Store, texts: list[str]) -> list[dict[str, Any]]:
+        """The closest correction for any phrasing of the question, or nothing.
+
+        The rewrites matter: a follow-up's standalone can be wordier than the
+        correction ("in the described flow") while a sub-query lands closer.
+        """
+        best: dict[str, Any] | None = None
+        for text in texts:
+            if not text:
+                continue
+            found = store.nearest_correction(
+                self.state.embedder.embed_query(text), CORRECTION_MIN_COSINE
+            )
+            if found and (best is None or found["cosine"] > best["cosine"]):
+                best = found
+        return [best] if best else []
 
     def _handle_mcp_install(self) -> None:
         self._send(200, install_cli_shim())

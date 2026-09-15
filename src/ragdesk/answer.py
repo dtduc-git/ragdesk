@@ -26,7 +26,8 @@ LENGTH_HINTS = {
 
 REFUSAL = "I could not find this in your indexed sources."
 
-PROMPT_TEMPLATE = """You are ragdesk, a retrieval assistant. Answer ONLY from the sources below.
+PROMPT_TEMPLATE = """You are ragdesk, a retrieval assistant. Answer from the sources below, plus any
+correction the user added — a correction outranks the sources.
 Structure the answer for scanning: a one- or two-sentence summary, then short
 paragraphs; when the sources enumerate facts (names, codes, amounts, dates),
 list them as `- ` bullets on their own lines. No LaTeX, no headings, no tables.
@@ -34,10 +35,10 @@ Cite the sources you used inline as [1], [2] and so on — end each factual
 sentence with its citation marker, but never reply with citations alone.
 If the sources do not contain the answer, say exactly:
 "{refusal}". Never use outside knowledge.
-{history}{memory}{corrections}{diagram}
+{history}{memory}{diagram}
 Sources:
 {context}
-
+{corrections}
 Question: {question}
 Answer:"""
 
@@ -50,8 +51,8 @@ MEMORY_HEADER = (
     "Durable notes the user asked you to remember (context, still answer from the sources):\n"
 )
 CORRECTION_HEADER = (
-    "Corrections the user made to earlier answers. When one applies to this question, "
-    "follow it as the authoritative answer and still cite the sources:\n"
+    "IMPORTANT — the user fixed an earlier answer to a matching question. Use the "
+    "fixed answer even when a source says otherwise, and keep citing sources:\n"
 )
 CORRECTION_QUESTION_CHARS = 200
 CORRECTION_ANSWER_CHARS = 800
@@ -106,8 +107,8 @@ def build_prompt(
         lines.append(f"{speaker}: {text[:HISTORY_CHARS]}")
     notes = [f"- {note}" for note in (memory or [])]
     fixes = [
-        f"- Q: {str(item.get('question', ''))[:CORRECTION_QUESTION_CHARS]}\n"
-        f"  A: {str(item.get('answer', ''))[:CORRECTION_ANSWER_CHARS]}"
+        f"Fixed answer (to {str(item.get('question', ''))[:CORRECTION_QUESTION_CHARS]!r}): "
+        f"{str(item.get('answer', ''))[:CORRECTION_ANSWER_CHARS]}"
         for item in (corrections or [])
     ]
     return PROMPT_TEMPLATE.format(

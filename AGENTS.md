@@ -128,12 +128,17 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   question; `corrections_revision` for invalidation). The UI's Fix button under
   an answer opens an editor and `POST /api/corrections {question, answer}`;
   `GET /api/corrections` + `POST /api/corrections/delete` back the Settings
-  card. On ask, `serve._corrections_for` injects the nearest correction
-  (cosine ≥ `CORRECTION_MIN_COSINE` 0.88, same calibration as the semantic
-  cache) into the prompt as an authoritative block (`answer.build_prompt`,
-  `CORRECTION_HEADER`) — retrieval numbers are untouched by design; the
-  fingerprint carries `corrections_revision`, so a new correction invalidates
-  cached answers instead of replaying an uncorrected one.
+  card. On ask, `serve._corrections_for` tries every rewrite variant
+  (`search_query` + `sub_queries`) and injects the nearest correction at
+  cosine ≥ `CORRECTION_MIN_COSINE` 0.88 (same calibration as the semantic
+  cache) — measured: a follow-up's raw text scored 0.416, its sub-query 0.896,
+  so a single raw lookup is not enough. The block rides right before the
+  question (`answer.CORRECTION_HEADER`, `ANSWER_PROMPT_VERSION` v4) because a
+  4B model ignored it mid-prompt but followed it near the question — verify any
+  wording change against the live model, not just a unit test. The API echoes
+  `correction` (the matched question) on ask/ask_stream so the UI shows a "your
+  fix" badge; the fingerprint carries `corrections_revision`, so adding a
+  correction invalidates cached answers instead of replaying an uncorrected one.
 - Retrieval lanes (`search.hybrid_search`): BM25 (FTS5), dense cosine, path
   tokens (file names), plus an optional HyDE dense lane — RRF-fused. HyDE text
   comes from `settings.hyde` (Settings toggle, off by default; measured:

@@ -585,6 +585,7 @@ async function ask(query: string): Promise<void> {
             hits?: Hit[];
             cached?: boolean;
             cached_question?: string;
+            correction?: string;
             chat_id?: number;
             answer_id?: number;
           };
@@ -612,6 +613,13 @@ async function ask(query: string): Promise<void> {
               if (event.cached_question && event.cached_question !== query) {
                 badge.title = `answered earlier for: ${event.cached_question}`;
               }
+              answer.before(badge);
+            }
+            if (event.correction) {
+              const badge = document.createElement("span");
+              badge.className = "cache-badge";
+              badge.textContent = "your fix";
+              badge.title = `using your correction for: ${event.correction}`;
               answer.before(badge);
             }
             if (event.chat_id) currentChatId = event.chat_id;
