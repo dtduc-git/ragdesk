@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ragdesk.chunk import chunk_text
 from ragdesk.embed import Embedder
+from ragdesk.office import DOCUMENT_EXTENSIONS, extract_document
 from ragdesk.store import Store
 
 TEXT_EXTENSIONS = {
@@ -26,6 +27,7 @@ SKIP_DIRS = {
     ".mypy_cache", ".ruff_cache", ".pytest_cache",
 }
 MAX_FILE_BYTES = 1_000_000
+MAX_DOCUMENT_BYTES = 25_000_000  # PDFs and office files are legitimately large
 EMBED_BATCH = 16  # 32 peaked ~270MB higher in the ONNX workspace for no speed gain
 
 
@@ -59,16 +61,24 @@ def is_text_file(path: Path) -> bool:
     return path.suffix == ""
 
 
+def is_document_file(path: Path) -> bool:
+    return path.suffix.lower() in DOCUMENT_EXTENSIONS
+
+
 def is_indexable(path: Path, size: int) -> bool:
     """Admission rules shared by local files and connector payloads."""
-    if size > MAX_FILE_BYTES:
-        return False
     if any(part in SKIP_DIRS for part in path.parts):
+        return False
+    if is_document_file(path):
+        return size <= MAX_DOCUMENT_BYTES
+    if size > MAX_FILE_BYTES:
         return False
     return is_text_file(path)
 
 
 def read_text(path: Path) -> str | None:
+    if is_document_file(path):
+        return extract_document(path)
     try:
         raw = path.read_bytes()
     except OSError:

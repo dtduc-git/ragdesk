@@ -14,7 +14,9 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   (LexicalReranker baseline; FastEmbedReranker + OnnxReranker = multilingual
   gte behind the `onnx` extra), `index` (incremental local files; `iter_files`
   prunes `SKIP_DIRS` during the walk so `target/`/`node_modules/` are never
-  traversed), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
+  traversed), `office` (PDF/DOCX/PPTX text extraction: docx/pptx via zip+XML
+  with zero deps, PDFs via pypdf — the only runtime dependency; scanned PDFs
+  return empty and are skipped, no OCR), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
   `msgraph` (OneDrive + SharePoint, device flow) connectors, `web` (same-host
   HTML crawl, capped pages/depth), `archive`
   (shared repo-tarball extraction), `htmlutil` (shared HTML→text),

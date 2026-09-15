@@ -14,19 +14,17 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 from collections import deque
-from io import BytesIO
 from pathlib import Path
 
 from ragdesk import credentials, defaults
 from ragdesk.embed import Embedder
 from ragdesk.index import IndexStats, index_document, is_indexable
+from ragdesk.office import extract_office_text
 from ragdesk.store import Store
 
 TENANT = "common"
@@ -220,32 +218,6 @@ def resolve_access_token(
         updates["refresh_token"] = str(rotated)
     credentials.set_provider("msgraph", updates)
     return token
-
-
-def extract_office_text(data: bytes, suffix: str) -> str | None:
-    """Extract text from .docx / .pptx (both are zip+XML) without dependencies."""
-    try:
-        with zipfile.ZipFile(BytesIO(data)) as archive:
-            if suffix == ".docx":
-                xml = archive.read("word/document.xml").decode("utf-8", "replace")
-            elif suffix == ".pptx":
-                names = sorted(
-                    name
-                    for name in archive.namelist()
-                    if name.startswith("ppt/slides/slide") and name.endswith(".xml")
-                )
-                xml = "\n".join(
-                    archive.read(name).decode("utf-8", "replace") for name in names
-                )
-            else:
-                return None
-    except (KeyError, zipfile.BadZipFile, OSError):
-        return None
-    text = re.sub(r"</(?:w:p|a:p)>", "\n", xml)
-    text = re.sub(r"<[^>]+>", "", text)
-    import html as html_module
-
-    return html_module.unescape(text).strip() or None
 
 
 def _drive_base(access_token: str, site: str, timeout: float) -> str:
