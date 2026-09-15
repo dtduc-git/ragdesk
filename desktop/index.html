@@ -121,6 +121,14 @@
               </header>
               <div id="llm-setup"></div>
               <div class="backend-picker">
+                <p class="caption">Answer length</p>
+                <div class="seg" id="answer-length-seg" role="group" aria-label="Answer length">
+                  <button class="seg-item" type="button" data-value="short">Short</button>
+                  <button class="seg-item" type="button" data-value="medium">Medium</button>
+                  <button class="seg-item" type="button" data-value="long">Long</button>
+                </div>
+              </div>
+              <div class="backend-picker">
                 <p class="caption">Answer engine</p>
                 <div class="seg" id="backend-seg" role="group" aria-label="Answer engine">
                   <button class="seg-item" type="button" data-value="">Auto</button>
@@ -181,6 +189,9 @@
                 <button class="btn btn-primary" type="submit">Run eval</button>
               </form>
               <div id="eval-results"></div>
+              <div class="button-row">
+                <button class="btn btn-quiet" type="button" id="feedback-golden">Export rated answers as a golden set</button>
+              </div>
             </section>
 
             <section class="setting-card">

@@ -823,6 +823,33 @@ def test_notes_sync_endpoint(base_url: str, monkeypatch):
     assert "notes_available" in status_payload
 
 
+def test_related_and_backlinks_endpoints(base_url: str):
+    status, payload = request(f"{base_url}/api/related?path=fixtures/docs/auth.md")
+    assert status == 200
+    assert isinstance(payload["related"], list)
+
+    status, payload = request(f"{base_url}/api/backlinks?path=fixtures/docs/auth.md")
+    assert status == 200
+    assert isinstance(payload["backlinks"], list)
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/related")
+    assert excinfo.value.code == 400
+
+
+def test_answer_length_setting(base_url: str):
+    from ragdesk import settings
+
+    status, payload = request(f"{base_url}/api/settings", {"answer_length": "short"})
+    assert status == 200 and payload["answer_length"] == "short"
+    assert settings.load()["answer_length"] == "short"
+    _, status_payload = request(f"{base_url}/api/status")
+    assert status_payload["answer_length"] == "short"
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/settings", {"answer_length": "epic"})
+    assert excinfo.value.code == 400
+
+
 def test_sync_gitlab_requires_project(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/gitlab", {})

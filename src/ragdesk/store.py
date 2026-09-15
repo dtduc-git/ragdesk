@@ -615,6 +615,77 @@ class Store:
         ).fetchone()
         return row is not None
 
+    # --- navigation -------------------------------------------------------------
+
+    def _doc_vectors(self, exclude_doc: int = 0) -> dict[int, tuple[str, list[float]]]:
+        rows = self.conn.execute(
+            "SELECT d.id, d.path, c.embedding FROM documents d "
+            "JOIN chunks c ON c.doc_id = d.id "
+            "WHERE d.id != ? "
+            "ORDER BY d.id, c.ordinal LIMIT 40000",
+            (exclude_doc,),
+        ).fetchall()
+        buckets: dict[int, tuple[str, list[float], int]] = {}
+        for row in rows:
+            vec = array.array("f")
+            vec.frombytes(row["embedding"])
+            entry = buckets.get(row["id"])
+            values = list(vec)
+            if entry is None:
+                buckets[row["id"]] = (str(row["path"]), values, 1)
+            else:
+                summed = [a + b for a, b in zip(entry[1], values, strict=False)]
+                buckets[row["id"]] = (entry[0], summed, entry[2] + 1)
+        return {
+            doc_id: (path, [value / count for value in summed])
+            for doc_id, (path, summed, count) in buckets.items()
+        }
+
+    def related_documents(self, path: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Other documents closest to this one's average chunk vector."""
+        row = self.conn.execute(
+            "SELECT id FROM documents WHERE path = ?", (path,)
+        ).fetchone()
+        if row is None:
+            return []
+        doc_id = int(row["id"])
+        vectors = self._doc_vectors()
+        mine = vectors.get(doc_id)
+        if mine is None:
+            return []
+        norm = math.sqrt(sum(v * v for v in mine[1])) or 1.0
+        scored: list[tuple[float, str]] = []
+        for other_id, (other_path, vector) in vectors.items():
+            if other_id == doc_id:
+                continue
+            other_norm = math.sqrt(sum(v * v for v in vector)) or 1.0
+            dot = sum(a * b for a, b in zip(mine[1], vector, strict=False))
+            scored.append((dot / (norm * other_norm), other_path))
+        scored.sort(key=lambda item: -item[0])
+        return [
+            {"path": other_path, "score": round(score, 3)}
+            for score, other_path in scored[:limit]
+        ]
+
+    def backlinks(self, path: str, limit: int = 8) -> list[dict[str, Any]]:
+        """Documents that mention this file's name, via the folded FTS index."""
+        stem = fold_text(Path(path).stem.replace("_", " "))
+        tokens = [token for token in TOKEN_RE.findall(stem) if len(token) >= 3]
+        if not tokens:
+            return []
+        match = " OR ".join(f'"{token}"' for token in tokens[:4])
+        rows = self.conn.execute(
+            """
+            SELECT d.path, COUNT(*) AS hits FROM chunks_fts
+            JOIN chunks c ON c.id = chunks_fts.rowid
+            JOIN documents d ON d.id = c.doc_id
+            WHERE chunks_fts MATCH ? AND d.path != ?
+            GROUP BY d.path ORDER BY hits DESC LIMIT ?
+            """,
+            (match, path, limit),
+        ).fetchall()
+        return [{"path": str(row["path"]), "hits": int(row["hits"])} for row in rows]
+
     # --- search lanes -----------------------------------------------------------
 
     def _filter_sql(self, filters: Any) -> tuple[str, list[Any]]:

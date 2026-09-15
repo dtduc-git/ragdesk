@@ -18,6 +18,7 @@ DEFAULTS: dict = {
     "openai_model": "",
     "onboarded": False,
     "watch_seconds": 60,
+    "answer_length": "medium",
     "chunk_chars": 1000,
     "chunk_overlap": 150,
 }

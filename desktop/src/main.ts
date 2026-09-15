@@ -39,6 +39,7 @@ type Status = {
   memory: { models_loaded: boolean; idle_unload_minutes: number };
   hyde: boolean;
   notes_available: boolean;
+  answer_length: string;
   activity: {
     running: boolean;
     kind: string;
@@ -178,6 +179,7 @@ document.querySelectorAll<HTMLElement>(".seg").forEach((group) => {
     if (group.id === "auto-index-seg") void saveSetting({ auto_index_hours: Number(value) });
     if (group.id === "idle-unload-seg") void saveSetting({ idle_unload_minutes: Number(value) });
     if (group.id === "hyde-seg") void saveSetting({ hyde: Number(value) === 1 });
+    if (group.id === "answer-length-seg") void saveSetting({ answer_length: value });
     if (group.id === "preset-seg") void saveSetting({ preset: value });
     if (group.id === "backend-seg") {
       void saveSetting({ llm_preference: value });
@@ -363,6 +365,7 @@ function renderStatus(): void {
   $("backend-note").textContent = status.llm_setting.openai_host
     ? `endpoint ${status.llm_setting.openai_host} · model ${status.llm_setting.openai_model}${status.llm_setting.openai_key_set ? " · key saved" : ""}`
     : "Auto keeps the local model; OpenAI-compatible covers LM Studio, llama.cpp, vLLM or OpenAI itself.";
+  markSeg("answer-length-seg", status.answer_length);
   markSeg("hyde-seg", status.hyde ? 1 : 0);
   $("hyde-note").textContent = status.hyde
     ? `on — drafts with ${status.llm.kind === "none" ? "the local model (none found yet)" : status.llm.model}; adds 2-4s per question`
@@ -452,6 +455,11 @@ function citeCard(hit: Hit, rank: number): string {
       </div>
       ${chips ? `<div class="meta-chips">${chips}</div>` : ""}
       <p class="cite-snippet">${escapeHtml(snippet(hit.text, 240))}</p>
+      <div class="cite-tools">
+        <button class="action" type="button" data-related="${escapeHtml(hit.path)}">Related</button>
+        <button class="action" type="button" data-backlinks="${escapeHtml(hit.path)}">Backlinks</button>
+      </div>
+      <div class="cite-nav" hidden></div>
     </div>
   </article>`;
 }
@@ -588,7 +596,10 @@ async function ask(query: string): Promise<void> {
               answer.before(badge);
             }
             if (event.chat_id) currentChatId = event.chat_id;
-            if (event.answer_id) renderAnswerActions(shellElement, actions, event.answer_id, 0);
+            if (event.answer_id) {
+              renderAnswerActions(shellElement, actions, event.answer_id, 0);
+              void autoVerify(actions, event.answer_id);
+            }
             void renderDiagrams(answer, cites, answer.textContent ?? "");
             void loadChats();
           }
@@ -1469,7 +1480,35 @@ $("source-grid").addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("click", async (event) => {
-  const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
+  const element = event.target as HTMLElement;
+  const related = element.closest<HTMLElement>("[data-related]");
+  const backlinks = element.closest<HTMLElement>("[data-backlinks]");
+  if (related || backlinks) {
+    const path = (related ?? backlinks)?.dataset[related ? "related" : "backlinks"] ?? "";
+    const box = (related ?? backlinks)?.closest(".cite-body")?.querySelector<HTMLElement>(".cite-nav");
+    if (!path || !box) return;
+    const kind = related ? "related" : "backlinks";
+    box.hidden = false;
+    box.textContent = "loading…";
+    try {
+      const payload = await get<Record<string, Array<{ path: string; score?: number; hits?: number }>>>(
+        `/api/${kind}?path=${encodeURIComponent(path)}`,
+      );
+      const rows = payload[kind] ?? [];
+      box.innerHTML = rows.length
+        ? rows
+            .map(
+              (row) =>
+                `<span class="cite-nav-item">${escapeHtml(row.path.split("/").pop() ?? row.path)}<em>${row.score ?? row.hits ?? ""}</em></span>`,
+            )
+            .join("")
+        : `<span class="cite-nav-empty">nothing found</span>`;
+    } catch (error) {
+      box.textContent = error instanceof Error ? error.message : String(error);
+    }
+    return;
+  }
+  const target = element.closest<HTMLElement>("[data-action]");
   const action = target?.dataset.action ?? "";
   if (action !== "llm-setup-mlx" && action !== "llm-setup-ollama") return;
   const kind = action === "llm-setup-mlx" ? "mlx" : "ollama";
@@ -1596,6 +1635,25 @@ $("source-grid").addEventListener("click", async (event) => {
 });
 
 // --- eval ---------------------------------------------------------------------
+
+$("feedback-golden").addEventListener("click", async () => {
+  try {
+    const payload = await get<{ rows: number; jsonl: string }>("/api/feedback/golden");
+    if (!payload.rows) {
+      toast("No rated answers yet — use the ▲/▼ buttons in Chat");
+      return;
+    }
+    const blob = new Blob([payload.jsonl], { type: "application/x-ndjson" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "golden-feedback.jsonl";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast(`Exported ${payload.rows} rated answers`);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
+  }
+});
 
 $("eval-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1757,6 +1815,22 @@ function renderAnswerActions(
       toast(error instanceof Error ? error.message : String(error));
     }
   });
+}
+
+async function autoVerify(actions: HTMLElement, answerId: number): Promise<void> {
+  const note = actions.querySelector<HTMLElement>("[data-note]");
+  if (!note) return;
+  try {
+    const verdict = await post<{ grounded_ratio: number; citation_valid: boolean }>(
+      "/api/verify",
+      { message_id: answerId },
+    );
+    note.textContent = `${Math.round(verdict.grounded_ratio * 100)}% grounded${
+      verdict.citation_valid ? "" : " · citations unclear"
+    }`;
+  } catch {
+    /* the manual Verify button still works */
+  }
 }
 
 // --- diagrams -----------------------------------------------------------------

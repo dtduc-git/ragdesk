@@ -17,6 +17,12 @@ DEFAULT_LLM_MODEL = "qwen3.5:4b"
 # (a 1k-token ramble holds the model for minutes on laptop hardware).
 # ``num_ctx`` is Ollama-specific and ignored by other backends.
 ANSWER_OPTIONS = {"num_predict": 400, "temperature": 0.2, "num_ctx": 8192}
+ANSWER_LENGTHS = {"short": 200, "medium": 400, "long": 700}
+LENGTH_HINTS = {
+    "short": "Keep the answer to two or three sentences.\n",
+    "medium": "",
+    "long": "Answer thoroughly, but stay under ten sentences.\n",
+}
 
 REFUSAL = "I could not find this in your indexed sources."
 
@@ -61,6 +67,20 @@ def wants_diagram(question: str) -> bool:
     return any(word in lowered for word in DIAGRAM_WORDS)
 
 
+def _answer_length() -> str:
+    from ragdesk import settings  # noqa: PLC0415 - avoids an import cycle at load
+
+    return str(settings.load().get("answer_length") or "medium")
+
+
+def length_hint() -> str:
+    return LENGTH_HINTS.get(_answer_length(), "")
+
+
+def answer_options() -> dict:
+    return {**ANSWER_OPTIONS, "num_predict": ANSWER_LENGTHS.get(_answer_length(), 400)}
+
+
 def build_prompt(
     question: str,
     hits: list[Hit],
@@ -80,7 +100,7 @@ def build_prompt(
         refusal=REFUSAL,
         history=(HISTORY_HEADER + "\n".join(lines) + "\n\n") if lines else "",
         memory=(MEMORY_HEADER + "\n".join(notes) + "\n\n") if notes else "",
-        diagram=DIAGRAM_NOTE if diagram else "",
+        diagram=(DIAGRAM_NOTE if diagram else "") + length_hint(),
         context="\n\n".join(blocks),
         question=question,
     )
@@ -102,7 +122,7 @@ def answer(
     prompt = build_prompt(question, hits, history, memory, diagram)
     # Small models occasionally return an empty completion; one retry.
     for _ in range(2):
-        text = str(llm.generate(prompt, ANSWER_OPTIONS)).strip()
+        text = str(llm.generate(prompt, answer_options())).strip()
         if text:
             return text
     return REFUSAL
@@ -125,7 +145,7 @@ def answer_stream(
         return
     emitted = False
     prompt = build_prompt(question, hits, history, memory, diagram)
-    for piece in llm.generate_stream(prompt, ANSWER_OPTIONS):
+    for piece in llm.generate_stream(prompt, answer_options()):
         if piece:
             emitted = True
             yield str(piece)

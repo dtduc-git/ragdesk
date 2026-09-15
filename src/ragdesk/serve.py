@@ -256,6 +256,7 @@ class Handler(BaseHTTPRequestHandler):
                             "last_run": settings.load()["auto_index_last"],
                         },
                         "hyde": bool(settings.load()["hyde"]),
+                        "answer_length": str(settings.load()["answer_length"]),
                         "llm_setting": {
                             "preference": str(settings.load().get("llm_preference") or ""),
                             "openai_host": str(settings.load().get("openai_host") or ""),
@@ -287,6 +288,26 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/health":
             self._send(200, {"ok": True})
+            return
+        if self.path.startswith("/api/related"):
+            target = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query
+            ).get("path", [""])[0]
+            if not target:
+                self._send(400, {"error": "path required"})
+                return
+            with Store(self.state.db) as store:
+                self._send(200, {"related": store.related_documents(target)})
+            return
+        if self.path.startswith("/api/backlinks"):
+            target = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query
+            ).get("path", [""])[0]
+            if not target:
+                self._send(400, {"error": "path required"})
+                return
+            with Store(self.state.db) as store:
+                self._send(200, {"backlinks": store.backlinks(target)})
             return
         if self.path == "/api/feedback/golden":
             with Store(self.state.db) as store:
@@ -511,6 +532,12 @@ class Handler(BaseHTTPRequestHandler):
             updates["auto_index_hours"] = max(0, min(hours, 168))
         if "hyde" in body:
             updates["hyde"] = bool(body["hyde"])
+        if "answer_length" in body:
+            length = str(body["answer_length"])
+            if length not in ("short", "medium", "long"):
+                self._send(400, {"error": "answer_length must be short, medium or long"})
+                return
+            updates["answer_length"] = length
         if "onboarded" in body:
             updates["onboarded"] = bool(body["onboarded"])
         if "llm_preference" in body:

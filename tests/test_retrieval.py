@@ -427,3 +427,35 @@ def test_watcher_fast_path_and_touch(tmp_path: Path):
         fourth = index_paths(store, embedder, [docs])
         assert fourth.skipped >= 1
         assert any(row["reason"] for row in fourth.skipped_samples)
+
+
+def test_related_documents_and_backlinks(tmp_path: Path):
+    with make_store(
+        tmp_path,
+        {
+            "/notes/rrf.md": "reciprocal rank fusion combines rankings from lanes",
+            "/notes/fusion-notes.md": "rank fusion combines ranked lane lists",
+            "/notes/unrelated.md": "banana bread recipe with walnuts",
+            "/notes/index.md": "start here; rrf.md explains the fusion, see also rrf notes",
+        },
+    ) as store:
+        related = store.related_documents("/notes/rrf.md", limit=2)
+        assert related
+        assert related[0]["path"] == "/notes/fusion-notes.md"
+
+        links = store.backlinks("/Users/other/somewhere/rrf.md", limit=5)
+        assert links, "a document mentioning the file name is a backlink"
+        assert any(row["path"].endswith("index.md") for row in links)
+
+
+def test_answer_length_setting_shapes_the_prompt(tmp_path: Path, monkeypatch):
+    from ragdesk import answer as answer_module
+    from ragdesk import settings
+
+    monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config"))
+    settings.save({"answer_length": "short"})
+    assert answer_module.answer_options()["num_predict"] == 200
+    assert "two or three sentences" in answer_module.length_hint()
+    settings.save({"answer_length": "long"})
+    assert answer_module.answer_options()["num_predict"] == 700
+    assert "Answer thoroughly" in answer_module.length_hint()

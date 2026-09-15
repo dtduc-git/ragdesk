@@ -1485,3 +1485,36 @@ details.alt[open] summary {
   border: 1px solid var(--stamp);
   border-radius: 999px;
 }
+
+
+.cite-tools {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.cite-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.cite-nav-item {
+  padding: 2px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+
+.cite-nav-item em {
+  margin-left: 6px;
+  color: var(--ink-soft);
+  font-style: normal;
+}
+
+.cite-nav-empty {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
