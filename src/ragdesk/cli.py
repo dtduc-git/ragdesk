@@ -31,7 +31,7 @@ from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
 from ragdesk.presets import DEFAULT_PRESET, PRESETS
 from ragdesk.presets import resolve as resolve_preset
 from ragdesk.rerank import get_reranker
-from ragdesk.search import retrieve
+from ragdesk.search import parse_filters, retrieve
 from ragdesk.serve import (
     HYDE_PROMPT,
     AppState,
@@ -427,15 +427,28 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "search":
+            query, filters = parse_filters(args.query)
             hits = retrieve(
-                store, embedder, args.query, top_k=args.top_k, reranker=reranker
+                store,
+                embedder,
+                query or args.query,
+                top_k=args.top_k,
+                reranker=reranker,
+                filters=filters,
             )
             _print_hits(hits)
             return 0
 
         if args.command == "ask":
+            query, filters = parse_filters(args.query)
+            args.query = query or args.query
             hits = retrieve(
-                store, embedder, args.query, top_k=args.top_k, reranker=reranker
+                store,
+                embedder,
+                args.query,
+                top_k=args.top_k,
+                reranker=reranker,
+                filters=filters,
             )
             spec = args.llm or (f"ollama:{args.model}" if args.model else None)
             try:
