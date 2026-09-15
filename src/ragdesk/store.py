@@ -310,6 +310,19 @@ class Store:
             out.append(entry)
         return out
 
+    def touch_document(self, path: str, mtime: float) -> None:
+        """Record a new mtime for unchanged content so the watcher fast-path holds."""
+        with self.conn:
+            self.conn.execute(
+                "UPDATE documents SET mtime = ? WHERE path = ?", (mtime, path)
+            )
+
+    def doc_mtime(self, path: str) -> float | None:
+        row = self.conn.execute(
+            "SELECT mtime FROM documents WHERE path = ?", (path,)
+        ).fetchone()
+        return float(row["mtime"]) if row else None
+
     def stats(self) -> dict[str, int]:
         docs = self.conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]
         chunks = self.conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"]

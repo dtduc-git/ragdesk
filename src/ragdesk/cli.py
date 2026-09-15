@@ -39,6 +39,7 @@ from ragdesk.serve import (
     make_server,
     release_idle_models,
     run_auto_index,
+    watch_pass,
 )
 from ragdesk.store import Store
 from ragdesk.web import WebError, crawl_site
@@ -245,6 +246,39 @@ def main(argv: list[str] | None = None) -> int:
 
             threading.Thread(target=watch_parent, daemon=True).start()
 
+        def watch_loop() -> None:
+            """Re-index changed files every watch_seconds (0 disables it)."""
+            while True:
+                values = app_settings.load()
+                seconds = int(values.get("watch_seconds") or 0)
+                if seconds <= 0:
+                    time.sleep(30)
+                    continue
+                time.sleep(max(10, seconds))
+                if state.activity.get("running"):
+                    continue
+
+                def progress(detail: str, done: int, total: int) -> None:
+                    state.activity.update(
+                        {"detail": detail, "done": done, "total": total}
+                    )
+
+                state.activity = {
+                    "running": True,
+                    "kind": "watch",
+                    "detail": "checking for changes",
+                    "done": 0,
+                    "total": 0,
+                    "started": time.time(),
+                    "owner": f"watch:{time.time()}",
+                }
+                try:
+                    summary = watch_pass(state)
+                    if summary:
+                        print(f"watch: {summary}", flush=True)
+                finally:
+                    state.activity["running"] = False
+
         def auto_index_loop() -> None:
             while True:
                 time.sleep(60)
@@ -259,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"idle-release: {released}", flush=True)
 
         threading.Thread(target=auto_index_loop, daemon=True).start()
+        threading.Thread(target=watch_loop, daemon=True).start()
         try:
             server.serve_forever()
         except KeyboardInterrupt:

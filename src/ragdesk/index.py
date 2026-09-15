@@ -6,7 +6,7 @@ import hashlib
 import os
 import re
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ragdesk.chunk import DEFAULT_MAX_CHARS, DEFAULT_OVERLAP, chunk_text
@@ -40,6 +40,12 @@ class IndexStats:
     unchanged: int = 0
     skipped: int = 0
     chunks: int = 0
+    skipped_samples: list = field(default_factory=list)
+
+    def skip(self, path: Path, reason: str) -> None:
+        self.skipped += 1
+        if len(self.skipped_samples) < 12:
+            self.skipped_samples.append({"path": str(path), "reason": reason})
 
 
 def iter_files(paths: list[Path]) -> Iterator[Path]:
@@ -174,6 +180,8 @@ def index_document(
         metadata, content = parse_front_matter(content)
     digest = hashlib.sha256(content.encode()).hexdigest()
     if store.doc_hash(path) == digest:
+        if mtime:
+            store.touch_document(path, mtime)
         return 0
     chunks = chunk_text(
         content,
@@ -224,16 +232,22 @@ def index_paths(
         if progress is not None:
             progress(f"indexing {file.name}", stats.files_scanned, 0)
         try:
-            size = file.stat().st_size
+            info = file.stat()
         except OSError:
-            stats.skipped += 1
+            stats.skip(file, "unreadable")
             continue
-        if not is_indexable(file, size):
-            stats.skipped += 1
+        # Fast path: an unchanged mtime means we did not touch the file at all,
+        # so a 60s watcher pass costs a stat per file and nothing else.
+        stored = store.doc_mtime(str(file))
+        if stored is not None and abs(stored - info.st_mtime) < 1e-6:
+            stats.unchanged += 1
+            continue
+        if not is_indexable(file, info.st_size):
+            stats.skip(file, "unsupported or too large")
             continue
         content = read_text(file)
         if content is None or not content.strip():
-            stats.skipped += 1
+            stats.skip(file, "no extractable text")
             continue
 
         chunks = index_document(
@@ -242,7 +256,7 @@ def index_paths(
             source="local",
             path=str(file),
             content=content,
-            mtime=file.stat().st_mtime,
+            mtime=info.st_mtime,
             chunk_chars=chunk_chars,
             chunk_overlap=chunk_overlap,
         )

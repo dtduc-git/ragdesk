@@ -399,3 +399,31 @@ def test_front_matter_becomes_metadata_and_filters(tmp_path: Path):
         # a word with a colon (a URL) is not a filter
         query, filters = parse_filters("see https://example.com/x for details")
         assert filters.meta is None and "https://example.com/x" in query
+
+
+def test_watcher_fast_path_and_touch(tmp_path: Path):
+    from ragdesk.index import index_paths
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    note = docs / "note.md"
+    note.write_text("alpha bravo")
+    embedder = HashingEmbedder(dim=128)
+    with Store(tmp_path / "watch.db") as store:
+        first = index_paths(store, embedder, [docs])
+        assert first.indexed == 1
+
+        second = index_paths(store, embedder, [docs])
+        assert second.unchanged == 1 and second.indexed == 0
+
+        # a touch with identical content refreshes the stored mtime
+        note.touch()
+        third = index_paths(store, embedder, [docs])
+        assert third.indexed == 0 and third.unchanged == 1
+        assert store.doc_mtime(str(note)) is not None
+
+        # skipped files carry a reason now
+        (docs / "photo.raw").write_bytes(b"\x00binary")
+        fourth = index_paths(store, embedder, [docs])
+        assert fourth.skipped >= 1
+        assert any(row["reason"] for row in fourth.skipped_samples)

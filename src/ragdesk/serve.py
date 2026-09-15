@@ -577,6 +577,7 @@ class Handler(BaseHTTPRequestHandler):
                 "unchanged": stats.unchanged,
                 "skipped": stats.skipped,
                 "chunks": stats.chunks,
+                "skipped_samples": list(stats.skipped_samples),
             },
         )
 
@@ -1808,6 +1809,27 @@ def run_auto_index(state: AppState) -> dict[str, Any]:
         "indexed": stats.indexed if stats else 0,
         "unchanged": stats.unchanged if stats else 0,
         "chunks": stats.chunks if stats else 0,
+    }
+
+
+def watch_pass(state: AppState) -> dict[str, Any] | None:
+    """Cheap freshness pass: index_paths skips unchanged mtimes without reading."""
+    with state.lock, Store(state.db) as store:
+        roots = [
+            Path(entry["path"])
+            for entry in store.local_paths()
+            if Path(entry["path"]).exists()
+        ]
+        if not roots:
+            return None
+        stats = index_paths(store, state.embedder, roots)
+    if not (stats.indexed or stats.chunks):
+        return None
+    return {
+        "indexed": stats.indexed,
+        "unchanged": stats.unchanged,
+        "skipped": stats.skipped,
+        "chunks": stats.chunks,
     }
 
 
