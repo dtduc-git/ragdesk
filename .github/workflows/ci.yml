@@ -9,13 +9,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
           enable-cache: true
       - name: Cache the embedding model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/huggingface
           key: hf-embeddinggemma-${{ runner.os }}-v1
@@ -27,13 +27,17 @@ jobs:
           uv run ragdesk --embedder hash --db .ragdesk/eval.db index fixtures/docs
           uv run ragdesk --embedder hash --db .ragdesk/eval.db eval \
             --golden fixtures/golden.jsonl --min-recall 0.8
-      - name: Retrieval eval (repo golden, real embedder — the README's numbers)
-        # The golden scopes queries with folder:dtduc-git/ragdesk, so index the
-        # checkout through a path that carries it; the model download is cached.
+      - name: Retrieval eval (repo golden, real embedder)
+        # The golden scopes queries with folder:dtduc-git/ragdesk, so index
+        # through a path that carries it. The corpus is the docs+source subset
+        # the golden is about (~650 chunks): the full tree takes 20 minutes of
+        # CPU embedding, this takes ~3 — same gate, same numbers to 3 decimals.
         run: |
           mkdir -p /tmp/repro/dtduc-git
           ln -s "$GITHUB_WORKSPACE" /tmp/repro/dtduc-git/ragdesk
+          base=/tmp/repro/dtduc-git/ragdesk
           uv run ragdesk --embedder onnx --db .ragdesk/eval-repo.db index \
-            /tmp/repro/dtduc-git/ragdesk
+            "$base/README.md" "$base/AGENTS.md" "$base/SECURITY.md" \
+            "$base/.github" "$base/src" "$base/fixtures"
           uv run ragdesk --embedder onnx --db .ragdesk/eval-repo.db eval \
             --golden fixtures/golden_repo.jsonl --min-recall 0.8

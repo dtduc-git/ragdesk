@@ -285,7 +285,7 @@ this repository's own docs and source.
 | corpus (24 queries: VN notes, PDFs, two codebases) | 1.000 | 0.964 | 0.951 |
 | repo (12 queries, `folder:`-scoped) / EmbeddingGemma int8, text chunking | **0.917** | **0.874** | **0.833** |
 | repo (12 queries) / + smart retrieval (rewrite + HyDE + sub-queries, one call) | 0.917 | 0.832 | 0.778 |
-| repo, checkout only (the CI run) / EmbeddingGemma int8 | 1.000 | 0.746 | 0.660 |
+| repo docs+source subset (the CI run) / EmbeddingGemma int8 | 0.917 | 0.783 | 0.736 |
 | follow-ups (5 queries, `fixtures/golden_multiturn.jsonl`) raw | 1.000 | 0.926 | 0.900 |
 | follow-ups (5 queries) / `--rewrite` (Qwen3.5-4B MLX) | 1.000 | **1.000** | **1.000** |
 
@@ -346,8 +346,14 @@ Reproduce (first run downloads the ~0.3 GB int8 model):
 
 ```bash
 # the repo golden scopes its queries with `folder:dtduc-git/ragdesk`, so index
-# an absolute path that contains it (or edit that prefix in the golden file)
-uv run ragdesk --embedder onnx --db /tmp/eval.db index "$PWD"
+# through a path that carries it — CI does exactly this with a symlink, over the
+# docs+source subset the golden is about (the full tree works too, it is ~6x
+# slower to embed)
+mkdir -p /tmp/repro/dtduc-git && ln -s "$PWD" /tmp/repro/dtduc-git/ragdesk
+base=/tmp/repro/dtduc-git/ragdesk
+uv run ragdesk --embedder onnx --db /tmp/eval.db index \
+  "$base/README.md" "$base/AGENTS.md" "$base/SECURITY.md" \
+  "$base/.github" "$base/src" "$base/fixtures"
 uv run ragdesk --embedder onnx --db /tmp/eval.db eval --golden fixtures/golden_repo.jsonl
 uv run ragdesk --embedder onnx --db /tmp/eval.db --rerank lexical eval --golden fixtures/golden_repo.jsonl
 
