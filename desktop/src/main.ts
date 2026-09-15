@@ -38,6 +38,7 @@ type Status = {
   auto_index: { hours: number; last_run: string };
   memory: { models_loaded: boolean; idle_unload_minutes: number };
   hyde: boolean;
+  notes_available: boolean;
   activity: {
     running: boolean;
     kind: string;
@@ -1288,6 +1289,16 @@ function notionCard(conn: Connections["notion"]): string {
   </div>`;
 }
 
+function notesCard(available: boolean): string {
+  if (!available) return "";
+  return `<div class="source-card">
+    <h3>Apple Notes</h3>
+    <p class="source-note">Read-only export through AppleScript. macOS asks once for permission to control Notes.</p>
+    <button class="btn btn-primary" type="button" data-action="notes-sync">Sync notes</button>
+    <p class="source-result" data-result="notes"></p>
+  </div>`;
+}
+
 function webCard(): string {
   return `<div class="source-card">
     <h3>Website</h3>
@@ -1339,6 +1350,7 @@ function renderSources(): void {
     gdriveCard(gdrive) +
     msgraphCard(msgraph) +
     notionCard(notion) +
+    notesCard(status?.notes_available ?? false) +
     webCard();
   for (const [kind, message] of Object.entries(sourceResults)) {
     const element = document.querySelector<HTMLElement>(`[data-result="${kind}"]`);
@@ -1434,6 +1446,7 @@ $("source-grid").addEventListener("submit", async (event) => {
       "gitlab-connect": "/api/connections/gitlab",
       "gitlab-sync": "/api/sync/gitlab",
       "msgraph-sync": "/api/sync/msgraph",
+      "notes-sync": "/api/sync/notes",
       "web-sync": "/api/sync/web",
     };
     const endpoint = endpoints[kind];

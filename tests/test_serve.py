@@ -807,6 +807,22 @@ def test_verify_endpoint_scores_sentences(base_url: str, monkeypatch):
     assert excinfo.value.code == 404
 
 
+def test_notes_sync_endpoint(base_url: str, monkeypatch):
+    from ragdesk.index import IndexStats
+    from ragdesk.notes import parse_notes
+
+    monkeypatch.setattr(
+        "ragdesk.serve.sync_notes",
+        lambda store, embedder, progress=None: IndexStats(files_scanned=2, indexed=2, chunks=5),
+    )
+    assert parse_notes("===RAGDESK NOTE===\nT\n<html><p>body</p></html>\n")
+    status, payload = request(f"{base_url}/api/sync/notes", {})
+    assert status == 200
+    assert payload["indexed"] == 2
+    _, status_payload = request(f"{base_url}/api/status")
+    assert "notes_available" in status_payload
+
+
 def test_sync_gitlab_requires_project(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/gitlab", {})

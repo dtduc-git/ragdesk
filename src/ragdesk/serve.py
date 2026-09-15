@@ -63,6 +63,7 @@ from ragdesk.msgraph import device_flow_poll_once as ms_poll_once
 from ragdesk.msgraph import device_flow_start as ms_device_start
 from ragdesk.msgraph import resolve_client_id as resolve_ms_client_id
 from ragdesk.msgraph import whoami as ms_whoami
+from ragdesk.notes import NotesError, notes_available, sync_notes
 from ragdesk.notion import NotionError, sync_notion
 from ragdesk.notion import resolve_token as notion_resolve_token
 from ragdesk.notion import whoami as notion_whoami
@@ -264,6 +265,7 @@ class Handler(BaseHTTPRequestHandler):
                             ),
                         },
                         "onboarded": bool(settings.load()["onboarded"]),
+                        "notes_available": notes_available(),
                         "system": system_info(),
                         "activity": dict(self.state.activity),
                         "memory": {
@@ -400,6 +402,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_msgraph_device_start()
             elif self.path == "/api/connections/msgraph/device/poll":
                 self._handle_msgraph_device_poll()
+            elif self.path == "/api/sync/notes":
+                self._handle_sync_notes(body)
             elif self.path == "/api/sync/msgraph":
                 self._handle_sync_msgraph(body)
             elif self.path.endswith("/disconnect") and self.path.startswith(
@@ -448,6 +452,7 @@ class Handler(BaseHTTPRequestHandler):
             NotionError,
             GitLabError,
             MsGraphError,
+            NotesError,
         ) as exc:
             self._send(502, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001 - surface errors to the UI
@@ -1023,6 +1028,29 @@ class Handler(BaseHTTPRequestHandler):
         credentials.set_provider("msgraph", updates)
         self.state.msgraph_device = None
         self._send(200, {"connected": True, "login": account})
+
+    def _handle_sync_notes(self, body: dict[str, Any]) -> None:
+        token = self._begin_activity("notes")
+        try:
+            with self.state.lock, Store(self.state.db) as store:
+                stats = sync_notes(
+                    store,
+                    self.state.embedder,
+                    progress=lambda detail, done, total: self._update_activity(
+                        token, detail, done, total
+                    ),
+                )
+        finally:
+            self.state.activity["running"] = False
+        self._send(
+            200,
+            {
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "chunks": stats.chunks,
+            },
+        )
 
     def _handle_sync_msgraph(self, body: dict[str, Any]) -> None:
         site = str(body.get("site", "")).strip()
