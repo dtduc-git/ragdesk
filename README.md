@@ -29,6 +29,7 @@ ragdesk index ~/notes ~/repos/myrepo
 #    a running Ollama with qwen3.5:4b (or another model via RAGDESK_LLM) wins;
 #    otherwise MLX runs mlx-community/Qwen3.5-4B-MLX-4bit in-process.
 ragdesk ask "how does the deploy rollback work?"
+ragdesk ask "who calls hybrid_search?"             # call graph: defs + call sites (no LLM)
 ragdesk ask "..." --llm ollama:qwen3.5:9b        # force a specific backend
 ragdesk ask "..." --llm mlx:some/hf-repo         # or a specific MLX repo
 
@@ -172,6 +173,7 @@ with — the index refuses mismatched embeddings.
 | HyDE lane (Settings, off by default): drafts an answer with the local model, then searches with it too | |
 | Scoping: `folder:` / `source:` and any front-matter key (`type:runbook service:payments`) as query filters; metadata shows as chips on citations | |
 | Parent-child context: children are embedded, parents (~4k chars) go to the LLM | |
+| Call graph on demand: ask "who calls hybrid_search?" and get definitions + call sites with file:line, answered from the code itself (regex scan, never a ranking lane) | Full AST/cross-language precision |
 | Bookmarks: save one page from the Sources tab (or `ragdesk save <url>`), then Open or Refresh it later | |
 | Email: read-only IMAP sync (last N messages, `BODY.PEEK` — nothing is marked read) and mbox files; one document per message, searchable by subject, sender or body | Attachment contents (names are listed); mail writing/deleting |
 | Duplicates: the Indexed tab lists documents that share most of their exact chunks (the same file saved twice), with open-file links | Automatic cleanup — sources stay read-only |

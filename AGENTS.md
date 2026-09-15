@@ -147,6 +147,17 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   `POST /api/sync/email-mbox {path}`; CLI mirrors as `ragdesk email --mbox
   FILE` / `--imap HOST --user U` (password prompted, never an argv default).
   The Sources tab has the card; `credentials.email` holds the app password.
+- Call graph (`symbols.py`): `parse_symbol_question` recognises "who calls X",
+  "callers of X", "where is X defined" and the VI equivalents (returns
+  `(name, certain)`; a plain lowercase word is only trusted when a definition
+  exists). `find_symbol` scans the *stored chunk text* of code extensions for
+  definitions (`chunk.SYMBOL_RE`), call sites (`X(`) and mentioning files — no
+  AST, no index-time table, no re-index needed on old corpora; line numbers are
+  chunk-relative (a file with runs of blank lines can be off by a line or two).
+  `serve._symbol_lookup` runs before retrieval and returns a deterministic
+  answer + `lanes="symbol"` hits, so symbol questions never reach the LLM and
+  never touch the RRF lanes (graph stays at the navigation layer). The ask
+  response carries `symbol` and the UI shows a "call graph" badge.
 - Reliability surfaces: `GET /api/health` (embedder match, last local run + `skipped_samples` from `store.last_index_report()`, oldest documents, db
   size, never-index patterns + docs still matching them), `POST
   /api/never-index {patterns}` (saves `settings.never_index` AND prunes matching

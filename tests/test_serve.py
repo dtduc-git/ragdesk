@@ -225,6 +225,39 @@ def test_duplicates_endpoint_and_bookmarks(base_url: str, tmp_path: Path, monkey
     assert excinfo.value.code == 400
 
 
+def test_ask_answers_symbol_questions_without_the_model(base_url: str, tmp_path: Path):
+    docs = tmp_path / "code"
+    docs.mkdir()
+    (docs / "core.py").write_text(
+        "def hybrid_search(query):\n"
+        "    return query\n"
+        "\n"
+        "def helper():\n"
+        "    return hybrid_search('x')\n"
+    )
+    status, payload = request(f"{base_url}/api/index", {"paths": [str(docs)]})
+    assert status == 200 and payload["indexed"] == 1
+
+    # the fixture's LLM host is unreachable: a 200 proves the model was skipped
+    status, payload = request(
+        f"{base_url}/api/ask", {"query": "who calls hybrid_search?"}
+    )
+    assert status == 200
+    assert payload["symbol"] == "hybrid_search"
+    assert "1 definition(s), 1 call site(s)" in payload["answer"]
+    assert "core.py:1" in payload["answer"] and "core.py:5" in payload["answer"]
+    # def and call share one chunk: one hit, deduped by chunk
+    assert [hit["lanes"] for hit in payload["hits"]] == ["symbol"]
+
+    status, payload = request(
+        f"{base_url}/api/ask", {"query": "who calls something_never_defined?"}
+    )
+    assert status == 200
+    assert payload["symbol"] == "something_never_defined"
+    assert "No definitions or call sites found" in payload["answer"]
+    assert payload["hits"] == []
+
+
 def test_corrections_endpoints(base_url: str):
     status, payload = request(
         f"{base_url}/api/corrections",

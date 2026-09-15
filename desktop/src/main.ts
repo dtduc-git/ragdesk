@@ -591,6 +591,7 @@ async function ask(query: string): Promise<void> {
             cached?: boolean;
             cached_question?: string;
             correction?: string;
+            symbol?: string;
             chat_id?: number;
             answer_id?: number;
           };
@@ -625,6 +626,13 @@ async function ask(query: string): Promise<void> {
               badge.className = "cache-badge";
               badge.textContent = "your fix";
               badge.title = `using your correction for: ${event.correction}`;
+              answer.before(badge);
+            }
+            if (event.symbol) {
+              const badge = document.createElement("span");
+              badge.className = "cache-badge";
+              badge.textContent = "call graph";
+              badge.title = `symbol lookup for ${event.symbol} — definitions and call sites from the indexed code`;
               answer.before(badge);
             }
             if (event.chat_id) currentChatId = event.chat_id;

@@ -81,6 +81,7 @@ from ragdesk.presets import PRESETS
 from ragdesk.rerank import get_reranker
 from ragdesk.search import Hit, parse_filters, retrieve
 from ragdesk.store import Store, matches_any
+from ragdesk.symbols import find_symbol, parse_symbol_question, symbol_answer
 from ragdesk.web import WebError, crawl_site, save_page
 
 CORS_HEADERS = {
@@ -1412,6 +1413,31 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
+    def _symbol_lookup(self, query: str) -> tuple[str, list[Hit], str]:
+        """Deterministic "who calls X" answer: (text, hits, matched name).
+
+        Navigation, not retrieval: nothing here touches the RRF lanes, and an
+        empty text means "not a symbol question, or nothing found" — the caller
+        falls back to the normal grounded answer.
+        """
+        candidate, certain = parse_symbol_question(query)
+        if not candidate:
+            return "", [], ""
+        name = candidate
+        with Store(self.state.db) as store:
+            result = find_symbol(store, name)
+        text, hits = symbol_answer(name, result)
+        if not text:
+            if not certain:
+                return "", [], ""
+            return (
+                f"No definitions or call sites found for `{name}` in the indexed "
+                "code files.",
+                [],
+                name,
+            )
+        return text, hits, name
+
     def _handle_ask_stream(self, body: dict[str, Any]) -> None:
         """Stream phased status lines, then the answer as NDJSON.
 
@@ -1440,6 +1466,22 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             emit({"status": "searching your sources…"})
+            symbol_text, symbol_hits, symbol_name = self._symbol_lookup(query)
+            if symbol_text:
+                emit({"delta": symbol_text})
+                citations = [hit_to_dict(hit) for hit in symbol_hits]
+                chat_id = self._record_exchange(chat_id, query, symbol_text, citations)
+                emit(
+                    {
+                        "done": True,
+                        "hits": citations,
+                        "cached": False,
+                        "chat_id": chat_id,
+                        "answer_id": self.last_answer_id,
+                        "symbol": symbol_name,
+                    }
+                )
+                return
             # Reads never take the writer lock: a long index must not block a
             # question (SQLite busy_timeout covers the rare write collision).
             with Store(self.state.db) as store:
@@ -1707,6 +1749,25 @@ class Handler(BaseHTTPRequestHandler):
         chat_id = int(body.get("chat_id") or 0)
         top_k = int(body.get("top_k", 6))
         min_cosine = float(body.get("min_cosine", 0.0))
+        symbol_text, symbol_hits, symbol_name = self._symbol_lookup(query)
+        if symbol_text:
+            citations = [hit_to_dict(hit) for hit in symbol_hits]
+            chat_id = self._record_exchange(chat_id, query, symbol_text, citations)
+            self._send(
+                200,
+                {
+                    "query": query,
+                    "answer": symbol_text,
+                    "refused": False,
+                    "hits": citations,
+                    "cached": False,
+                    "cached_question": "",
+                    "correction": "",
+                    "symbol": symbol_name,
+                    "chat_id": chat_id,
+                },
+            )
+            return
         with Store(self.state.db) as store:
             history = store.recent_turns(chat_id) if chat_id else []
         smart = self._smart_retrieval(query, history)
