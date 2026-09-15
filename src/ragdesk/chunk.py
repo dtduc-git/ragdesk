@@ -1,8 +1,22 @@
-"""Paragraph-aware chunking with character overlap and line tracking."""
+"""Paragraph-aware chunking with character overlap and line tracking.
+
+Symbol-aware chunking was measured three ways and rejected on this corpus:
+per-symbol segmentation (fragmentation + BM25 term density), symbol headers in
+the chunk text (test files out-rank the implementation) and a symbol lane over
+definition sites (loose LIKE matching dilutes RRF). See AGENTS.md for the
+numbers; symbol intelligence belongs in a call-graph index, not in chunking.
+"""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+# Lines that open a named block in the languages we index most.
+SYMBOL_RE = re.compile(
+    r"^\s*(?:async\s+)?(?:def|class|func|function|impl|struct|interface|enum|"
+    r"fn|pub\s+fn)\s+([A-Za-z_][\w]*)"
+)
 
 DEFAULT_MAX_CHARS = 1000
 DEFAULT_OVERLAP = 150

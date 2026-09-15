@@ -155,11 +155,15 @@ repo, hence the `folder:` scoping in the golden set).
 
 Honest notes:
 
-- **A code-aware chunker (per `def`/`class`) was built and removed.** On this
-  golden set it changed no symbol query and cost ranking precision
-  (`[eval]` MRR 0.625 → 0.267); the path lane plus plain paragraph chunks
-  already answer "where is X defined". Chunks still carry `line_start`, so
-  citations show `file:line`.
+- **Symbol-aware code chunking was tried three ways and rejected**, each
+  measured on fresh indexes of the same corpus (plain baseline: recall 1.000 /
+  nDCG 0.819 / MRR 0.757): per-symbol segmentation (0.743 / 0.656 — fragments
+  the file and raises BM25 term density), symbol headers inside chunks
+  (0.788 / 0.715 — test files mention symbols in their names and out-rank the
+  implementation), and a symbol lane over definition sites (0.523 / 0.419 —
+  loose LIKE matching dilutes RRF). The path lane already answers "where is X
+  defined"; symbol intelligence belongs in a call-graph index. Chunks still
+  carry `line_start`, so citations show `file:line`.
 - **Smart retrieval is a toggle, off by default.** One local-model call that
   rewrites a follow-up, drafts a hypothetical answer and proposes sub-queries.
   It helped on a noisier corpus (+0.031 nDCG) and cost a little on the current

@@ -78,9 +78,18 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
 - Wizard: `/api/status.onboarded` gates the first-run overlay; `system_info()`
   reports RAM + suggested preset; `/api/settings {onboarded}` marks it done.
 - Chunking: `chunk_text` is paragraph-aware and records `line_start` per chunk
-  (citations show `file:line`). A symbol-aware code chunker was measured and
-  removed — the path lane already covers "where is X defined" and the extra
-  fragmentation cost nDCG.
+  (citations show `file:line`). **Symbol-aware code chunking was tried three
+  ways and rejected — do not rebuild it without new evidence.** Fresh-db A/B on
+  the 12-query scoped golden (plain = recall 1.000 / nDCG 0.819 / MRR 0.757):
+  1. per-symbol segmentation → 0.743 nDCG / 0.656 MRR (fragmentation raises BM25
+     term density, small keyword-rich chunks crowd out the right document);
+  2. symbol header inside each chunk → 0.788 / 0.715 (test files carry the
+     symbol in their own names and out-rank the implementation);
+  3. a symbol lane over definition sites (LIKE on names) → 0.523 / 0.419 (loose
+     substring matching adds a weak lane and dilutes RRF).
+  The path lane already answers "where is X defined". Real symbol intelligence
+  is a call-graph index (defs + references + callers), a separate feature —
+  not a chunking trick.
 - Ranking extras: `diversify` caps chunks per document (2 by default, backfills
   when a query is dominated by one file) and `recency_factor` adds a mild
   freshness nudge to the RRF score (RECENCY_WEIGHT).
