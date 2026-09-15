@@ -305,7 +305,7 @@ kbd {
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 18px;
-  overflow: hidden;
+  overflow: visible; /* the conversation dropdown hangs outside the sheet */
 }
 
 .panel-head {
@@ -340,6 +340,7 @@ kbd {
 /* --- chat tools ------------------------------------------------------------- */
 
 .chat-tools {
+  position: relative;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -378,11 +379,12 @@ kbd {
 
 .chat-history-panel {
   position: absolute;
-  z-index: 30;
-  min-width: 320px;
-  max-width: 420px;
-  max-height: 50vh;
-  margin-top: 44px;
+  top: 100%;
+  right: 0;
+  z-index: 40;
+  width: 380px;
+  max-height: min(52vh, 460px);
+  margin-top: 6px;
   overflow-y: auto;
   background: var(--sheet);
   border: 1px solid var(--rule-strong);
@@ -863,7 +865,6 @@ kbd {
   gap: 9px;
 }
 
-.stack > .btn,
 .stack > .button-row {
   justify-self: start;
 }
@@ -951,12 +952,13 @@ textarea::placeholder {
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: 16px;
   margin-top: 18px;
-  align-items: start;
+  align-items: stretch; /* one row, one box height, whatever the content */
 }
 
 .source-card {
   display: grid;
   gap: 10px;
+  align-content: start; /* stretch the box, not the gaps inside it */
   padding: 14px 16px 16px;
   background: var(--card);
   border: 1px solid var(--rule);
