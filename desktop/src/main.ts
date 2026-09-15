@@ -653,8 +653,10 @@ function renderHistoryPanel(): void {
     )
     .join("");
   panel.innerHTML =
+    `<p class="chat-history-head">Past conversations</p>` +
+    rows +
     `<button class="chat-history-new" type="button" data-chat="0">＋ New conversation</button>` +
-    (rows || `<p class="chat-history-empty">No conversations yet.</p>`);
+    (rows ? "" : `<p class="chat-history-empty">Nothing saved yet — ask something.</p>`);
 }
 
 async function loadChats(): Promise<ChatSummary[]> {
@@ -748,26 +750,6 @@ $("chat-new").addEventListener("click", () => newChat());
 
 void loadChats().then((chats) => {
   if (chats.length > 0) void openChat(chats[0].id);
-});
-
-// --- search -------------------------------------------------------------------
-
-$<HTMLFormElement>("search-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const query = $<HTMLInputElement>("search-input").value.trim();
-  const results = $("search-results");
-  if (!query) return;
-  results.innerHTML = `<p class="muted">Searching…</p>`;
-  try {
-    const payload = await post<{ hits: Hit[] }>("/api/search", { query, top_k: 8 });
-    if (payload.hits.length === 0) {
-      results.innerHTML = `<p class="muted">Nothing matched. Try other words, or index more sources.</p>`;
-      return;
-    }
-    results.innerHTML = payload.hits.map((hit, index) => citeCard(hit, index + 1)).join("");
-  } catch (error) {
-    results.innerHTML = `<p class="muted">${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
-  }
 });
 
 // --- sources ------------------------------------------------------------------

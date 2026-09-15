@@ -21,7 +21,6 @@
 
         <nav class="nav" aria-label="Sections">
           <button class="nav-item is-active" data-tab="chat" type="button">Chat</button>
-          <button class="nav-item" data-tab="search" type="button">Search</button>
           <button class="nav-item" data-tab="sources" type="button">Sources</button>
           <button class="nav-item" data-tab="indexed" type="button">Indexed</button>
           <button class="nav-item" data-tab="settings" type="button">Settings</button>
@@ -53,12 +52,14 @@
                 <p>Answers are drawn only from your indexed sources, with citations.</p>
               </div>
               <div class="chat-tools">
-                <button class="btn btn-quiet" type="button" id="chat-history-btn" aria-haspopup="listbox">
-                  <span class="chat-history-label">History</span>
+                <button class="chat-picker" type="button" id="chat-history-btn" aria-haspopup="listbox" title="Past conversations">
                   <span class="chat-current" id="chat-current">New conversation</span>
+                  <span class="chat-chevron" aria-hidden="true"></span>
                 </button>
                 <button class="btn btn-primary" type="button" id="chat-new">＋ New chat</button>
-                <div class="chat-history-panel" id="chat-history-panel" hidden></div>
+                <div class="chat-history-panel" id="chat-history-panel" hidden>
+                  <p class="chat-history-head">Past conversations</p>
+                </div>
               </div>
             </div>
           </header>
@@ -80,23 +81,6 @@
               <button class="btn btn-primary" type="submit" id="chat-send">Ask</button>
             </div>
           </form>
-        </section>
-
-        <section class="panel" id="panel-search">
-          <header class="panel-head">
-            <h2>Search</h2>
-            <p>Hybrid retrieval — keyword and meaning together, no model answer.</p>
-          </header>
-          <form class="search-form" id="search-form">
-            <input
-              id="search-input"
-              type="search"
-              placeholder="Search your sources… (folder:/source: supported)"
-              aria-label="Search query"
-            />
-            <button class="btn" type="submit">Search</button>
-          </form>
-          <div class="results" id="search-results"></div>
         </section>
 
         <section class="panel" id="panel-sources">

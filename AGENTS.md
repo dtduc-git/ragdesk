@@ -40,7 +40,9 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   shared embedder means no re-index; the choice persists in settings.json and
   beats the built-in default, with `--preset` still winning at launch),
   `cli`.
-- `desktop/` — Tauri 2 shell (card-catalog UI). Rust spawns `ragdesk serve`
+- `desktop/` — Tauri 2 shell (card-catalog UI; tabs: Chat, Sources, Indexed,
+  Settings). Retrieval-only search lives in `ragdesk search` and `/api/search`;
+  the Chat tab keeps its source list under every answer. Rust spawns `ragdesk serve`
   with `--db $HOME/.ragdesk/index.db`; a watchdog thread respawns it if it
   dies (skipping the respawn when another instance owns the port) and the
   child's output goes to `~/.ragdesk/serve.log`; env overrides: `RAGDESK_BIN`,

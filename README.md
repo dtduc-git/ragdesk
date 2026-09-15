@@ -108,7 +108,7 @@ with — the index refuses mismatched embeddings.
 
 | Works | Not yet |
 |---|---|
-| Desktop app (Tauri 2): chat, search, sources, indexed stats (per source and per chosen path), eval panel, dark theme | PyPI release (v0.1.0 pending) |
+| Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme | PyPI release (v0.1.0 pending) |
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) | Connector auto-sync (local paths only for now) |
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images; sidecar bundling in the DMG |

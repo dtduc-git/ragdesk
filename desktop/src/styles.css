@@ -901,44 +901,64 @@ details.alt[open] summary {
   font-family: inherit;
 }
 
-.chat-history-label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--ink-soft);
-}
-
-/* The history trigger is not a destructive action: keep hover ink, never red. */
-.chat-tools #chat-history-btn:hover {
+/* Current-conversation picker: the title is the control, a chevron is the cue. */
+.chat-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 340px;
+  padding: 9px 14px;
+  font: inherit;
   color: var(--ink);
   background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.chat-picker:hover {
   border-color: var(--ink);
 }
 
 .chat-current {
-  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.chat-chevron {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid var(--ink-soft);
+  border-bottom: 1.5px solid var(--ink-soft);
+  transform: rotate(45deg) translate(-2px, -2px);
 }
 
 .chat-history-panel {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   z-index: 20;
-  width: min(420px, 80vw);
-  max-height: 320px;
+  width: min(400px, 80vw);
+  max-height: 340px;
   overflow-y: auto;
-  padding: 6px;
+  padding: 4px 0;
   background: var(--card);
   border: 1px solid var(--rule);
   border-top: 3px solid var(--ink);
   border-radius: 3px;
-  box-shadow: 0 12px 28px rgb(29 40 48 / 14%);
+  box-shadow: 0 14px 30px rgb(29 40 48 / 16%);
+}
+
+.chat-history-head {
+  margin: 0;
+  padding: 8px 12px 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
 }
 
 .chat-history-new,
@@ -954,10 +974,10 @@ details.alt[open] summary {
 .chat-history-new {
   display: block;
   width: 100%;
-  padding: 9px 10px;
+  padding: 9px 12px;
   font-size: 13px;
   text-align: left;
-  border-bottom: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
 }
 
 .chat-history-new:hover {
@@ -1005,10 +1025,17 @@ details.alt[open] summary {
 }
 
 .chat-history-delete {
-  padding: 6px 10px;
+  padding: 6px 12px;
   font-size: 15px;
   line-height: 1;
   color: var(--ink-soft);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.chat-history-row:hover .chat-history-delete,
+.chat-history-row.is-current .chat-history-delete {
+  opacity: 1;
 }
 
 .chat-history-delete:hover {
