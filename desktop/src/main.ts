@@ -1412,6 +1412,21 @@ function webCard(): string {
   </div>`;
 }
 
+function filterSources(): void {
+  const input = $<HTMLInputElement>("source-filter");
+  const query = input.value.trim().toLowerCase();
+  document
+    .querySelectorAll<HTMLElement>("#source-grid .source-card")
+    .forEach((card) => {
+      card.classList.toggle(
+        "is-filtered",
+        Boolean(query) && !(card.textContent ?? "").toLowerCase().includes(query),
+      );
+    });
+}
+
+$("source-filter").addEventListener("input", filterSources);
+
 function renderSources(): void {
   const github = connections?.github ?? {
     connected: false,
@@ -1460,6 +1475,7 @@ function renderSources(): void {
     const element = document.querySelector<HTMLElement>(`[data-result="${kind}"]`);
     if (element) element.textContent = message;
   }
+  filterSources();
 }
 
 $("source-grid").addEventListener("submit", async (event) => {
@@ -1702,6 +1718,21 @@ document.addEventListener("click", async (event) => {
   }
   const target = element.closest<HTMLElement>("[data-action]");
   const action = target?.dataset.action ?? "";
+  if (action === "notes-sync") {
+    // Apple Notes has no form: the button is a data-action, so it never went
+    // through the form dispatcher and the click did nothing at all.
+    setResult("notes", "reading Apple Notes…");
+    void post<Record<string, number>>("/api/sync/notes", {})
+      .then(async (response) => {
+        setResult("notes", summarize(response));
+        await loadStatus();
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        setResult("notes", message);
+      });
+    return;
+  }
   if (action !== "llm-setup-mlx" && action !== "llm-setup-ollama") return;
   const kind = action === "llm-setup-mlx" ? "mlx" : "ollama";
   try {
@@ -1988,6 +2019,8 @@ $("correction-list").addEventListener("click", async (event) => {
 
 type Bookmark = { url: string; path: string; source: string; indexed_at: string };
 type DuplicateCluster = { paths: string[]; shared_chunks: number; ratio: number };
+const MAX_DUP_CLUSTERS = 5;
+const MAX_DUP_PATHS = 3;
 
 async function loadBookmarks(): Promise<void> {
   const box = document.getElementById("bookmark-list");
@@ -2018,21 +2051,33 @@ async function loadDuplicates(): Promise<void> {
   box.innerHTML = `<p class="caption">checking…</p>`;
   try {
     const { clusters } = await get<{ clusters: DuplicateCluster[] }>("/api/duplicates");
-    box.innerHTML = clusters.length
-      ? clusters
-          .map(
-            (cluster) => `<div class="dup-cluster">
-              <p class="dup-meta">${cluster.paths.length} copies · ${cluster.shared_chunks} shared chunks · ${Math.round(cluster.ratio * 100)}% overlap</p>
-              ${cluster.paths
+    if (!clusters.length) {
+      box.innerHTML = `<p class="caption">no duplicates found — every document is unique here</p>`;
+      return;
+    }
+    const shownClusters = clusters.slice(0, MAX_DUP_CLUSTERS);
+    box.innerHTML =
+      shownClusters
+        .map((cluster) => {
+          const shown = cluster.paths.slice(0, MAX_DUP_PATHS);
+          const hidden = cluster.paths.length - shown.length;
+          return `<div class="dup-cluster">
+            <p class="dup-meta">${cluster.paths.length} copies · ${cluster.shared_chunks} shared chunks · ${Math.round(cluster.ratio * 100)}% overlap</p>
+            <ul class="dup-paths">
+              ${shown
                 .map(
                   (path) =>
-                    `<p class="dup-path"><code class="cite-path" data-open-path="${escapeHtml(path)}" title="Open file">${escapeHtml(path)}</code></p>`,
+                    `<li><code class="cite-path" data-open-path="${escapeHtml(path)}" title="${escapeHtml(path)}">${escapeHtml(path)}</code></li>`,
                 )
                 .join("")}
-            </div>`,
-          )
-          .join("")
-      : `<p class="caption">no duplicates found — every document is unique here</p>`;
+            </ul>
+            ${hidden > 0 ? `<p class="caption">+${hidden} more ${hidden === 1 ? "copy" : "copies"}</p>` : ""}
+          </div>`;
+        })
+        .join("") +
+      (clusters.length > shownClusters.length
+        ? `<p class="caption">+${clusters.length - shownClusters.length} more duplicate groups</p>`
+        : "");
   } catch (error) {
     box.innerHTML = `<p class="caption">${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
   }
@@ -2117,6 +2162,13 @@ async function loadHealth(): Promise<void> {
     const health = await get<Health>("/api/health");
     const run = health.last_index;
     const samples = run.skipped_samples ?? [];
+    const reasons = new Map<string, number>();
+    for (const sample of samples) {
+      reasons.set(sample.reason, (reasons.get(sample.reason) ?? 0) + 1);
+    }
+    const reasonLine = [...reasons.entries()]
+      .map(([reason, count]) => `${count} ${reason}`)
+      .join(" · ");
     box.innerHTML = `
       <p class="health-line ${health.embedder.matches ? "is-ok" : "is-warn"}">
         <span class="health-dot"></span>
@@ -2133,23 +2185,33 @@ async function loadHealth(): Promise<void> {
         }
       </p>
       ${
-        samples.length
-          ? `<div class="health-samples">${samples
-              .map(
-                (sample) =>
-                  `<p class="health-sample"><code data-open-path="${escapeHtml(sample.path)}" title="Open file">${escapeHtml(sample.path.split("/").pop() ?? sample.path)}</code> — ${escapeHtml(sample.reason)}</p>`,
-              )
-              .join("")}</div>`
+        run.skipped
+          ? `<details class="health-more">
+              <summary>${run.skipped} skipped${reasonLine ? ` — ${escapeHtml(reasonLine)}` : ""}</summary>
+              ${
+                samples.length
+                  ? `<ul class="health-list">${samples
+                      .map(
+                        (sample) =>
+                          `<li><code data-open-path="${escapeHtml(sample.path)}" title="${escapeHtml(sample.path)}">${escapeHtml(sample.path.split("/").pop() ?? sample.path)}</code><span>${escapeHtml(sample.reason)}</span></li>`,
+                      )
+                      .join("")}</ul>${run.skipped > samples.length ? `<p class="caption">showing the first ${samples.length}</p>` : ""}`
+                  : ""
+              }
+            </details>`
           : ""
       }
       ${
         health.oldest.length
-          ? `<p class="health-line"><span class="health-dot"></span>oldest: ${health.oldest
-              .map(
-                (doc) =>
-                  `${escapeHtml(shortWhen(doc.mtime))} <code data-open-path="${escapeHtml(doc.path)}" title="Open file">${escapeHtml(doc.path.split("/").pop() ?? doc.path)}</code>`,
-              )
-              .join(" · ")}</p>`
+          ? `<details class="health-more">
+              <summary>oldest ${health.oldest.length} documents</summary>
+              <ul class="health-list">${health.oldest
+                .map(
+                  (doc) =>
+                    `<li><span class="health-when">${escapeHtml(shortWhen(doc.mtime))}</span><code data-open-path="${escapeHtml(doc.path)}" title="${escapeHtml(doc.path)}">${escapeHtml(doc.path)}</code></li>`,
+                )
+                .join("")}</ul>
+            </details>`
           : ""
       }
       ${

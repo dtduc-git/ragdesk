@@ -89,6 +89,14 @@
             <p>Everything is read-only. Indexed content never leaves this machine.</p>
           </header>
 
+          <input
+            id="source-filter"
+            class="source-filter"
+            type="search"
+            placeholder="Filter sources… (name, status, what they index)"
+            aria-label="Filter sources"
+          />
+
           <div class="source-grid" id="source-grid"></div>
 
           <div class="indexed-list">
@@ -103,6 +111,8 @@
             <p>What is embedded locally, per source — documents, chunks, and when it was last indexed.</p>
           </header>
 
+          <div class="stats-table" id="indexed-table"></div>
+
           <section class="setting-card">
             <header class="setting-head">
               <h3>Index health</h3>
@@ -110,8 +120,6 @@
             </header>
             <div id="health-body"><p class="caption">checking…</p></div>
           </section>
-
-          <div class="stats-table" id="indexed-table"></div>
 
           <section class="setting-card">
             <header class="setting-head">
