@@ -55,13 +55,27 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   (job: running/progress/detail/error), the Settings tab renders them, and a
   finished job clears `state.llm` so the next ask re-resolves the ladder.
   `llm_setup_options` respects an explicit `--llm mlx:<repo>` override.
-- Ask pipeline: `ask`/`ask_stream` compute an answer-cache key (embedder +
-  model + corpus revision + question), replay a hit instantly, otherwise
-  retrieve → inject up to 3 similar memories (`store.memories`, cosine ≥ 0.35)
-  and the last 3 turns of the chat → `answer*()`; every exchange is recorded
-  in `chats`/`messages`, refusals and cache replays included. Chat/cache/
-  memory tables live in the same SQLite file; `/api/chats` and `/api/memories`
-  (+ `/api/memories/extract` via the local LLM) back the UI.
+- Ask pipeline: `ask`/`ask_stream` parse `folder:`/`source:` filters, build a
+  fingerprint (embedder + model + corpus revision) and try the exact cache key,
+  then the semantic cache (`store.cache_nearest`, cosine ≥ 0.88 — calibrated:
+  paraphrases score 0.91+, different intents ≤ 0.35), then retrieve → inject up
+  to 3 similar memories (`store.memories`, cosine ≥ 0.35) and the last 3 turns
+  → `answer*()`; every exchange is recorded in `chats`/`messages`, refusals and
+  cache replays included. Chat/cache/memory tables live in the same SQLite
+  file; `/api/chats` and `/api/memories` (+ `/api/memories/extract`) back the
+  UI. A semantic hit reports `cached_question` so the UI can say what it matched.
+- Retrieval lanes (`search.hybrid_search`): BM25 (FTS5), dense cosine, path
+  tokens (file names), plus an optional HyDE dense lane — RRF-fused. HyDE text
+  comes from `settings.hyde` (Settings toggle, off by default; measured:
+  recall@5 0.889 → 1.000 on the repo golden set at +2-4s per question) and is
+  skipped silently whenever no LLM resolves.
+- Parent-child: `index.group_parents` groups child chunks (~4k chars) and
+  `Hit.context` returns the parent for prompts; old rows are backfilled on
+  Store open (`_backfill_parents`, no re-embedding) and fall back to the child.
+- Eval: `evaluate` groups per-category metrics, `category_metrics` powers
+  `--min-recall-category name=value` gates, and `ground_answer` is the
+  deterministic faithfulness proxy (sentence overlap against cited chunks +
+  citation range checks) used by `eval --answers`.
 - Connectors ingest payloads through `index.extract_bytes(data, name)`: one
   dispatcher for PDFs, office files, images (OCR) and plain text. Never decode
   raw bytes to text at a call site — `is_indexable` admits those types now, so

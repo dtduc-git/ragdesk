@@ -35,6 +35,7 @@ type Status = {
   local_paths: PathStat[];
   auto_index: { hours: number; last_run: string };
   memory: { models_loaded: boolean; idle_unload_minutes: number };
+  hyde: boolean;
   presets: Array<{ name: string; note: string; rerank: string; llm: string }>;
   llm: { kind: string; model: string; note: string };
   llm_setup: {
@@ -140,7 +141,7 @@ function markSeg(containerId: string, value: number | string): void {
   });
 }
 
-async function saveSetting(body: Record<string, number | string>): Promise<void> {
+async function saveSetting(body: Record<string, number | string | boolean>): Promise<void> {
   try {
     await post("/api/settings", body);
     await loadStatus();
@@ -157,6 +158,7 @@ document.querySelectorAll<HTMLElement>(".seg").forEach((group) => {
     const value = item.dataset.value ?? "";
     if (group.id === "auto-index-seg") void saveSetting({ auto_index_hours: Number(value) });
     if (group.id === "idle-unload-seg") void saveSetting({ idle_unload_minutes: Number(value) });
+    if (group.id === "hyde-seg") void saveSetting({ hyde: Number(value) === 1 });
     if (group.id === "preset-seg") void saveSetting({ preset: value });
   });
 });
@@ -304,6 +306,10 @@ function renderStatus(): void {
   $("memory-state").textContent = status.memory.models_loaded
     ? "in RAM — unloads after the idle stretch"
     : "released — the next question reloads them";
+  markSeg("hyde-seg", status.hyde ? 1 : 0);
+  $("hyde-note").textContent = status.hyde
+    ? `on — drafts with ${status.llm.kind === "none" ? "the local model (none found yet)" : status.llm.model}; adds 2-4s per question`
+    : "off — measured on our golden set: recall@5 0.89 → 1.00 with it on, at +2-4s per question";
   markSeg("preset-seg", status.preset);
   const presetName = status.preset;
   const activePreset = (status.presets ?? []).find((entry) => entry.name === presetName);
@@ -452,6 +458,7 @@ async function ask(query: string): Promise<void> {
             error?: string;
             hits?: Hit[];
             cached?: boolean;
+            cached_question?: string;
             chat_id?: number;
           };
           if (event.delta) {
@@ -468,6 +475,9 @@ async function ask(query: string): Promise<void> {
               const badge = document.createElement("span");
               badge.className = "cache-badge";
               badge.textContent = "from cache";
+              if (event.cached_question && event.cached_question !== query) {
+                badge.title = `answered earlier for: ${event.cached_question}`;
+              }
               answer.before(badge);
             }
             if (event.chat_id) currentChatId = event.chat_id;

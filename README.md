@@ -118,6 +118,11 @@ with — the index refuses mismatched embeddings.
 | Chat history: conversations in SQLite, multi-turn context, resume or start fresh | |
 | Answer cache: an identical question on an unchanged corpus replays instantly | |
 | Memory: durable notes you add (or extract from a chat) ride along with every answer | |
+| Semantic answer cache: a paraphrase of an answered question replays instantly (cosine ≥ 0.88, calibrated) | |
+| HyDE lane (Settings, off by default): drafts an answer with the local model, then searches with it too | |
+| Scoping: `folder:` / `source:` prefixes in any query, e.g. `folder:Financial thuế` | |
+| Parent-child context: children are embedded, parents (~4k chars) go to the LLM | |
+| Eval: per-category metrics + category gates, plus `--answers` faithfulness scoring | |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
 | RAM presets (`light` / `balanced` / `quality`) — switchable in Settings, applied live; per-flag overrides still work | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |
@@ -134,12 +139,24 @@ this repository's own docs and source.
 | repo (9 queries) / hash-4096 | 0.889 | 0.832 | 0.778 |
 | repo (9 queries) / EmbeddingGemma-300M int8 (ONNX) | 1.000 | 0.918 | 0.889 |
 | repo (9 queries) / EmbeddingGemma + `lexical` rerank | 1.000 | 0.862 | 0.815 |
+| repo (9 queries) / EmbeddingGemma, **HyDE on** (MLX 4B) | 1.000 | 0.848 | 0.796 |
 
-Measured 2026-09-14 on the repo tree; doc edits shift these by ~1 query, and
+Per-category breakdown (the `[eval]` row is why categories exist):
+
+```
+[answers]  n=1 recall@5=1.000   [eval] n=2 recall@5=0.500
+[general]  n=3 recall@5=1.000   [indexing] n=3 recall@5=1.000
+```
+
+Measured 2026-09-14/15 on the repo tree; doc edits shift these by ~1 query, and
 they are re-measured on every release.
 
 Honest notes: the tiny fixtures corpus saturates, so the repo golden set is the
-one that says something. The dependency-free `lexical` reranker **lowers**
+one that says something. HyDE buys recall (0.889 → 1.000 on the query the plain
+lanes miss) and costs a little ranking precision — that is why it is a toggle,
+off by default. `--answers` scores faithfulness without an LLM judge: every
+sentence of an answer must overlap its cited chunks, and every `[n]` must be in
+range. The dependency-free `lexical` reranker **lowers**
 nDCG/MRR here — it is a test baseline, not a quality feature; a real
 cross-encoder reranker is the next milestone. CI gates `recall@5 >= 0.8` on
 both harnesses, so retrieval regressions fail the build.

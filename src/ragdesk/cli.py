@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from ragdesk import __version__
 from ragdesk import settings as app_settings
@@ -16,7 +17,7 @@ from ragdesk.answer import answer, answer_stream
 from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import get_embedder
 from ragdesk.envfile import load_env_file
-from ragdesk.evaluate import evaluate, format_report, load_golden
+from ragdesk.evaluate import category_metrics, evaluate, format_report, ground_answer, load_golden
 from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
 from ragdesk.gitlab import GitLabError, sync_gitlab
@@ -32,6 +33,7 @@ from ragdesk.presets import resolve as resolve_preset
 from ragdesk.rerank import get_reranker
 from ragdesk.search import retrieve
 from ragdesk.serve import (
+    HYDE_PROMPT,
     AppState,
     auto_index_due,
     make_server,
@@ -105,6 +107,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="exit non-zero if recall@5 is below this (CI gate)",
     )
     p_eval.add_argument("--json", action="store_true", help="machine-readable output")
+    p_eval.add_argument(
+        "--min-recall-category",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="per-category CI gate, e.g. --min-recall-category tax=0.8 (repeatable)",
+    )
+    p_eval.add_argument(
+        "--answers",
+        action="store_true",
+        help="also answer each query with the local LLM and score grounding",
+    )
 
     sub.add_parser("stats", help="index statistics")
 
@@ -455,19 +469,81 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "eval":
             golden = load_golden(args.golden)
+            use_hyde = bool(app_settings.load().get("hyde"))
+            hyde_for = None
+            if use_hyde:
+                try:
+                    hyde_llm = resolve_llm(None, preset=settings["preset"])
+                except LLMUnavailable:
+                    hyde_llm = None
+                if hyde_llm is not None:
+                    hyde_for = lambda text: str(  # noqa: E731 - tiny adapter
+                        hyde_llm.generate(
+                            HYDE_PROMPT.format(question=text),
+                            {"num_predict": 120, "temperature": 0.3},
+                        )
+                    ).strip()[:1200]
             metrics, per_query = evaluate(
-                store, embedder, golden, top_k=args.top_k, reranker=reranker
+                store,
+                embedder,
+                golden,
+                top_k=args.top_k,
+                reranker=reranker,
+                hyde_for=hyde_for,
             )
+            report: dict[str, Any] = {"metrics": metrics, "queries": per_query}
+            if args.answers:
+                answer_llm = resolve_llm(None, preset=settings["preset"])
+                grounded: list[dict[str, Any]] = []
+                for row in per_query:
+                    hits = retrieve(
+                        store, embedder, row["query"], top_k=args.top_k, reranker=reranker
+                    )
+                    text = answer(row["query"], hits, answer_llm)
+                    verdict = ground_answer(
+                        text, [hit.context for hit in hits]
+                    )
+                    row["grounded_ratio"] = verdict["grounded_ratio"]
+                    row["citation_valid"] = verdict["citation_valid"]
+                    grounded.append(verdict)
+                metrics["grounded_ratio"] = (
+                    sum(item["grounded_ratio"] for item in grounded) / (len(grounded) or 1)
+                )
+                metrics["citation_valid"] = (
+                    sum(1.0 for item in grounded if item["citation_valid"])
+                    / (len(grounded) or 1)
+                )
             if args.json:
-                print(json.dumps({"metrics": metrics, "queries": per_query}, indent=2))
+                print(json.dumps(report, indent=2))
             else:
                 print(format_report(metrics, per_query))
+                if args.answers:
+                    print(f"grounded: {metrics['grounded_ratio']:.3f}")
+                    print(f"citations valid: {metrics['citation_valid']:.3f}")
             if args.min_recall is not None and metrics["recall@5"] < args.min_recall:
                 print(
                     f"eval gate failed: recall@5 {metrics['recall@5']:.3f} < {args.min_recall:.3f}",
                     file=sys.stderr,
                 )
                 return 1
+            for gate in args.min_recall_category:
+                name, _, raw = gate.partition("=")
+                try:
+                    floor = float(raw)
+                except ValueError:
+                    print(f"bad gate {gate!r}; expected NAME=VALUE", file=sys.stderr)
+                    return 2
+                grouped = category_metrics(per_query)
+                value = grouped.get(name, {}).get("recall@5")
+                if value is None:
+                    print(f"eval gate: no queries in category {name!r}", file=sys.stderr)
+                    return 1
+                if value < floor:
+                    print(
+                        f"eval gate failed: [{name}] recall@5 {value:.3f} < {floor:.3f}",
+                        file=sys.stderr,
+                    )
+                    return 1
             return 0
 
     return 0

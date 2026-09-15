@@ -69,7 +69,7 @@
             <textarea
               id="chat-input"
               rows="2"
-              placeholder="Ask about your sources…"
+              placeholder="Ask about your sources… (filter with folder:Financial)"
               aria-label="Question"
             ></textarea>
             <button class="btn btn-primary" type="submit" id="chat-send">Ask</button>
@@ -85,7 +85,7 @@
             <input
               id="search-input"
               type="search"
-              placeholder="Search your sources…"
+              placeholder="Search your sources… (folder:/source: supported)"
               aria-label="Search query"
             />
             <button class="btn" type="submit">Search</button>
@@ -172,6 +172,21 @@
                 <button class="btn btn-primary" type="submit">Run eval</button>
               </form>
               <div id="eval-results"></div>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>HyDE retrieval</h3>
+                <p>
+                  Drafts a hypothetical answer with the local model, then searches with it too —
+                  better recall on short or vague questions, at one extra model call per query.
+                </p>
+              </header>
+              <div class="seg" id="hyde-seg" role="group" aria-label="HyDE retrieval">
+                <button class="seg-item" type="button" data-value="0">Off</button>
+                <button class="seg-item" type="button" data-value="1">On</button>
+              </div>
+              <p class="caption" id="hyde-note"></p>
             </section>
 
             <section class="setting-card">

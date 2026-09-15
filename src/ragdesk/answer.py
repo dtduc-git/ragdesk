@@ -48,7 +48,9 @@ def build_prompt(
     history: list[tuple[str, str]] | None = None,
     memory: list[str] | None = None,
 ) -> str:
-    blocks = [f"[{i}] {hit.path}\n{hit.text}" for i, hit in enumerate(hits, start=1)]
+    blocks = [
+        f"[{i}] {hit.path}\n{hit.context}" for i, hit in enumerate(hits, start=1)
+    ]
     lines: list[str] = []
     for role, text in (history or [])[-HISTORY_TURNS * 2 :]:
         speaker = "User" if role == "user" else "ragdesk"

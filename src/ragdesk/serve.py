@@ -68,7 +68,7 @@ from ragdesk.notion import whoami as notion_whoami
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable, post_stream
 from ragdesk.presets import PRESETS
 from ragdesk.rerank import get_reranker
-from ragdesk.search import Hit, retrieve
+from ragdesk.search import Hit, parse_filters, retrieve
 from ragdesk.store import Store
 from ragdesk.web import WebError, crawl_site
 
@@ -80,6 +80,14 @@ CORS_HEADERS = {
 
 MEMORY_MIN_COSINE = 0.35
 MEMORY_LIMIT = 3
+# Calibrated with the real embedder: same-intent paraphrases score 0.91-0.93,
+# different intents 0.14-0.35, so 0.88 replays only true paraphrases.
+SEMANTIC_CACHE_MIN_COSINE = 0.88
+HYDE_PROMPT = (
+    "Write a short factual paragraph that would answer the question below, as if it "
+    "were an excerpt from the reader's own notes. Do not mention being hypothetical.\n\n"
+    "Question: {question}\nAnswer:"
+)
 MEMORY_PROMPT = (
     "From the conversation below, extract durable facts about the user: "
     "preferences, projects, constraints, decisions. Reply with a JSON array of "
@@ -222,6 +230,7 @@ class Handler(BaseHTTPRequestHandler):
                             "hours": settings.load()["auto_index_hours"],
                             "last_run": settings.load()["auto_index_last"],
                         },
+                        "hyde": bool(settings.load()["hyde"]),
                         "memory": {
                             "models_loaded": self.state.llm is not None
                             or getattr(self.state.embedder, "loaded", False),
@@ -440,6 +449,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "auto_index_hours must be a number"})
                 return
             updates["auto_index_hours"] = max(0, min(hours, 168))
+        if "hyde" in body:
+            updates["hyde"] = bool(body["hyde"])
         if "idle_unload_minutes" in body:
             try:
                 minutes = int(body["idle_unload_minutes"])
@@ -1017,24 +1028,34 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_ask_stream(self, body: dict[str, Any]) -> None:
         """Stream the answer as newline-delimited JSON (headers are committed
         before the LLM call, so failures arrive as an ``error`` line)."""
-        query = str(body.get("query", "")).strip()
+        query, filters = parse_filters(str(body.get("query", "")))
         if not query:
-            self._send(400, {"error": "query required"})
+            self._send(400, {"error": "query required (folder:/source: alone is not a query)"})
             return
         top_k = int(body.get("top_k", 6))
         min_cosine = float(body.get("min_cosine", 0.0))
         chat_id = int(body.get("chat_id") or 0)
+        hyde_text = self._hyde_text(query)
         try:
             with self.state.lock, Store(self.state.db) as store:
+                query_vec = self.state.embedder.embed_query(query)
                 hits = retrieve(
                     store,
                     self.state.embedder,
                     query,
                     top_k=top_k,
                     reranker=self._reranker_for(body.get("rerank")),
+                    query_vec=query_vec,
+                    hyde_text=hyde_text,
+                    filters=filters,
                 )
-                cache_key = self._cache_key(store, query)
+                fingerprint = self._fingerprint(store)
+                cache_key = self._cache_key(fingerprint, query)
                 cached = store.cache_get(cache_key)
+                if cached is None:
+                    cached = store.cache_nearest(
+                        query_vec, fingerprint, SEMANTIC_CACHE_MIN_COSINE
+                    )
                 history = store.recent_turns(chat_id) if chat_id else []
                 memory = None if cached is not None else self._relevant_memories(store, query)
         except Exception as exc:  # noqa: BLE001 - headers not sent yet
@@ -1061,6 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
                     "done": True,
                     "hits": cached["citations"],
                     "cached": True,
+                    "cached_question": str(cached["question"]),
                     "chat_id": chat_id,
                 }
             else:
@@ -1084,6 +1106,8 @@ class Handler(BaseHTTPRequestHandler):
                     text,
                     citations,
                     cache_key=None if text == REFUSAL else cache_key,
+                    cache_embedding=None if text == REFUSAL else query_vec,
+                    fingerprint=fingerprint,
                 )
                 done = {"done": True, "hits": citations, "cached": False, "chat_id": chat_id}
             self.wfile.write((json.dumps(done) + "\n").encode())
@@ -1117,11 +1141,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"golden": golden_path, "metrics": metrics, "queries": per_query})
 
     def _handle_search(self, body: dict[str, Any]) -> None:
-        query = str(body.get("query", "")).strip()
+        query, filters = parse_filters(str(body.get("query", "")))
         if not query:
-            self._send(400, {"error": "query required"})
+            self._send(400, {"error": "query required (folder:/source: alone is not a query)"})
             return
         top_k = int(body.get("top_k", 8))
+        hyde_text = self._hyde_text(query)
         with self.state.lock, Store(self.state.db) as store:
             hits = retrieve(
                 store,
@@ -1129,12 +1154,14 @@ class Handler(BaseHTTPRequestHandler):
                 query,
                 top_k=top_k,
                 reranker=self._reranker_for(body.get("rerank")),
+                hyde_text=hyde_text,
+                filters=filters,
             )
         self._send(200, {"query": query, "hits": [hit_to_dict(hit) for hit in hits]})
 
-    def _cache_key(self, store: Store, query: str) -> str:
-        """Reuse an answer only while the corpus, embedder and model are identical."""
-        fingerprint = "|".join(
+    def _fingerprint(self, store: Store) -> str:
+        """Everything an answer depends on: corpus, embedder, model, spec."""
+        return "|".join(
             [
                 str(store.get_meta("embedder.name") or ""),
                 str(self.state.llm_model or ""),
@@ -1144,7 +1171,25 @@ class Handler(BaseHTTPRequestHandler):
                 store.corpus_revision(),
             ]
         )
+
+    def _cache_key(self, fingerprint: str, query: str) -> str:
+        """Reuse an answer only while the corpus, embedder and model are identical."""
         return hashlib.sha256(f"{fingerprint}|{query.strip().lower()}".encode()).hexdigest()
+
+    def _hyde_text(self, question: str) -> str:
+        """A hypothetical answer used as an extra retrieval lane (optional)."""
+        if not settings.load().get("hyde"):
+            return ""
+        try:
+            if self.state.llm_setup.get("running"):
+                return ""
+            text = LazyLLM(self.state).generate(
+                HYDE_PROMPT.format(question=question),
+                {"num_predict": 120, "temperature": 0.3},
+            )
+        except Exception:  # noqa: BLE001 - HyDE is an enhancement, never a requirement
+            return ""
+        return str(text).strip()[:1200]
 
     def _record_exchange(
         self,
@@ -1153,6 +1198,8 @@ class Handler(BaseHTTPRequestHandler):
         text: str,
         citations: list,
         cache_key: str | None = None,
+        cache_embedding: list[float] | None = None,
+        fingerprint: str = "",
     ) -> int:
         with self.state.lock, Store(self.state.db) as store:
             if not chat_id:
@@ -1161,27 +1208,44 @@ class Handler(BaseHTTPRequestHandler):
             store.add_message(chat_id, "user", query)
             store.add_message(chat_id, "assistant", text, citations)
             if cache_key:
-                store.cache_put(cache_key, query, text, citations)
+                store.cache_put(
+                    cache_key,
+                    query,
+                    text,
+                    citations,
+                    embedding=cache_embedding,
+                    fingerprint=fingerprint,
+                )
         return chat_id
 
     def _handle_ask(self, body: dict[str, Any]) -> None:
-        query = str(body.get("query", "")).strip()
+        query, filters = parse_filters(str(body.get("query", "")))
         if not query:
-            self._send(400, {"error": "query required"})
+            self._send(400, {"error": "query required (folder:/source: alone is not a query)"})
             return
         chat_id = int(body.get("chat_id") or 0)
         top_k = int(body.get("top_k", 6))
         min_cosine = float(body.get("min_cosine", 0.0))
+        hyde_text = self._hyde_text(query)
         with self.state.lock, Store(self.state.db) as store:
+            query_vec = self.state.embedder.embed_query(query)
             hits = retrieve(
                 store,
                 self.state.embedder,
                 query,
                 top_k=top_k,
                 reranker=self._reranker_for(body.get("rerank")),
+                query_vec=query_vec,
+                hyde_text=hyde_text,
+                filters=filters,
             )
-            cache_key = self._cache_key(store, query)
+            fingerprint = self._fingerprint(store)
+            cache_key = self._cache_key(fingerprint, query)
             cached = store.cache_get(cache_key)
+            if cached is None:
+                cached = store.cache_nearest(
+                    query_vec, fingerprint, SEMANTIC_CACHE_MIN_COSINE
+                )
             history = store.recent_turns(chat_id) if chat_id else []
             memory = None if cached is not None else self._relevant_memories(store, query)
         if cached is not None:
@@ -1205,6 +1269,8 @@ class Handler(BaseHTTPRequestHandler):
             text,
             citations,
             cache_key=None if from_cache or text == REFUSAL else cache_key,
+            cache_embedding=None if from_cache else query_vec,
+            fingerprint=fingerprint,
         )
         self._send(
             200,
@@ -1214,6 +1280,7 @@ class Handler(BaseHTTPRequestHandler):
                 "refused": text == REFUSAL,
                 "hits": citations,
                 "cached": from_cache,
+                "cached_question": str(cached["question"]) if from_cache else "",
                 "chat_id": chat_id,
             },
         )

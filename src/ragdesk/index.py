@@ -114,6 +114,26 @@ def read_text(path: Path) -> str | None:
     return extract_bytes(data, path.name)
 
 
+def group_parents(texts: list[str], max_chars: int = 4000) -> tuple[list[str], list[int]]:
+    """Group child chunks into parent sections; returns (parent texts, child→parent)."""
+    parents: list[str] = []
+    assignment: list[int] = []
+    current: list[str] = []
+    size = 0
+    for text in texts:
+        current.append(text)
+        size += len(text)
+        if size >= max_chars:
+            parents.append("\n\n".join(current))
+            assignment.extend([len(parents) - 1] * len(current))
+            current = []
+            size = 0
+    if current:
+        parents.append("\n\n".join(current))
+        assignment.extend([len(parents) - 1] * len(current))
+    return parents, assignment
+
+
 def index_document(
     store: Store,
     embedder: Embedder,
@@ -132,13 +152,17 @@ def index_document(
     for start in range(0, len(chunks), EMBED_BATCH):
         batch = chunks[start : start + EMBED_BATCH]
         embeddings.extend(embedder.embed([chunk.text for chunk in batch]))
+    texts = [chunk.text for chunk in chunks]
+    parents, assignment = group_parents(texts)
     store.upsert_document(
         source=source,
         path=path,
         content_hash=digest,
         mtime=mtime,
-        texts=[chunk.text for chunk in chunks],
+        texts=texts,
         embeddings=embeddings,
+        parents=parents,
+        parent_index=assignment,
     )
     return len(chunks)
 

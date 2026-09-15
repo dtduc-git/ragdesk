@@ -29,7 +29,14 @@ CREATE TABLE IF NOT EXISTS chunks (
     doc_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,
     text TEXT NOT NULL,
-    embedding BLOB NOT NULL
+    embedding BLOB NOT NULL,
+    parent_ordinal INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS parents (
+    doc_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY (doc_id, ordinal)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     text, content='chunks', content_rowid='id'
@@ -55,6 +62,8 @@ CREATE TABLE IF NOT EXISTS answer_cache (
     question TEXT NOT NULL,
     answer TEXT NOT NULL,
     citations TEXT NOT NULL DEFAULT '[]',
+    fingerprint TEXT NOT NULL DEFAULT '',
+    embedding BLOB,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS memories (
@@ -83,6 +92,58 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA busy_timeout = 5000")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after the first release."""
+        migrations = {
+            "chunks": {"parent_ordinal": "INTEGER NOT NULL DEFAULT 0"},
+            "answer_cache": {
+                "fingerprint": "TEXT NOT NULL DEFAULT ''",
+                "embedding": "BLOB",
+            },
+        }
+        for table, columns in migrations.items():
+            existing = {
+                row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")
+            }
+            for name, spec in columns.items():
+                if name not in existing:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
+        self._backfill_parents()
+        self.conn.commit()
+
+    def _backfill_parents(self, max_chars: int = 4000) -> int:
+        """Group existing chunks into parents — no re-embedding needed."""
+        from ragdesk.index import group_parents  # noqa: PLC0415 - shared grouping
+
+        rows = self.conn.execute(
+            "SELECT id FROM documents d WHERE NOT EXISTS "
+            "(SELECT 1 FROM parents p WHERE p.doc_id = d.id)"
+        ).fetchall()
+        created = 0
+        for row in rows:
+            chunks = self.conn.execute(
+                "SELECT id, ordinal, text FROM chunks WHERE doc_id = ? ORDER BY ordinal",
+                (row["id"],),
+            ).fetchall()
+            if not chunks:
+                continue
+            parents, assignment = group_parents(
+                [str(chunk["text"]) for chunk in chunks], max_chars
+            )
+            for ordinal, text in enumerate(parents):
+                self.conn.execute(
+                    "INSERT INTO parents (doc_id, ordinal, text) VALUES (?, ?, ?)",
+                    (row["id"], ordinal, text),
+                )
+            for chunk, parent_ordinal in zip(chunks, assignment, strict=True):
+                self.conn.execute(
+                    "UPDATE chunks SET parent_ordinal = ? WHERE id = ?",
+                    (parent_ordinal, chunk["id"]),
+                )
+            created += 1
+        return created
 
     def close(self) -> None:
         self.conn.close()
@@ -151,6 +212,8 @@ class Store:
         mtime: float,
         texts: list[str],
         embeddings: list[list[float]],
+        parents: list[str] | None = None,
+        parent_index: list[int] | None = None,
     ) -> None:
         if len(texts) != len(embeddings):
             raise ValueError("texts and embeddings must have the same length")
@@ -165,10 +228,21 @@ class Store:
                 (source, path, content_hash, mtime),
             )
             doc_id = cursor.lastrowid
+            for ordinal, text in enumerate(parents or []):
+                self.conn.execute(
+                    "INSERT INTO parents (doc_id, ordinal, text) VALUES (?, ?, ?)",
+                    (doc_id, ordinal, text),
+                )
             for ordinal, (text, vec) in enumerate(zip(texts, embeddings, strict=True)):
+                parent_ordinal = (
+                    parent_index[ordinal]
+                    if parent_index is not None and ordinal < len(parent_index)
+                    else 0
+                )
                 chunk = self.conn.execute(
-                    "INSERT INTO chunks (doc_id, ordinal, text, embedding) VALUES (?, ?, ?, ?)",
-                    (doc_id, ordinal, text, array.array("f", vec).tobytes()),
+                    "INSERT INTO chunks (doc_id, ordinal, text, embedding, parent_ordinal) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (doc_id, ordinal, text, array.array("f", vec).tobytes(), parent_ordinal),
                 )
                 self.conn.execute(
                     "INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)",
@@ -335,20 +409,66 @@ class Store:
             "citations": json.loads(row["citations"] or "[]"),
         }
 
-    def cache_put(self, key: str, question: str, answer: str, citations: list) -> None:
+    def cache_put(
+        self,
+        key: str,
+        question: str,
+        answer: str,
+        citations: list,
+        embedding: list[float] | None = None,
+        fingerprint: str = "",
+    ) -> None:
         with self.conn:
             self.conn.execute(
-                "INSERT INTO answer_cache (key, question, answer, citations) "
-                "VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET "
+                "INSERT INTO answer_cache "
+                "(key, question, answer, citations, embedding, fingerprint) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET "
                 "answer = excluded.answer, citations = excluded.citations, "
+                "embedding = excluded.embedding, fingerprint = excluded.fingerprint, "
                 "created_at = datetime('now')",
-                (key, question, answer, json.dumps(citations)),
+                (
+                    key,
+                    question,
+                    answer,
+                    json.dumps(citations),
+                    array.array("f", embedding).tobytes() if embedding else None,
+                    fingerprint,
+                ),
             )
             # Answer keys change with the corpus, so old rows are dead weight.
             self.conn.execute(
                 "DELETE FROM answer_cache WHERE key NOT IN "
                 "(SELECT key FROM answer_cache ORDER BY created_at DESC LIMIT 500)"
             )
+
+    def cache_nearest(
+        self, embedding: list[float], fingerprint: str, min_cosine: float
+    ) -> dict[str, Any] | None:
+        """Closest cached answer for the same corpus generation, if close enough."""
+        rows = self.conn.execute(
+            "SELECT question, answer, citations, embedding FROM answer_cache "
+            "WHERE fingerprint = ? AND embedding IS NOT NULL",
+            (fingerprint,),
+        ).fetchall()
+        q_norm = math.sqrt(sum(v * v for v in embedding)) or 1.0
+        best: tuple[float, dict[str, Any]] | None = None
+        for row in rows:
+            vec = array.array("f")
+            vec.frombytes(row["embedding"])
+            dot = sum(a * b for a, b in zip(embedding, vec, strict=False))
+            norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+            score = dot / (q_norm * norm)
+            if score >= min_cosine and (best is None or score > best[0]):
+                best = (
+                    score,
+                    {
+                        "question": row["question"],
+                        "answer": row["answer"],
+                        "citations": json.loads(row["citations"] or "[]"),
+                        "cosine": score,
+                    },
+                )
+        return best[1] if best else None
 
     def cache_clear(self) -> int:
         with self.conn:
@@ -392,34 +512,89 @@ class Store:
 
     # --- search lanes -----------------------------------------------------------
 
-    def bm25_search(self, query: str, limit: int) -> list[dict[str, Any]]:
+    def _filter_sql(self, filters: Any) -> tuple[str, list[Any]]:
+        """WHERE fragments for scoping (``folder:`` / ``source:`` prefixes)."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if filters is not None:
+            if getattr(filters, "path_like", ""):
+                clauses.append("lower(d.path) LIKE ?")
+                params.append(f"%{str(filters.path_like).lower()}%")
+            if getattr(filters, "source", ""):
+                clauses.append("d.source = ?")
+                params.append(str(filters.source))
+        return (" AND " + " AND ".join(clauses)) if clauses else "", params
+
+    def bm25_search(
+        self, query: str, limit: int, filters: Any = None
+    ) -> list[dict[str, Any]]:
         tokens = TOKEN_RE.findall(query.lower())
         if not tokens:
             return []
         match = " OR ".join(f'"{token}"' for token in tokens)
+        scope, params = self._filter_sql(filters)
         rows = self.conn.execute(
-            """
+            f"""
             SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source,
+                   COALESCE(p.text, '') AS parent_text,
                    bm25(chunks_fts) AS score
             FROM chunks_fts
             JOIN chunks c ON c.id = chunks_fts.rowid
             JOIN documents d ON d.id = c.doc_id
-            WHERE chunks_fts MATCH ?
+            LEFT JOIN parents p ON p.doc_id = d.id AND p.ordinal = c.parent_ordinal
+            WHERE chunks_fts MATCH ?{scope}
             ORDER BY bm25(chunks_fts)
             LIMIT ?
             """,
-            (match, limit),
+            (match, *params, limit),
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def dense_search(self, query_vec: list[float], limit: int) -> list[dict[str, Any]]:
+    def path_search(
+        self, query: str, limit: int, filters: Any = None
+    ) -> list[dict[str, Any]]:
+        """Match query words against file paths, best (most words) first."""
+        tokens = [token for token in TOKEN_RE.findall(query.lower()) if len(token) >= 3]
+        if not tokens:
+            return []
+        tokens = tokens[:5]
+        patterns = " OR ".join("lower(d.path) LIKE ?" for _ in tokens)
+        scope, scope_params = self._filter_sql(filters)
+        rows = self.conn.execute(
+            f"""
+            SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source,
+                   COALESCE(p.text, '') AS parent_text
+            FROM documents d
+            JOIN chunks c ON c.doc_id = d.id
+            LEFT JOIN parents p ON p.doc_id = d.id AND p.ordinal = c.parent_ordinal
+            WHERE ({patterns}){scope}
+            LIMIT 2000
+            """,
+            (*[f"%{token}%" for token in tokens], *scope_params),
+        ).fetchall()
+        scored: list[tuple[int, Any]] = []
+        for row in rows:
+            path = str(row["path"]).lower()
+            matches = sum(1 for token in tokens if token in path)
+            scored.append((matches, row))
+        scored.sort(key=lambda item: (-item[0], int(item[1]["ordinal"])))
+        return [dict(row) for _matches, row in scored[:limit]]
+
+    def dense_search(
+        self, query_vec: list[float], limit: int, filters: Any = None
+    ) -> list[dict[str, Any]]:
         # ponytail: brute-force cosine over all chunks. Fine to ~100k chunks for a
         # personal index; swap in sqlite-vec / a cached numpy matrix when it grows.
+        scope, params = self._filter_sql(filters)
         rows = self.conn.execute(
-            """
-            SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source, c.embedding
+            f"""
+            SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source, c.embedding,
+                   COALESCE(p.text, '') AS parent_text
             FROM chunks c JOIN documents d ON d.id = c.doc_id
-            """
+            LEFT JOIN parents p ON p.doc_id = d.id AND p.ordinal = c.parent_ordinal
+            WHERE 1=1{scope}
+            """,
+            params,
         ).fetchall()
         q_norm = math.sqrt(sum(v * v for v in query_vec)) or 1.0
         scored: list[tuple[float, dict[str, Any]]] = []
@@ -439,6 +614,7 @@ class Store:
                         "text": row["text"],
                         "path": row["path"],
                         "source": row["source"],
+                        "parent_text": row["parent_text"],
                         "score": score,
                     },
                 )
