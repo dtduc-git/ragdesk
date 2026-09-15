@@ -14,17 +14,26 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - run: uv sync --all-groups
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-embeddinggemma-${{ runner.os }}-v1
+      - run: uv sync --all-groups --extra onnx
       - run: uv run ruff check .
       - run: uv run pytest
-      - name: Retrieval eval (fixtures, offline embedder)
+      - name: Retrieval eval (fixtures, offline embedder — fast smoke test)
         run: |
           uv run ragdesk --embedder hash --db .ragdesk/eval.db index fixtures/docs
           uv run ragdesk --embedder hash --db .ragdesk/eval.db eval \
             --golden fixtures/golden.jsonl --min-recall 0.8
-      - name: Retrieval eval (repo golden, offline embedder)
+      - name: Retrieval eval (repo golden, real embedder — the README's numbers)
+        # The golden scopes queries with folder:dtduc-git/ragdesk, so index the
+        # checkout through a path that carries it; the model download is cached.
         run: |
-          uv run ragdesk --embedder hash --db .ragdesk/eval-repo.db index \
-            README.md AGENTS.md SECURITY.md src .github fixtures/docs
-          uv run ragdesk --embedder hash --db .ragdesk/eval-repo.db eval \
+          mkdir -p /tmp/repro/dtduc-git
+          ln -s "$GITHUB_WORKSPACE" /tmp/repro/dtduc-git/ragdesk
+          uv run ragdesk --embedder onnx --db .ragdesk/eval-repo.db index \
+            /tmp/repro/dtduc-git/ragdesk
+          uv run ragdesk --embedder onnx --db .ragdesk/eval-repo.db eval \
             --golden fixtures/golden_repo.jsonl --min-recall 0.8

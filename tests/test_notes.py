@@ -49,9 +49,20 @@ def test_notes_errors_are_actionable(monkeypatch):
             "System Settings → Privacy & Security → Automation"
         )
 
+    # the platform gate would short-circuit before the runner on Linux CI
+    monkeypatch.setattr("ragdesk.notes.notes_available", lambda: True)
     monkeypatch.setattr("ragdesk.notes._run_osascript", denied)
     with pytest.raises(NotesError) as excinfo:
         from ragdesk.notes import fetch_notes
 
         fetch_notes()
     assert "Automation" in str(excinfo.value)
+
+
+def test_notes_are_refused_off_macos(monkeypatch):
+    monkeypatch.setattr("ragdesk.notes.notes_available", lambda: False)
+    from ragdesk.notes import fetch_notes
+
+    with pytest.raises(NotesError) as excinfo:
+        fetch_notes()
+    assert "only available on macOS" in str(excinfo.value)
