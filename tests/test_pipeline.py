@@ -108,6 +108,53 @@ def test_embedder_mismatch_is_fail_closed(tmp_path: Path):
             index_paths(store, HashingEmbedder(dim=64), [FIXTURES / "docs"])
 
 
+def test_orphan_fts_rows_are_pruned_on_open(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    note = docs / "note.md"
+    note.write_text("alpha bravo charlie")
+    db = tmp_path / "index.db"
+    embedder = HashingEmbedder()
+    with Store(db) as store:
+        index_paths(store, embedder, [docs])
+        orphan = int(store.conn.execute("SELECT MAX(id) FROM chunks").fetchone()[0]) + 1
+        store.conn.execute(
+            "INSERT INTO chunks_fts (rowid, text) VALUES (?, 'ghost')", (orphan,)
+        )
+        store.conn.commit()
+
+    with Store(db) as store:  # opening the store prunes the ghost row
+        assert store.conn.execute(
+            "SELECT 1 FROM chunks_fts WHERE rowid = ?", (orphan,)
+        ).fetchone() is None
+        note.write_text("alpha bravo charlie delta")
+        stats = index_paths(store, embedder, [docs])
+        # would raise sqlite3.IntegrityError (the live wedge) without the prune
+        assert stats.indexed == 1
+
+
+def test_index_survives_one_bad_file(tmp_path: Path, monkeypatch):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "good.md").write_text("alpha bravo")
+    (docs / "bad.md").write_text("delta echo")
+    from ragdesk import index as index_module
+
+    original = index_module.index_document
+
+    def boom(store, embedder, *, path: str, **kwargs):
+        if path.endswith("bad.md"):
+            raise ValueError("wedged write")
+        return original(store, embedder, path=path, **kwargs)
+
+    monkeypatch.setattr("ragdesk.index.index_document", boom)
+    with make_store(tmp_path) as store:
+        stats = index_paths(store, HashingEmbedder(), [docs])
+    assert stats.indexed == 1
+    assert stats.skipped == 1
+    assert any("wedged write" in row["reason"] for row in stats.skipped_samples)
+
+
 def test_eval_on_fixtures_is_good(tmp_path: Path):
     embedder = HashingEmbedder()
     with make_store(tmp_path) as store:

@@ -133,8 +133,29 @@ class Store:
                 if name not in existing:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
         self._rebuild_fts_if_external()
+        self._prune_orphan_fts_rows()
         self._backfill_parents()
         self.conn.commit()
+
+    def _prune_orphan_fts_rows(self) -> int:
+        """Delete FTS rows whose chunk is gone.
+
+        A surviving FTS row wedges indexing: the next chunk that reuses its id
+        fails the ``chunks_fts`` insert ("constraint failed") and the file can
+        never be indexed again. Seen in the wild (a doc's chunks replaced while
+        its FTS rows survived), so the repair runs on every open, cheaply.
+        """
+        row = self.conn.execute(
+            "SELECT (SELECT COUNT(*) FROM chunks_fts) AS fts, "
+            "(SELECT COUNT(*) FROM chunks) AS chunks"
+        ).fetchone()
+        if row is None or int(row["fts"]) <= int(row["chunks"]):
+            return 0
+        with self.conn:
+            cursor = self.conn.execute(
+                "DELETE FROM chunks_fts WHERE rowid NOT IN (SELECT id FROM chunks)"
+            )
+        return int(cursor.rowcount)
 
     def _rebuild_fts_if_external(self) -> None:
         """Legacy DBs index raw text through an external-content FTS table;

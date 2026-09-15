@@ -245,21 +245,27 @@ def index_paths(
         if not is_indexable(file, info.st_size):
             stats.skip(file, "unsupported or too large")
             continue
-        content = read_text(file)
-        if content is None or not content.strip():
-            stats.skip(file, "no extractable text")
-            continue
+        # One bad file (corrupt archive, unreadable bytes, a wedged DB write)
+        # must never take down the whole pass — the watcher runs unattended.
+        try:
+            content = read_text(file)
+            if content is None or not content.strip():
+                stats.skip(file, "no extractable text")
+                continue
 
-        chunks = index_document(
-            store,
-            embedder,
-            source="local",
-            path=str(file),
-            content=content,
-            mtime=info.st_mtime,
-            chunk_chars=chunk_chars,
-            chunk_overlap=chunk_overlap,
-        )
+            chunks = index_document(
+                store,
+                embedder,
+                source="local",
+                path=str(file),
+                content=content,
+                mtime=info.st_mtime,
+                chunk_chars=chunk_chars,
+                chunk_overlap=chunk_overlap,
+            )
+        except Exception as exc:  # noqa: BLE001 - report and keep indexing
+            stats.skip(file, f"error: {type(exc).__name__}: {exc}")
+            continue
         if chunks:
             stats.indexed += 1
             stats.chunks += chunks

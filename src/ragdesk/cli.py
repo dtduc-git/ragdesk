@@ -358,21 +358,28 @@ def main(argv: list[str] | None = None) -> int:
                     summary = watch_pass(state)
                     if summary:
                         print(f"watch: {summary}", flush=True)
+                except Exception as exc:  # noqa: BLE001 - the loop must outlive a bad pass
+                    print(f"watch pass failed: {type(exc).__name__}: {exc}", flush=True)
                 finally:
                     state.activity["running"] = False
 
         def auto_index_loop() -> None:
             while True:
                 time.sleep(60)
-                values = app_settings.load()
-                if auto_index_due(values):
-                    summary = run_auto_index(state)
-                    print(f"auto-index: {summary}", flush=True)
-                released = release_idle_models(
-                    state, float(values.get("idle_unload_minutes") or 0)
-                )
-                if released:
-                    print(f"idle-release: {released}", flush=True)
+                try:
+                    values = app_settings.load()
+                    if auto_index_due(values):
+                        summary = run_auto_index(state)
+                        print(f"auto-index: {summary}", flush=True)
+                    released = release_idle_models(
+                        state, float(values.get("idle_unload_minutes") or 0)
+                    )
+                    if released:
+                        print(f"idle-release: {released}", flush=True)
+                except Exception as exc:  # noqa: BLE001 - never let the timer die
+                    print(
+                        f"auto-index failed: {type(exc).__name__}: {exc}", flush=True
+                    )
 
         threading.Thread(target=auto_index_loop, daemon=True).start()
         threading.Thread(target=watch_loop, daemon=True).start()
