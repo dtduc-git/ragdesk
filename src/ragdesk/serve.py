@@ -85,6 +85,9 @@ MEMORY_LIMIT = 3
 # Calibrated with the real embedder: same-intent paraphrases score 0.91-0.93,
 # different intents 0.14-0.35, so 0.88 replays only true paraphrases.
 SEMANTIC_CACHE_MIN_COSINE = 0.88
+# Bump when the answer prompt/format changes: cached answers from an older
+# prompt must never be replayed (they would look like the change did nothing).
+ANSWER_PROMPT_VERSION = "answer-v2-structured"
 SMART_RETRIEVAL_PROMPT = """You prepare a search over the reader's own notes and code.
 Given the conversation so far and the new question, reply with ONLY a JSON object:
 {"standalone": "<the question rewritten to stand alone, same language>",
@@ -1353,6 +1356,7 @@ class Handler(BaseHTTPRequestHandler):
         """Everything an answer depends on: corpus, embedder, model, spec."""
         return "|".join(
             [
+                ANSWER_PROMPT_VERSION,
                 str(store.get_meta("embedder.name") or ""),
                 str(self.state.llm_model or ""),
                 str(self.state.llm_spec or ""),
