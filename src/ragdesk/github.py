@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 
 from ragdesk import credentials, defaults
 from ragdesk.archive import tar_text_files as _tar_members
@@ -216,6 +217,7 @@ def sync_github(
     ref: str = "",
     subdir: str = "",
     timeout: float = 180.0,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> IndexStats:
     """Download and index a GitHub repository tarball (whole-repo sha skip)."""
     resolved = resolve_token(token)
@@ -232,8 +234,12 @@ def sync_github(
         return IndexStats()
 
     stats = IndexStats()
+    if progress is not None:
+        progress("repository downloaded, indexing files", 0, 0)
     for rel, content in _tar_members(data, subdir):
         stats.files_scanned += 1
+        if progress is not None:
+            progress(f"indexing {rel}", stats.files_scanned, 0)
         if not content.strip():
             stats.skipped += 1
             continue

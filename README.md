@@ -115,7 +115,8 @@ with — the index refuses mismatched embeddings.
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
 | Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | OpenAI-compatible endpoint (LM Studio / llama.cpp / cloud) |
-| Chat history: conversations in SQLite, multi-turn context, resume or start fresh | |
+| Chat history: conversations in SQLite, multi-turn context, a history popover (open/delete), resume or start fresh | |
+| Live progress: phased status while answering (searching → thinking, elapsed seconds) with a Stop button; sync/index activity in the rail | |
 | Answer cache: an identical question on an unchanged corpus replays instantly | |
 | Memory: durable notes you add (or extract from a chat) ride along with every answer | |
 | Semantic answer cache: a paraphrase of an answered question replays instantly (cosine ≥ 0.88, calibrated) | |

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -167,11 +167,18 @@ def index_document(
     return len(chunks)
 
 
-def index_paths(store: Store, embedder: Embedder, paths: list[Path]) -> IndexStats:
+def index_paths(
+    store: Store,
+    embedder: Embedder,
+    paths: list[Path],
+    progress: Callable[[str, int, int], None] | None = None,
+) -> IndexStats:
     store.ensure_embedder(embedder.name, embedder.dim)
     stats = IndexStats()
     for file in iter_files(paths):
         stats.files_scanned += 1
+        if progress is not None:
+            progress(f"indexing {file.name}", stats.files_scanned, 0)
         try:
             size = file.stat().st_size
         except OSError:

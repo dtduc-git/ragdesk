@@ -888,20 +888,176 @@ details.alt[open] summary {
 }
 
 .chat-tools {
+  position: relative;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
 }
 
-.chat-tools select {
-  max-width: 260px;
-  padding: 7px 10px;
+.chat-tools .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: inherit;
+}
+
+.chat-history-label {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+}
+
+/* The history trigger is not a destructive action: keep hover ink, never red. */
+.chat-tools #chat-history-btn:hover {
   color: var(--ink);
   background: var(--card);
+  border-color: var(--ink);
+}
+
+.chat-current {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.chat-history-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(420px, 80vw);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--card);
   border: 1px solid var(--rule);
+  border-top: 3px solid var(--ink);
   border-radius: 3px;
+  box-shadow: 0 12px 28px rgb(29 40 48 / 14%);
+}
+
+.chat-history-new,
+.chat-history-open,
+.chat-history-delete {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.chat-history-new {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  font-size: 13px;
+  text-align: left;
+  border-bottom: 1px solid var(--rule);
+}
+
+.chat-history-new:hover {
+  background: var(--paper);
+}
+
+.chat-history-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--rule);
+}
+
+.chat-history-row:last-child {
+  border-bottom: none;
+}
+
+.chat-history-row.is-current .chat-history-title {
+  font-weight: 600;
+}
+
+.chat-history-open {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.chat-history-open:hover {
+  background: var(--paper);
+}
+
+.chat-history-title {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-history-when {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.chat-history-delete {
+  padding: 6px 10px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-soft);
+}
+
+.chat-history-delete:hover {
+  color: var(--flag);
+}
+
+.chat-history-empty {
+  margin: 10px 12px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+/* --- live activity + streaming status -------------------------------------- */
+
+.rail-activity {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--stamp);
+  overflow-wrap: anywhere;
+}
+
+.answer-status {
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.answer-status:empty {
+  display: none;
+}
+
+.composer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preset-cta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.preset-cta:empty {
+  display: none;
 }
 
 .cache-badge {

@@ -156,6 +156,15 @@ class AppState:
         self.github_device: dict[str, Any] | None = None
         self.msgraph_device: dict[str, Any] | None = None
         self.last_used = time.monotonic()
+        self.activity: dict[str, Any] = {
+            "running": False,
+            "kind": "",
+            "detail": "",
+            "done": 0,
+            "total": 0,
+            "started": 0.0,
+            "owner": "",
+        }
         self.lock = threading.Lock()
 
     def touch(self) -> None:
@@ -231,6 +240,7 @@ class Handler(BaseHTTPRequestHandler):
                             "last_run": settings.load()["auto_index_last"],
                         },
                         "hyde": bool(settings.load()["hyde"]),
+                        "activity": dict(self.state.activity),
                         "memory": {
                             "models_loaded": self.state.llm is not None
                             or getattr(self.state.embedder, "loaded", False),
@@ -483,8 +493,19 @@ class Handler(BaseHTTPRequestHandler):
         if not paths:
             self._send(400, {"error": "paths required"})
             return
-        with self.state.lock, Store(self.state.db) as store:
-            stats = index_paths(store, self.state.embedder, paths)
+        token = self._begin_activity("index")
+        try:
+            with self.state.lock, Store(self.state.db) as store:
+                stats = index_paths(
+                    store,
+                    self.state.embedder,
+                    paths,
+                    progress=lambda detail, done, total: self._update_activity(
+                        token, detail, done, total
+                    ),
+                )
+        finally:
+            self.state.activity["running"] = False
         self._send(
             200,
             {
@@ -501,14 +522,21 @@ class Handler(BaseHTTPRequestHandler):
         if not repo:
             self._send(400, {"error": "repo required (owner/name)"})
             return
-        with self.state.lock, Store(self.state.db) as store:
-            stats = sync_github(
-                store,
-                self.state.embedder,
-                repo=repo,
-                ref=str(body.get("ref", "")),
-                subdir=str(body.get("subdir", "")),
-            )
+        token = self._begin_activity(f"github:{repo}")
+        try:
+            with self.state.lock, Store(self.state.db) as store:
+                stats = sync_github(
+                    store,
+                    self.state.embedder,
+                    repo=repo,
+                    ref=str(body.get("ref", "")),
+                    subdir=str(body.get("subdir", "")),
+                    progress=lambda detail, done, total: self._update_activity(
+                        token, detail, done, total
+                    ),
+                )
+        finally:
+            self.state.activity["running"] = False
         self._send(
             200,
             {
@@ -1026,8 +1054,11 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _handle_ask_stream(self, body: dict[str, Any]) -> None:
-        """Stream the answer as newline-delimited JSON (headers are committed
-        before the LLM call, so failures arrive as an ``error`` line)."""
+        """Stream phased status lines, then the answer as NDJSON.
+
+        Headers are committed before any work, so the UI can show live progress
+        ("searching…", "loading the model…", "writing…") instead of a dead caret.
+        """
         query, filters = parse_filters(str(body.get("query", "")))
         if not query:
             self._send(400, {"error": "query required (folder:/source: alone is not a query)"})
@@ -1035,8 +1066,25 @@ class Handler(BaseHTTPRequestHandler):
         top_k = int(body.get("top_k", 6))
         min_cosine = float(body.get("min_cosine", 0.0))
         chat_id = int(body.get("chat_id") or 0)
-        hyde_text = self._hyde_text(query)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Connection", "close")
+        for key, value in CORS_HEADERS.items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.close_connection = True
+
+        def emit(payload: dict[str, Any]) -> None:
+            self.wfile.write((json.dumps(payload) + "\n").encode())
+            self.wfile.flush()
+
         try:
+            emit({"status": "searching your sources…"})
+            hyde_text = ""
+            if settings.load().get("hyde"):
+                emit({"status": "drafting a hypothetical answer (HyDE)…"})
+                hyde_text = self._hyde_text(query)
             with self.state.lock, Store(self.state.db) as store:
                 query_vec = self.state.embedder.embed_query(query)
                 hits = retrieve(
@@ -1058,64 +1106,51 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 history = store.recent_turns(chat_id) if chat_id else []
                 memory = None if cached is not None else self._relevant_memories(store, query)
-        except Exception as exc:  # noqa: BLE001 - headers not sent yet
-            self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
-            return
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/x-ndjson")
-        self.send_header("Connection", "close")
-        for key, value in CORS_HEADERS.items():
-            self.send_header(key, value)
-        self.end_headers()
-        self.close_connection = True
-        try:
             if cached is not None:
-                # An identical question on an unchanged corpus: replay instantly.
                 cached_answer = str(cached["answer"])
-                self.wfile.write((json.dumps({"delta": cached_answer}) + "\n").encode())
-                self.wfile.flush()
+                emit({"delta": cached_answer})
                 chat_id = self._record_exchange(
                     chat_id, query, cached_answer, list(cached["citations"])
                 )
-                done = {
-                    "done": True,
-                    "hits": cached["citations"],
-                    "cached": True,
-                    "cached_question": str(cached["question"]),
-                    "chat_id": chat_id,
-                }
-            else:
-                pieces: list[str] = []
-                for piece in answer_stream(
-                    query,
-                    hits,
-                    LazyLLM(self.state),
-                    min_cosine=min_cosine,
-                    history=history,
-                    memory=memory,
-                ):
-                    pieces.append(str(piece))
-                    self.wfile.write((json.dumps({"delta": piece}) + "\n").encode())
-                    self.wfile.flush()
-                text = "".join(pieces).strip() or REFUSAL
-                citations = [hit_to_dict(hit) for hit in hits]
-                chat_id = self._record_exchange(
-                    chat_id,
-                    query,
-                    text,
-                    citations,
-                    cache_key=None if text == REFUSAL else cache_key,
-                    cache_embedding=None if text == REFUSAL else query_vec,
-                    fingerprint=fingerprint,
+                emit(
+                    {
+                        "done": True,
+                        "hits": cached["citations"],
+                        "cached": True,
+                        "cached_question": str(cached["question"]),
+                        "chat_id": chat_id,
+                    }
                 )
-                done = {"done": True, "hits": citations, "cached": False, "chat_id": chat_id}
-            self.wfile.write((json.dumps(done) + "\n").encode())
-            self.wfile.flush()
+                return
+            if self.state.llm is None:
+                emit({"status": "loading the answer model…"})
+            emit({"status": "thinking…"})
+            pieces: list[str] = []
+            for piece in answer_stream(
+                query,
+                hits,
+                LazyLLM(self.state),
+                min_cosine=min_cosine,
+                history=history,
+                memory=memory,
+            ):
+                pieces.append(str(piece))
+                emit({"delta": piece})
+            text = "".join(pieces).strip() or REFUSAL
+            citations = [hit_to_dict(hit) for hit in hits]
+            chat_id = self._record_exchange(
+                chat_id,
+                query,
+                text,
+                citations,
+                cache_key=None if text == REFUSAL else cache_key,
+                cache_embedding=None if text == REFUSAL else query_vec,
+                fingerprint=fingerprint,
+            )
+            emit({"done": True, "hits": citations, "cached": False, "chat_id": chat_id})
         except Exception as exc:  # noqa: BLE001 - headers already sent
             try:
-                self.wfile.write((json.dumps({"error": str(exc)}) + "\n").encode())
-                self.wfile.flush()
+                emit({"error": str(exc)})
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
@@ -1158,6 +1193,28 @@ class Handler(BaseHTTPRequestHandler):
                 filters=filters,
             )
         self._send(200, {"query": query, "hits": [hit_to_dict(hit) for hit in hits]})
+
+    def _begin_activity(self, kind: str) -> str:
+        token = f"{kind}:{time.time()}"
+        self.state.activity = {
+            "running": True,
+            "kind": kind,
+            "detail": "starting",
+            "done": 0,
+            "total": 0,
+            "started": time.time(),
+            "owner": token,
+        }
+        return token
+
+    def _update_activity(self, token: str, detail: str, done: int = 0, total: int = 0) -> None:
+        """Progress from one run only: a stale callback must not clobber the
+        activity a newer (or the auto-index) run owns."""
+        if not self.state.activity.get("running"):
+            return
+        if token and self.state.activity.get("owner") != token:
+            return
+        self.state.activity.update({"detail": detail, "done": done, "total": total})
 
     def _fingerprint(self, store: Store) -> str:
         """Everything an answer depends on: corpus, embedder, model, spec."""
@@ -1537,11 +1594,29 @@ def release_idle_models(state: AppState, minutes: float) -> dict[str, Any] | Non
 
 def run_auto_index(state: AppState) -> dict[str, Any]:
     """Re-index the recorded local paths; called by the serve auto-index timer."""
+    token = f"auto-index:{time.time()}"
+    state.activity = {
+        "running": True,
+        "kind": "auto-index",
+        "detail": "starting",
+        "done": 0,
+        "total": 0,
+        "started": time.time(),
+        "owner": token,
+    }
+
+    def progress(detail: str, done: int, total: int) -> None:
+        if state.activity.get("owner") == token:
+            state.activity.update({"detail": detail, "done": done, "total": total})
+
     with state.lock, Store(state.db) as store:
         roots = [
             Path(entry["path"]) for entry in store.local_paths() if Path(entry["path"]).exists()
         ]
-        stats = index_paths(store, state.embedder, roots) if roots else None
+        stats = (
+            index_paths(store, state.embedder, roots, progress=progress) if roots else None
+        )
+    state.activity["running"] = False
     settings.save(
         {"auto_index_last": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")}
     )

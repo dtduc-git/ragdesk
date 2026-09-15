@@ -39,6 +39,7 @@
             </div>
           </div>
           <p class="rail-meta" id="rail-meta">connecting to the local index…</p>
+        <p class="rail-activity" id="rail-activity" hidden></p>
           <button class="btn btn-quiet theme-toggle" type="button" id="theme-toggle">Dark theme</button>
         </div>
       </aside>
@@ -52,10 +53,12 @@
                 <p>Answers are drawn only from your indexed sources, with citations.</p>
               </div>
               <div class="chat-tools">
-                <select id="chat-history" aria-label="Past conversations">
-                  <option value="0">New conversation</option>
-                </select>
-                <button class="btn btn-quiet" type="button" id="chat-new">＋ New chat</button>
+                <button class="btn btn-quiet" type="button" id="chat-history-btn" aria-haspopup="listbox">
+                  <span class="chat-history-label">History</span>
+                  <span class="chat-current" id="chat-current">New conversation</span>
+                </button>
+                <button class="btn btn-primary" type="button" id="chat-new">＋ New chat</button>
+                <div class="chat-history-panel" id="chat-history-panel" hidden></div>
               </div>
             </div>
           </header>
@@ -72,7 +75,10 @@
               placeholder="Ask about your sources… (filter with folder:Financial)"
               aria-label="Question"
             ></textarea>
-            <button class="btn btn-primary" type="submit" id="chat-send">Ask</button>
+            <div class="composer-actions">
+              <button class="btn btn-quiet" type="button" id="chat-stop" hidden>Stop</button>
+              <button class="btn btn-primary" type="submit" id="chat-send">Ask</button>
+            </div>
           </form>
         </section>
 
@@ -216,6 +222,7 @@
                 <button class="seg-item" type="button" data-value="quality">Quality</button>
               </div>
               <p class="caption" id="preset-note">…</p>
+              <div class="preset-cta" id="preset-cta"></div>
             </section>
           </div>
         </section>

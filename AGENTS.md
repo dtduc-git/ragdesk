@@ -80,6 +80,13 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   dispatcher for PDFs, office files, images (OCR) and plain text. Never decode
   raw bytes to text at a call site — `is_indexable` admits those types now, so
   a local decode would index image bytes as mojibake.
+- Long jobs report progress through `state.activity` (owner-token guarded so
+  concurrent runs cannot clobber each other): index/sync endpoints pass a
+  progress callback into `index_paths`/`sync_github`/`sync_gitlab`, auto-index
+  claims the slot too, and `/api/status.activity` feeds the rail + sync cards.
+- `ask_stream` commits headers first and then emits `{"status": …}` lines
+  (searching → HyDE → loading the model → thinking) before the deltas, so the
+  UI shows phases + elapsed seconds and can abort with the Stop button.
 - Idle unload: the serve timer releases the embedder session and the LLM after
   `idle_unload_minutes` (Settings; 0 = never) of no POSTs; ONNX workspace
   memory does not respond to arena/batch tuning, so dropping the session is

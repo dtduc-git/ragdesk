@@ -15,6 +15,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 
 from ragdesk import credentials
 from ragdesk.archive import tar_text_files
@@ -124,6 +125,7 @@ def sync_gitlab(
     subdir: str = "",
     base_url: str = DEFAULT_BASE_URL,
     timeout: float = 180.0,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> IndexStats:
     resolved = resolve_token(token)
     if resolved is None:
@@ -148,6 +150,8 @@ def sync_gitlab(
     stats = IndexStats()
     for rel, content in tar_text_files(data, subdir):
         stats.files_scanned += 1
+        if progress is not None:
+            progress(f"indexing {rel}", stats.files_scanned, 0)
         if not content.strip():
             stats.skipped += 1
             continue

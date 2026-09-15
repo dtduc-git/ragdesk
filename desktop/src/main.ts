@@ -36,6 +36,14 @@ type Status = {
   auto_index: { hours: number; last_run: string };
   memory: { models_loaded: boolean; idle_unload_minutes: number };
   hyde: boolean;
+  activity: {
+    running: boolean;
+    kind: string;
+    detail: string;
+    done: number;
+    total: number;
+    started: number;
+  };
   presets: Array<{ name: string; note: string; rerank: string; llm: string }>;
   llm: { kind: string; model: string; note: string };
   llm_setup: {
@@ -245,13 +253,13 @@ function renderLlmSetup(status: Status): void {
   if (status.llm.kind !== "none") {
     const pending =
       status.llm.kind === "mlx" && !status.llm_setup.mlx_cached
-        ? `<p class="source-note">The model is not downloaded yet — without this button the first question would fetch it silently.</p>`
+        ? `<p class="source-note">This preset's model is not downloaded yet — use the button in Machine preset below, or the first question will fetch it silently.</p>`
         : "";
     box.innerHTML = `
       <div class="status-line">
         <span class="status-model"><span class="dot is-hot"></span>${escapeHtml(status.llm.model)}</span>
         <span class="status-kind">${status.llm.kind === "mlx" ? "in-process on this machine" : "reused from your Ollama"}</span>
-      </div>${pending}${buttons}${error}`;
+      </div>${pending}${error}`;
     return;
   }
   box.innerHTML =
@@ -272,6 +280,33 @@ function startSetupPolling(): void {
       setupTimer = undefined;
     }
   }, 2000);
+}
+
+let activityPoll: number | undefined;
+
+function renderActivity(status: Status): void {
+  const line = $("rail-activity");
+  const activity = status.activity;
+  if (!activity.running) {
+    line.hidden = true;
+    if (activityPoll) {
+      window.clearInterval(activityPoll);
+      activityPoll = undefined;
+    }
+    return;
+  }
+  const elapsed = Math.max(0, Math.round(Date.now() / 1000 - activity.started));
+  line.hidden = false;
+  line.textContent = `${activity.kind} · ${activity.detail}${activity.done ? ` (${activity.done})` : ""} · ${elapsed}s`;
+  const cardKind = activity.kind.split(":")[0];
+  if (cardKind === "github" || cardKind === "gitlab") {
+    setResult(cardKind, `syncing — ${activity.detail} · ${elapsed}s`);
+  } else if (cardKind === "index") {
+    setResult("local", `indexing — ${activity.detail} · ${elapsed}s`);
+  }
+  if (!activityPoll) {
+    activityPoll = window.setInterval(() => void loadStatus(), 1500);
+  }
 }
 
 function renderStatus(): void {
@@ -316,6 +351,17 @@ function renderStatus(): void {
   $("preset-note").textContent = activePreset
     ? `${activePreset.note} · rerank ${activePreset.rerank}`
     : "";
+  const repoShort = status.llm_setup.mlx_repo.split("/").pop() ?? "";
+  const needsDownload =
+    status.llm.kind === "mlx" &&
+    status.llm_setup.mlx_available &&
+    !status.llm_setup.mlx_cached &&
+    Boolean(status.llm_setup.mlx_repo);
+  $("preset-cta").innerHTML = needsDownload
+    ? `<button class="btn btn-primary" type="button" data-action="llm-setup-mlx">Download ${escapeHtml(repoShort)}</button>
+       <span class="caption">one-time download for this preset — it stays on this machine</span>`
+    : "";
+  renderActivity(status);
   if (status.sources.length === 0) {
     table.innerHTML = `<p class="muted">Nothing indexed yet. Add a source.</p>`;
     return;
@@ -397,6 +443,7 @@ document.addEventListener("click", (event) => {
 // --- chat ---------------------------------------------------------------------
 
 let streaming = false;
+let activeAbort: AbortController | null = null;
 
 function appendUserMessage(query: string): void {
   document.getElementById("chat-empty")?.remove();
@@ -406,15 +453,20 @@ function appendUserMessage(query: string): void {
   $("chat-log").append(message);
 }
 
-function appendAssistantShell(): { answer: HTMLElement; cites: HTMLElement } {
+function appendAssistantShell(): {
+  answer: HTMLElement;
+  cites: HTMLElement;
+  status: HTMLElement;
+} {
   const message = document.createElement("div");
   message.className = "msg msg-assistant";
-  message.innerHTML = `<div class="answer streaming"></div><div class="cites"></div>`;
+  message.innerHTML = `<div class="answer-status"></div><div class="answer streaming"></div><div class="cites"></div>`;
   $("chat-log").append(message);
   message.scrollIntoView({ block: "end" });
   return {
     answer: message.querySelector<HTMLElement>(".answer") as HTMLElement,
     cites: message.querySelector<HTMLElement>(".cites") as HTMLElement,
+    status: message.querySelector<HTMLElement>(".answer-status") as HTMLElement,
   };
 }
 
@@ -425,14 +477,24 @@ async function ask(query: string): Promise<void> {
   }
   streaming = true;
   $<HTMLButtonElement>("chat-send").disabled = true;
+  $("chat-stop").hidden = false;
   appendUserMessage(query);
-  const { answer, cites } = appendAssistantShell();
+  const { answer, cites, status: statusLine } = appendAssistantShell();
+  const startedAt = Date.now();
+  let phase = "working…";
+  const ticker = window.setInterval(() => {
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    statusLine.textContent = `${phase} ${seconds}s`;
+  }, 1000);
+  statusLine.textContent = "working…";
+  activeAbort = new AbortController();
 
   try {
     const response = await fetch(`${API}/api/ask/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, top_k: 6, chat_id: currentChatId }),
+      signal: activeAbort.signal,
     });
     if (!response.ok || !response.body) {
       const data: unknown = await response.json().catch(() => ({}));
@@ -454,6 +516,7 @@ async function ask(query: string): Promise<void> {
         if (line) {
           const event = JSON.parse(line) as {
             delta?: string;
+            status?: string;
             done?: boolean;
             error?: string;
             hits?: Hit[];
@@ -461,6 +524,11 @@ async function ask(query: string): Promise<void> {
             cached_question?: string;
             chat_id?: number;
           };
+          if (event.status) {
+            phase = event.status;
+            const seconds = Math.round((Date.now() - startedAt) / 1000);
+            statusLine.textContent = `${phase} ${seconds}s`;
+          }
           if (event.delta) {
             answer.textContent += event.delta;
             answer.scrollIntoView({ block: "end" });
@@ -468,6 +536,8 @@ async function ask(query: string): Promise<void> {
           if (event.error) throw new Error(event.error);
           if (event.done) {
             finished = true;
+            window.clearInterval(ticker);
+            statusLine.remove();
             answer.classList.remove("streaming");
             answer.classList.toggle("is-refused", answer.textContent === REFUSAL);
             renderCites(cites, event.hits ?? []);
@@ -488,14 +558,26 @@ async function ask(query: string): Promise<void> {
       }
     }
   } catch (error) {
+    window.clearInterval(ticker);
     answer.classList.remove("streaming");
-    answer.classList.add("is-error");
-    answer.textContent = error instanceof Error ? error.message : String(error);
+    if (error instanceof Error && error.name === "AbortError") {
+      statusLine.textContent = "stopped — the partial answer stays above";
+    } else {
+      answer.classList.add("is-error");
+      answer.textContent = error instanceof Error ? error.message : String(error);
+      statusLine.remove();
+    }
   } finally {
     streaming = false;
+    activeAbort = null;
+    $("chat-stop").hidden = true;
     $<HTMLButtonElement>("chat-send").disabled = false;
   }
 }
+
+$("chat-stop").addEventListener("click", () => {
+  activeAbort?.abort();
+});
 
 function renderCites(container: HTMLElement, hits: Hit[]): void {
   if (hits.length === 0) return;
@@ -544,26 +626,82 @@ type ChatMessage = { id: number; role: string; text: string; citations: Hit[] };
 type ChatSummary = { id: number; title: string; updated_at: string; messages: number };
 
 let currentChatId = 0;
+let chatCache: ChatSummary[] = [];
 const chatLogTemplate = $("chat-log").innerHTML;
 
-function chatLabel(chat: ChatSummary): string {
-  const when = (chat.updated_at || "").slice(0, 16);
-  return `${chat.title.slice(0, 44)} · ${when}`;
+function relativeWhen(stamp: string): string {
+  const parsed = Date.parse(`${stamp.replace(" ", "T")}Z`);
+  if (Number.isNaN(parsed)) return stamp.slice(0, 16);
+  const minutes = Math.round((Date.now() - parsed) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60 * 24) return `${Math.round(minutes / 60)}h ago`;
+  return `${Math.round(minutes / (60 * 24))}d ago`;
+}
+
+function renderHistoryPanel(): void {
+  const panel = $("chat-history-panel");
+  const rows = chatCache
+    .map(
+      (chat) => `<div class="chat-history-row${chat.id === currentChatId ? " is-current" : ""}" data-chat="${chat.id}">
+        <button class="chat-history-open" type="button" data-chat="${chat.id}">
+          <span class="chat-history-title">${escapeHtml(chat.title)}</span>
+          <span class="chat-history-when">${relativeWhen(chat.updated_at)} · ${chat.messages} msg${chat.messages === 1 ? "" : "s"}</span>
+        </button>
+        <button class="chat-history-delete" type="button" data-delete="${chat.id}" aria-label="Delete conversation">×</button>
+      </div>`,
+    )
+    .join("");
+  panel.innerHTML =
+    `<button class="chat-history-new" type="button" data-chat="0">＋ New conversation</button>` +
+    (rows || `<p class="chat-history-empty">No conversations yet.</p>`);
 }
 
 async function loadChats(): Promise<ChatSummary[]> {
   try {
     const { chats } = await get<{ chats: ChatSummary[] }>("/api/chats");
-    const select = $<HTMLSelectElement>("chat-history");
-    select.innerHTML =
-      `<option value="0">New conversation</option>` +
-      chats.map((chat) => `<option value="${chat.id}">${escapeHtml(chatLabel(chat))}</option>`).join("");
-    select.value = String(currentChatId);
+    chatCache = chats;
+    const current = chats.find((chat) => chat.id === currentChatId);
+    $("chat-current").textContent = current ? current.title : "New conversation";
+    renderHistoryPanel();
     return chats;
   } catch {
     return [];
   }
 }
+
+$("chat-history-btn").addEventListener("click", () => {
+  const panel = $("chat-history-panel");
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) void loadChats();
+});
+
+$("chat-history-panel").addEventListener("click", async (event) => {
+  const target = event.target as HTMLElement;
+  const deleteId = Number(target.closest<HTMLElement>("[data-delete]")?.dataset.delete ?? 0);
+  if (deleteId) {
+    try {
+      await post("/api/chats/delete", { chat_id: deleteId });
+      if (deleteId === currentChatId) newChat();
+      await loadChats();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+    }
+    return;
+  }
+  const openId = Number(target.closest<HTMLElement>("[data-chat]")?.dataset.chat ?? -1);
+  if (openId === -1) return;
+  $("chat-history-panel").hidden = true;
+  if (openId === 0) newChat();
+  else void openChat(openId);
+});
+
+document.addEventListener("click", (event) => {
+  const panel = $("chat-history-panel");
+  if (panel.hidden) return;
+  const target = event.target as HTMLElement;
+  if (!target.closest(".chat-tools")) panel.hidden = true;
+});
 
 function resetChatLog(): void {
   $("chat-log").innerHTML = chatLogTemplate;
@@ -594,7 +732,7 @@ async function openChat(id: number): Promise<void> {
     const detail = await get<{ messages: ChatMessage[] }>(`/api/chats/${id}`);
     currentChatId = id;
     renderChat(detail.messages);
-    $<HTMLSelectElement>("chat-history").value = String(id);
+    await loadChats();
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error));
   }
@@ -603,14 +741,8 @@ async function openChat(id: number): Promise<void> {
 function newChat(): void {
   currentChatId = 0;
   resetChatLog();
-  $<HTMLSelectElement>("chat-history").value = "0";
+  void loadChats();
 }
-
-$("chat-history").addEventListener("change", (event) => {
-  const id = Number((event.target as HTMLSelectElement).value);
-  if (id === 0) newChat();
-  else void openChat(id);
-});
 
 $("chat-new").addEventListener("click", () => newChat());
 
@@ -1276,7 +1408,7 @@ $("source-grid").addEventListener("submit", async (event) => {
   }
 });
 
-$("llm-setup").addEventListener("click", async (event) => {
+document.addEventListener("click", async (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
   const action = target?.dataset.action ?? "";
   if (action !== "llm-setup-mlx" && action !== "llm-setup-ollama") return;

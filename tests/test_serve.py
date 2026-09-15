@@ -744,6 +744,18 @@ def test_preset_setting_applies_without_restart(base_url: str):
     assert excinfo.value.code == 400
 
 
+def test_status_reports_activity_shape(base_url: str, tmp_path: Path):
+    docs = tmp_path / "activity"
+    docs.mkdir()
+    (docs / "note.md").write_text("activity probe note")
+    request(f"{base_url}/api/index", {"paths": [str(docs)]})
+    status, payload = request(f"{base_url}/api/status")
+    assert status == 200
+    activity = payload["activity"]
+    assert activity["running"] is False  # finished by the time we ask
+    assert {"kind", "detail", "done", "total", "started"} <= set(activity)
+
+
 def test_sync_gitlab_requires_project(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/gitlab", {})
@@ -906,6 +918,9 @@ def test_ask_stream(base_url: str, monkeypatch):
     assert text == "Hello"
     assert lines[-1]["done"] is True
     assert lines[-1]["hits"]
+    statuses = [line["status"] for line in lines if "status" in line]
+    assert any("searching" in status for status in statuses)
+    assert any("thinking" in status for status in statuses)
 
 
 def test_ask_stream_requires_query(base_url: str):
