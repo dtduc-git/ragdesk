@@ -217,7 +217,10 @@ function activateTab(tab: string): void {
   document.querySelectorAll<HTMLElement>(".panel").forEach((panel) => {
     panel.classList.toggle("is-active", panel.id === `panel-${tab}`);
   });
-  if (tab === "indexed") void loadDuplicates();
+  if (tab === "indexed") {
+    void loadHealth();
+    void loadDuplicates();
+  }
   if (tab === "sources") void loadBookmarks();
 }
 
@@ -1989,6 +1992,202 @@ document.addEventListener("click", (event) => {
   }
 });
 
+// --- health + never-index + backups --------------------------------------------
+
+type Health = {
+  documents: number;
+  chunks: number;
+  db_bytes: number;
+  embedder: { index: string; current: string; matches: boolean };
+  last_index: {
+    at?: string;
+    roots?: string[];
+    files_scanned?: number;
+    indexed?: number;
+    unchanged?: number;
+    skipped?: number;
+    chunks?: number;
+    skipped_samples?: Array<{ path: string; reason: string }>;
+  };
+  oldest: Array<{ path: string; mtime: number; indexed_at: string }>;
+  never_index: { patterns: string[]; indexed_matches: string[] };
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+function shortWhen(stamp: number | string): string {
+  const date = typeof stamp === "number" ? new Date(stamp * 1000) : new Date(`${stamp}Z`);
+  return Number.isNaN(date.getTime()) ? String(stamp).slice(0, 16) : date.toISOString().slice(0, 10);
+}
+
+async function loadHealth(): Promise<void> {
+  const box = $("health-body");
+  try {
+    const health = await get<Health>("/api/health");
+    const run = health.last_index;
+    const samples = run.skipped_samples ?? [];
+    box.innerHTML = `
+      <p class="health-line ${health.embedder.matches ? "is-ok" : "is-warn"}">
+        <span class="health-dot"></span>
+        embedder ${escapeHtml(health.embedder.index || "unset")}${
+          health.embedder.matches ? "" : ` — index built with ${escapeHtml(health.embedder.index)}, now ${escapeHtml(health.embedder.current)}`
+        }
+      </p>
+      <p class="health-line">
+        <span class="health-dot"></span>
+        ${
+          run.at
+            ? `last local run ${escapeHtml(run.at)} · ${run.indexed ?? 0} indexed · ${run.unchanged ?? 0} unchanged · ${run.skipped ?? 0} skipped · +${run.chunks ?? 0} chunks`
+            : "no local index run recorded yet"
+        }
+      </p>
+      ${
+        samples.length
+          ? `<div class="health-samples">${samples
+              .map(
+                (sample) =>
+                  `<p class="health-sample"><code data-open-path="${escapeHtml(sample.path)}" title="Open file">${escapeHtml(sample.path.split("/").pop() ?? sample.path)}</code> — ${escapeHtml(sample.reason)}</p>`,
+              )
+              .join("")}</div>`
+          : ""
+      }
+      ${
+        health.oldest.length
+          ? `<p class="health-line"><span class="health-dot"></span>oldest: ${health.oldest
+              .map(
+                (doc) =>
+                  `${escapeHtml(shortWhen(doc.mtime))} <code data-open-path="${escapeHtml(doc.path)}" title="Open file">${escapeHtml(doc.path.split("/").pop() ?? doc.path)}</code>`,
+              )
+              .join(" · ")}</p>`
+          : ""
+      }
+      ${
+        health.never_index.indexed_matches.length
+          ? `<p class="health-line is-warn"><span class="health-dot"></span>${health.never_index.indexed_matches.length} document(s) still match a never-index pattern — save the patterns again to remove them</p>`
+          : ""
+      }
+      <p class="health-line"><span class="health-dot"></span>${health.documents} documents · ${health.chunks} chunks · ${formatBytes(health.db_bytes)} on disk</p>`;
+  } catch (error) {
+    box.innerHTML = `<p class="caption">${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
+  }
+}
+
+async function loadNeverIndex(): Promise<void> {
+  const box = $("never-index-list");
+  try {
+    const health = await get<Health>("/api/health");
+    const patterns = health.never_index.patterns;
+    box.innerHTML = patterns.length
+      ? patterns
+          .map(
+            (pattern) => `<div class="memory-item">
+              <span class="bookmark-url">${escapeHtml(pattern)}</span>
+              <button class="memory-drop" type="button" data-never="${escapeHtml(pattern)}" aria-label="Stop this pattern">×</button>
+            </div>`,
+          )
+          .join("")
+      : `<p class="caption">nothing excluded</p>`;
+  } catch {
+    box.innerHTML = "";
+  }
+}
+
+async function saveNeverIndex(patterns: string[]): Promise<void> {
+  const result = await post<{ removed: string[] }>("/api/never-index", { patterns });
+  $("never-index-status").textContent = result.removed.length
+    ? `removed ${result.removed.length} document(s) from the index`
+    : "patterns saved";
+  await loadNeverIndex();
+  await loadHealth();
+  await loadStatus();
+}
+
+$("never-index-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $<HTMLInputElement>("never-index-input");
+  const pattern = input.value.trim();
+  if (!pattern) return;
+  try {
+    const health = await get<Health>("/api/health");
+    if (!health.never_index.patterns.includes(pattern)) {
+      await saveNeverIndex([...health.never_index.patterns, pattern]);
+    }
+    input.value = "";
+  } catch (error) {
+    $("never-index-status").textContent =
+      error instanceof Error ? error.message : String(error);
+  }
+});
+
+$("never-index-list")?.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>("[data-never]");
+  if (!button) return;
+  try {
+    const health = await get<Health>("/api/health");
+    await saveNeverIndex(
+      health.never_index.patterns.filter((pattern) => pattern !== button.dataset.never),
+    );
+    $("never-index-status").textContent = "pattern removed — matching files return on the next index run";
+  } catch (error) {
+    $("never-index-status").textContent =
+      error instanceof Error ? error.message : String(error);
+  }
+});
+
+async function loadBackups(): Promise<void> {
+  const box = $("backup-list");
+  if (!box) return;
+  try {
+    const { backups } = await get<{ backups: Array<{ path: string; name: string; bytes: number; at: string }> }>(
+      "/api/backups",
+    );
+    box.innerHTML = backups.length
+      ? backups
+          .map(
+            (backup) => `<div class="memory-item">
+              <span class="bookmark-url" title="${escapeHtml(backup.path)}">${escapeHtml(backup.at)} · ${formatBytes(backup.bytes)}</span>
+              <span class="bookmark-tools">
+                <button class="action" type="button" data-restore="${escapeHtml(backup.path)}">Restore</button>
+              </span>
+            </div>`,
+          )
+          .join("")
+      : `<p class="caption">no backups yet</p>`;
+  } catch {
+    box.innerHTML = "";
+  }
+}
+
+$("backup-now")?.addEventListener("click", async () => {
+  $("backup-status").textContent = "working…";
+  try {
+    const result = await post<{ path: string; bytes: number }>("/api/backup", {});
+    $("backup-status").textContent = `saved ${formatBytes(result.bytes)} — ${result.path.split("/").pop()}`;
+    await loadBackups();
+  } catch (error) {
+    $("backup-status").textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+$("backup-list")?.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>("[data-restore]");
+  if (!button?.dataset.restore) return;
+  const name = button.dataset.restore.split("/").pop();
+  if (!window.confirm(`Restore the index from ${name}? A safety copy of the current index is kept.`)) return;
+  $("backup-status").textContent = "restoring…";
+  try {
+    await post("/api/restore", { path: button.dataset.restore });
+    window.location.reload();
+  } catch (error) {
+    $("backup-status").textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
 function renderAnswerActions(
   message: HTMLElement,
   actions: HTMLElement,
@@ -2528,6 +2727,8 @@ async function boot(): Promise<void> {
     await loadConnections();
     void loadMemories();
     void loadCorrections();
+    void loadNeverIndex();
+    void loadBackups();
     void loadMcp();
     if (!status.onboarded) {
       wizardStep = 0;

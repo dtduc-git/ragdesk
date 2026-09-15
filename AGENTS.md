@@ -137,6 +137,16 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   bash|zsh|fish`, `ragdesk man` (all in `complete.py`, generated from the
   argparse tree so they cannot drift; `complete._subparsers` reads argparse
   internals on purpose).
+- Reliability surfaces: `GET /api/health` (embedder match, last local run +
+  `skipped_samples` from `store.last_index_report()`, oldest documents, db
+  size, never-index patterns + docs still matching them), `POST
+  /api/never-index {patterns}` (saves `settings.never_index` AND prunes matching
+  documents — redaction, not just prevention; `index_paths` skips matching files
+  as `never-index pattern`), and `GET /api/backups` + `POST /api/backup` +
+  `POST /api/restore {path}` (`run_backup`/`restore_backup` use the SQLite
+  backup API so they are safe while the app runs; a restore takes a safety
+  snapshot first, and same-second snapshots get a `-N` suffix — without it the
+  safety copy silently overwrote the backup being restored).
 - **FTS wedge (fixed 2026-09-15, live incident):** a `chunks_fts` row whose
   chunk was gone collided with the next chunk id once ids were reused
   ("constraint failed" on insert), every re-index of that file failed, and the

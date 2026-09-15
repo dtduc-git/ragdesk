@@ -128,6 +128,68 @@ def test_smart_retrieval_prompt_renders_its_json_example():
     assert "{history}" not in rendered
 
 
+def test_health_endpoint_reports_the_index_state(base_url: str):
+    status, payload = request(f"{base_url}/api/health")
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["documents"] == 3
+    assert payload["embedder"]["matches"] is True
+    assert payload["last_index"]["indexed"] == 3
+    assert payload["db_bytes"] > 0
+    assert payload["oldest"]
+    assert payload["never_index"]["patterns"] == []
+
+
+def test_never_index_endpoint_saves_and_prunes(base_url: str, tmp_path: Path):
+    docs = tmp_path / "private"
+    docs.mkdir()
+    (docs / "notes.md").write_text("harmless notes about widgets")
+    (docs / "api-secrets.md").write_text("an api key and a token live here")
+    _, payload = request(f"{base_url}/api/index", {"paths": [str(docs)]})
+    assert payload["indexed"] == 2
+
+    status, payload = request(
+        f"{base_url}/api/never-index", {"patterns": ["*secret*"]}
+    )
+    assert status == 200
+    assert [Path(path).name for path in payload["removed"]] == ["api-secrets.md"]
+
+    _, health = request(f"{base_url}/api/health")
+    assert health["never_index"]["patterns"] == ["*secret*"]
+    assert health["never_index"]["indexed_matches"] == []
+
+    _, payload = request(f"{base_url}/api/index", {"paths": [str(docs)]})
+    assert payload["skipped"] == 1  # the pattern keeps it out from now on
+
+
+def test_backup_and_restore_endpoints(base_url: str, tmp_path: Path):
+    status, payload = request(f"{base_url}/api/backup", {})
+    assert status == 200
+    backup = Path(payload["path"])
+    assert backup.is_file() and payload["bytes"] > 0
+
+    docs = tmp_path / "later"
+    docs.mkdir()
+    (docs / "extra.md").write_text("a document that must disappear after a restore")
+    request(f"{base_url}/api/index", {"paths": [str(docs)]})
+    _, status_payload = request(f"{base_url}/api/status")
+    assert status_payload["documents"] == 4
+
+    status, payload = request(f"{base_url}/api/restore", {"path": str(backup)})
+    assert status == 200
+    assert Path(payload["safety_backup"]).is_file()
+
+    _, status_payload = request(f"{base_url}/api/status")
+    assert status_payload["documents"] == 3
+
+    _, listing = request(f"{base_url}/api/backups")
+    assert len(listing["backups"]) >= 2  # the safety snapshot is listed too
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/restore", {"path": str(tmp_path / "nope.db")})
+    assert excinfo.value.code == 400
+
+
 def test_duplicates_endpoint_and_bookmarks(base_url: str, tmp_path: Path, monkeypatch):
     docs = tmp_path / "dupes"
     docs.mkdir()

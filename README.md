@@ -170,6 +170,9 @@ with — the index refuses mismatched embeddings.
 | Parent-child context: children are embedded, parents (~4k chars) go to the LLM | |
 | Bookmarks: save one page from the Sources tab (or `ragdesk save <url>`), then Open or Refresh it later | |
 | Duplicates: the Indexed tab lists documents that share most of their exact chunks (the same file saved twice), with open-file links | Automatic cleanup — sources stay read-only |
+| Index health: the last run's skips (with reasons), oldest documents, embedder-match check and DB size | |
+| Never index: glob patterns (`*secret*`, `*.pem`) are never read, and saving a pattern removes already-indexed matches | |
+| Index backup: one-click snapshot (SQLite backup API, safe while in use) + restore with a safety copy; keeps the last 5 | |
 | Completions + man page: `ragdesk completions bash\|zsh\|fish` and `ragdesk man`, generated from the CLI itself | |
 | Eval: per-category metrics + category gates, plus `--answers` faithfulness scoring and `--rewrite` follow-up scoring | |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |

@@ -10,6 +10,7 @@ import re
 import sqlite3
 import unicodedata
 from datetime import UTC, datetime
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +94,16 @@ def fold_text(text: str) -> str:
     # "đ" is a letter of its own, not a decomposed accent, so map it explicitly.
     lowered = text.lower().replace("đ", "d")
     return re.sub(f"[{_COMBINING}]", "", unicodedata.normalize("NFD", lowered))
+
+
+def matches_any(path: str, patterns: list[str]) -> bool:
+    """True when the full path or the file name matches any user glob."""
+    name = Path(path).name
+    return any(
+        fnmatch(path, pattern) or fnmatch(name, pattern)
+        for pattern in patterns
+        if pattern
+    )
 
 
 class EmbedderMismatch(RuntimeError):
@@ -363,6 +374,45 @@ class Store:
                 }
             )
         return out
+
+    def record_index_report(self, report: dict[str, Any]) -> None:
+        """Keep the last local index run for the health card."""
+        self.set_meta("last_index_report", json.dumps(report))
+
+    def last_index_report(self) -> dict[str, Any]:
+        raw = self.get_meta("last_index_report")
+        if not raw:
+            return {}
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def oldest_documents(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Local docs untouched the longest — the ones worth reviewing."""
+        rows = self.conn.execute(
+            "SELECT path, mtime, indexed_at FROM documents "
+            "WHERE mtime > 0 ORDER BY mtime ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_documents_matching(self, patterns: list[str]) -> list[str]:
+        """Drop documents whose path matches a never-index glob; returns paths.
+
+        This is the redaction half of never-index: adding a pattern while the
+        matching documents are already indexed would otherwise leave them
+        searchable forever.
+        """
+        removed: list[str] = []
+        with self.conn:
+            for row in self.conn.execute("SELECT id, path FROM documents").fetchall():
+                path = str(row["path"])
+                if matches_any(path, patterns):
+                    self._delete_doc(int(row["id"]))
+                    removed.append(path)
+        return removed
 
     def touch_document(self, path: str, mtime: float) -> None:
         """Record a new mtime for unchanged content so the watcher fast-path holds."""

@@ -11,6 +11,7 @@ import json
 import math
 import os
 import shutil
+import sqlite3
 import sys
 import threading
 import time
@@ -50,7 +51,7 @@ from ragdesk.github import whoami as github_whoami
 from ragdesk.gitlab import DEFAULT_BASE_URL as GITLAB_DEFAULT_BASE
 from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.gitlab import whoami as gitlab_whoami
-from ragdesk.index import index_paths
+from ragdesk.index import index_paths, never_index_patterns
 from ragdesk.llm import (
     LLMUnavailable,
     llm_status,
@@ -72,7 +73,7 @@ from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable, post_stream
 from ragdesk.presets import PRESETS
 from ragdesk.rerank import get_reranker
 from ragdesk.search import Hit, parse_filters, retrieve
-from ragdesk.store import Store
+from ragdesk.store import Store, matches_any
 from ragdesk.web import WebError, crawl_site, save_page
 
 CORS_HEADERS = {
@@ -296,7 +297,17 @@ class Handler(BaseHTTPRequestHandler):
                 )
             return
         if self.path == "/api/health":
-            self._send(200, {"ok": True})
+            with Store(self.state.db) as store:
+                self._send(200, self._health_payload(store))
+            return
+        if self.path == "/api/backups":
+            self._send(
+                200,
+                {
+                    "dir": str(backups_dir(self.state.db)),
+                    "backups": list_backups(self.state.db),
+                },
+            )
             return
         if self.path.startswith("/api/related"):
             target = urllib.parse.parse_qs(
@@ -484,6 +495,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_web(body)
             elif self.path == "/api/save":
                 self._handle_save_page(body)
+            elif self.path == "/api/never-index":
+                self._handle_never_index(body)
+            elif self.path == "/api/backup":
+                self._send(200, run_backup(self.state.db))
+            elif self.path == "/api/restore":
+                self._handle_restore(body)
             elif self.path == "/api/search":
                 self._handle_search(body)
             elif self.path == "/api/ask":
@@ -1204,6 +1221,64 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
+    def _health_payload(self, store: Store) -> dict[str, Any]:
+        """What the Indexed tab's health card needs, all from the store itself."""
+        stats = store.stats()
+        indexed_embedder = str(store.get_meta("embedder.name") or "")
+        current_embedder = str(self.state.embedder.name)
+        patterns = never_index_patterns()
+        matches = (
+            [
+                str(row["path"])
+                for row in store.conn.execute("SELECT path FROM documents")
+                if matches_any(str(row["path"]), patterns)
+            ]
+            if patterns
+            else []
+        )
+        try:
+            db_bytes = Path(self.state.db).stat().st_size
+        except OSError:
+            db_bytes = 0
+        return {
+            "ok": True,
+            "documents": stats["documents"],
+            "chunks": stats["chunks"],
+            "db_bytes": db_bytes,
+            "embedder": {
+                "index": indexed_embedder,
+                "current": current_embedder,
+                "matches": bool(indexed_embedder) and indexed_embedder == current_embedder,
+            },
+            "last_index": store.last_index_report(),
+            "oldest": store.oldest_documents(),
+            "never_index": {"patterns": patterns, "indexed_matches": matches},
+        }
+
+    def _handle_never_index(self, body: dict[str, Any]) -> None:
+        raw = body.get("patterns")
+        if not isinstance(raw, list):
+            self._send(400, {"error": "patterns must be a list"})
+            return
+        patterns = [str(item).strip() for item in raw if str(item).strip()][:100]
+        settings.save({"never_index": patterns})
+        with self.state.lock, Store(self.state.db) as store:
+            removed = store.delete_documents_matching(patterns) if patterns else []
+        self._send(200, {"patterns": patterns, "removed": removed})
+
+    def _handle_restore(self, body: dict[str, Any]) -> None:
+        path = str(body.get("path", "")).strip()
+        if not path:
+            self._send(400, {"error": "path required"})
+            return
+        with self.state.lock:
+            try:
+                result = restore_backup(self.state.db, path)
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                self._send(400, {"error": str(exc)})
+                return
+        self._send(200, result)
+
     def _handle_sync_gdrive(self, body: dict[str, Any]) -> None:
         with self.state.lock, Store(self.state.db) as store:
             stats = sync_gdrive(
@@ -1741,6 +1816,74 @@ class Handler(BaseHTTPRequestHandler):
         with Store(self.state.db) as store:
             store.delete_chat(chat_id)
         self._send(200, {"deleted": chat_id})
+
+
+BACKUP_KEEP = 5
+
+
+def backups_dir(db: str) -> Path:
+    return Path(db).expanduser().resolve().parent / "backups"
+
+
+def run_backup(db: str) -> dict[str, Any]:
+    """Snapshot the live index (safe while it is in use) and prune old copies."""
+    target_dir = backups_dir(db)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = target_dir / f"index-{stamp}.db"
+    suffix = 1
+    while target.exists():
+        # same-second calls must not overwrite each other — the safety snapshot
+        # taken during a restore would clobber the backup being restored
+        suffix += 1
+        target = target_dir / f"index-{stamp}-{suffix}.db"
+    with Store(db) as store:
+        dest = sqlite3.connect(target)
+        try:
+            store.conn.backup(dest)
+        finally:
+            dest.close()
+    kept = sorted(target_dir.glob("index-*.db"), reverse=True)
+    for stale in kept[BACKUP_KEEP:]:
+        stale.unlink(missing_ok=True)
+    return {"path": str(target), "bytes": target.stat().st_size, "kept": len(kept[:BACKUP_KEEP])}
+
+
+def list_backups(db: str) -> list[dict[str, Any]]:
+    target_dir = backups_dir(db)
+    if not target_dir.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for path in sorted(target_dir.glob("index-*.db"), reverse=True):
+        stat = path.stat()
+        out.append(
+            {
+                "path": str(path),
+                "name": path.name,
+                "bytes": stat.st_size,
+                "at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            }
+        )
+    return out
+
+
+def restore_backup(db: str, source: str) -> dict[str, Any]:
+    """Copy a backup's content over the live index (SQLite backup API, in place).
+
+    A safety snapshot of the current index is taken first, so a wrong pick is
+    one more restore away from being undone.
+    """
+    path = Path(source).expanduser()
+    if not path.is_file():
+        raise ValueError(f"backup not found: {source}")
+    safety = run_backup(db)
+    source_conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        with Store(db) as store:
+            source_conn.backup(store.conn)
+    finally:
+        source_conn.close()
+    return {"restored": str(path), "safety_backup": safety["path"]}
 
 
 def make_server(

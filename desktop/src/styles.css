@@ -1227,6 +1227,46 @@ details.alt[open] summary {
   overflow-wrap: anywhere;
 }
 
+/* --- index health ------------------------------------------------------------ */
+
+.health-line {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 4px 0;
+  font-size: 12.5px;
+}
+
+.health-line code {
+  font-size: 11.5px;
+}
+
+.health-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rule);
+}
+
+.health-line.is-ok .health-dot {
+  background: var(--stamp);
+}
+
+.health-line.is-warn .health-dot {
+  background: var(--flag);
+}
+
+.health-samples {
+  margin: 4px 0 4px 14px;
+}
+
+.health-sample {
+  margin: 1px 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
 /* --- settings -------------------------------------------------------------- */
 
 .status-table {

@@ -8,7 +8,7 @@ from ragdesk.answer import REFUSAL, answer, answer_stream, build_prompt
 from ragdesk.chunk import chunk_text
 from ragdesk.embed import HashingEmbedder, get_embedder
 from ragdesk.evaluate import evaluate, load_golden
-from ragdesk.index import index_paths
+from ragdesk.index import index_document, index_paths
 from ragdesk.llm import OllamaLLM
 from ragdesk.rerank import LexicalReranker, get_reranker
 from ragdesk.search import Hit, hybrid_search
@@ -160,6 +160,51 @@ def test_save_page_rejects_a_non_http_url(tmp_path: Path):
     with make_store(tmp_path) as store:
         with pytest.raises(WebError):
             save_page(store, HashingEmbedder(), "file:///etc/passwd")
+
+
+def test_never_index_patterns_skip_and_report(tmp_path: Path, monkeypatch):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "notes.md").write_text("alpha bravo")
+    (docs / "secrets.md").write_text("an api key lives here")
+    monkeypatch.setattr(
+        "ragdesk.settings.load",
+        lambda path=None: {
+            "chunk_chars": 1000,
+            "chunk_overlap": 150,
+            "never_index": ["*secret*"],
+        },
+    )
+    with make_store(tmp_path) as store:
+        stats = index_paths(store, HashingEmbedder(), [docs])
+        assert stats.indexed == 1
+        assert stats.skipped == 1
+        assert stats.skipped_samples[0]["reason"] == "never-index pattern"
+        report = store.last_index_report()
+        assert report["roots"] == [str(docs)]
+        assert report["indexed"] == 1 and report["skipped"] == 1
+        assert report["at"]
+        assert [d["path"] for d in store.documents()] == [str(docs / "notes.md")]
+
+
+def test_oldest_documents_and_redaction(tmp_path: Path):
+    embedder = HashingEmbedder()
+    with make_store(tmp_path) as store:
+        for path, text, mtime in (
+            ("/docs/old.md", "old", 100.0),
+            ("/docs/new.md", "new", 200.0),
+            ("/docs/secret.md", "shh", 300.0),
+        ):
+            index_document(
+                store, embedder, source="local", path=path, content=text, mtime=mtime
+            )
+        assert [row["path"] for row in store.oldest_documents(limit=2)] == [
+            "/docs/old.md",
+            "/docs/new.md",
+        ]
+        removed = store.delete_documents_matching(["*secret*"])
+        assert removed == ["/docs/secret.md"]
+        assert [row["path"] for row in store.documents()] == ["/docs/new.md", "/docs/old.md"]
 
 
 def test_index_survives_one_bad_file(tmp_path: Path, monkeypatch):

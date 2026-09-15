@@ -102,6 +102,15 @@
             <h2>Indexed</h2>
             <p>What is embedded locally, per source — documents, chunks, and when it was last indexed.</p>
           </header>
+
+          <section class="setting-card">
+            <header class="setting-head">
+              <h3>Index health</h3>
+              <p>The last run, what it skipped, the oldest documents, and whether the embedder still matches the index.</p>
+            </header>
+            <div id="health-body"><p class="caption">checking…</p></div>
+          </section>
+
           <div class="stats-table" id="indexed-table"></div>
 
           <section class="setting-card">
@@ -240,6 +249,47 @@
               </header>
               <div class="memory-list" id="correction-list"></div>
               <p class="caption" id="correction-status"></p>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Never index</h3>
+                <p>Globs that are never read: <code>*secret*</code>, <code>*.pem</code>, <code>*/.ssh/*</code>. Saving removes matching documents from the index.</p>
+              </header>
+              <form id="never-index-form" class="field-row">
+                <input id="never-index-input" placeholder="*secret*" />
+                <button class="btn" type="submit">Never index</button>
+              </form>
+              <div class="memory-list" id="never-index-list"></div>
+              <p class="caption" id="never-index-status"></p>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Index backup</h3>
+                <p>Snapshots live next to the index. Restoring keeps a safety copy of the current one.</p>
+              </header>
+              <div class="button-row">
+                <button class="btn" type="button" id="backup-now">Back up now</button>
+              </div>
+              <div class="memory-list" id="backup-list"></div>
+              <p class="caption" id="backup-status"></p>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Use from Claude or Codex (MCP)</h3>
+                <p>Read-only search tools over the same local index — nothing leaves this machine.</p>
+              </header>
+              <p class="caption"><span class="dot" id="mcp-dot"></span><span id="mcp-state">checking…</span></p>
+              <div class="button-row">
+                <button class="btn btn-quiet" type="button" data-mcp="claude_code">Copy for Claude Code</button>
+                <button class="btn btn-quiet" type="button" data-mcp="claude_desktop">Copy for Claude Desktop</button>
+                <button class="btn btn-quiet" type="button" data-mcp="codex">Copy for Codex</button>
+              </div>
+              <div class="button-row">
+                <button class="btn btn-quiet" type="button" id="mcp-install">Install the ragdesk command</button>
+              </div>
             </section>
 
             <section class="setting-card">

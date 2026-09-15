@@ -7,12 +7,13 @@ import os
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ragdesk.chunk import DEFAULT_MAX_CHARS, DEFAULT_OVERLAP, chunk_text
 from ragdesk.embed import Embedder
 from ragdesk.office import DOCUMENT_EXTENSIONS
-from ragdesk.store import Store
+from ragdesk.store import Store, matches_any
 from ragdesk.vision import IMAGE_EXTENSIONS
 
 TEXT_EXTENSIONS = {
@@ -108,6 +109,14 @@ def is_indexable(path: Path, size: int) -> bool:
     if size > MAX_FILE_BYTES:
         return False
     return is_text_file(path)
+
+
+def never_index_patterns() -> list[str]:
+    """Globs the user never wants indexed (secrets, dumps, private folders)."""
+    from ragdesk import settings as app_settings  # noqa: PLC0415 - optional knob
+
+    raw = app_settings.load().get("never_index") or []
+    return [str(item).strip() for item in raw if str(item).strip()]
 
 
 def extract_bytes(data: bytes, name: str) -> str | None:
@@ -229,10 +238,14 @@ def index_paths(
             values.get("chunk_overlap") or DEFAULT_OVERLAP
         )
     stats = IndexStats()
+    patterns = never_index_patterns()
     for file in iter_files(paths):
         stats.files_scanned += 1
         if progress is not None:
             progress(f"indexing {file.name}", stats.files_scanned, 0)
+        if patterns and matches_any(str(file), patterns):
+            stats.skip(file, "never-index pattern")
+            continue
         try:
             info = file.stat()
         except OSError:
@@ -274,4 +287,16 @@ def index_paths(
         else:
             stats.unchanged += 1
     store.set_local_roots([str(path) for path in paths if path.exists()])
+    store.record_index_report(
+        {
+            "at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            "roots": [str(path) for path in paths],
+            "files_scanned": stats.files_scanned,
+            "indexed": stats.indexed,
+            "unchanged": stats.unchanged,
+            "skipped": stats.skipped,
+            "chunks": stats.chunks,
+            "skipped_samples": list(stats.skipped_samples),
+        }
+    )
     return stats
