@@ -1,26 +1,119 @@
-# ragdesk
+<p align="center">
+  <img src="docs/screenshots/chat-answer.png" alt="ragdesk — a cited answer with its sources" width="880">
+</p>
 
-Personal, local-first RAG over your own sources. Index your notes, repos and
-docs — ask in natural language, get cited answers. Everything runs on your
-machine, and **every release publishes its retrieval numbers**.
+<h1 align="center">ragdesk</h1>
 
-> **Status: pre-alpha (0.1.0).** Retrieval core, eval harness, connectors
-> (local, GitHub, Confluence, Google Drive), streaming answers and a Tauri
-> desktop app are in. Not on PyPI yet — run from source.
+<p align="center"><strong>Personal, local-first retrieval over everything you own.</strong><br>
+Index your notes, repos, PDFs, spreadsheets, screenshots and email — then ask in
+plain language and get answers that cite the file they came from. It all runs on
+your machine, in one SQLite file, and every release publishes its retrieval
+numbers.</p>
+
+<p align="center">
+  <a href="https://github.com/dtduc-git/ragdesk/actions/workflows/ci.yml"><img src="https://github.com/dtduc-git/ragdesk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0">
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/status-pre--alpha-orange.svg" alt="Status: pre-alpha">
+  <img src="https://img.shields.io/badge/telemetry-none-brightgreen.svg" alt="No telemetry">
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#eval">Eval</a> ·
+  <a href="#what-works-today-honest-list">What works</a> ·
+  <a href="#non-goals">Non-goals</a> ·
+  <a href="docs/sources.md">Source guides</a>
+</p>
+
+---
+
+ragdesk is an open-source, vendor-neutral retrieval desk for people who keep
+their knowledge in files: engineers with runbooks and repositories, analysts
+with spreadsheets and PDFs, anyone with a documents folder that has outgrown
+itself. It bundles hybrid retrieval (SQLite FTS5 BM25 + EmbeddingGemma
+embeddings, fused with Reciprocal Rank Fusion), a grounded answer pipeline over
+a local or self-hosted model, an evaluation harness that puts numbers on
+quality, and a desktop app with a command palette — no server, no account, no
+telemetry, no data leaving the machine.
+
+**Quality is a number here, not a vibe.** ragdesk ships its retrieval eval from
+day one and gates `recall@5 >= 0.8` in CI, so regressions fail the build. The
+table is in [Eval](#eval); the tuning levers that lost are documented next to
+the ones that won.
+
+> **Status: pre-alpha (0.1.0).** Retrieval core, eval harness, email/web/repo
+> connectors, CLI + TUI + MCP server and the Tauri desktop app are in. Not on
+> PyPI yet — run from source.
 
 ## Why another personal RAG?
 
-Because "runs locally" is not a quality claim. ragdesk ships a retrieval eval
-harness from day one and publishes recall@5 / nDCG@10 / MRR, so quality is a
-number you can check — not a vibe. The core is stdlib-only Python: hybrid
-search (SQLite FTS5 BM25 + embeddings + RRF fusion) in a single SQLite file.
+Most "chat with your documents" tools ask you to trust them. This one shows its
+work at three levels:
+
+- **Answers cite files, with line numbers.** Every factual sentence carries a
+  `[n]` marker that maps to a source card; click it and the file opens. The
+  built-in Verify button scores each sentence against the cited text, so an
+  answer that drifts from its sources is visible, not hidden.
+- **Retrieval is measured.** `ragdesk eval` runs a golden set of queries and
+  prints recall@5 / nDCG@10 / MRR (overall and per category); the repo publishes
+  those numbers and CI enforces them. Ideas that measured badly — symbol-aware
+  chunking, lane weights, a graph lane — were dropped and written down.
+- **Everything is inspectable and local.** One SQLite file holds the documents,
+  the FTS index, the vectors, the chats and the answer cache. The core is
+  stdlib-only Python; the HTTP API binds loopback; sources stay read-only.
+
+## Screenshots
+
+| Chat with citations | Command palette (⌘K) |
+|---|---|
+| [![Chat](docs/screenshots/chat-answer.png)](docs/screenshots/chat-answer.png) | [![Command palette](docs/screenshots/palette-demo.png)](docs/screenshots/palette-demo.png) |
+| **Indexed** — ledger, health, topics, duplicates | **Sources** — one card per connector |
+| [![Indexed](docs/screenshots/indexed-demo.png)](docs/screenshots/indexed-demo.png) | [![Sources](docs/screenshots/sources-demo.png)](docs/screenshots/sources-demo.png) |
+
+Dark theme is a first-class citizen: [![Chat in dark theme](docs/screenshots/chat-dark-demo.png)](docs/screenshots/chat-dark-demo.png)
+
+## Architecture
+
+```mermaid
+flowchart LR
+  S["Sources, read-only<br/>local files · PDF / Office · images (OCR)<br/>email · web pages · repos · wikis · cloud docs"] --> I["Ingest<br/>extract → chunk → embed<br/>EmbeddingGemma int8 (ONNX, CPU)"]
+  I --> D["Store<br/>one SQLite file: FTS5 BM25 + float32 vectors<br/>documents, parents, chats, answer cache"]
+  D --> R["Retrieve<br/>bm25 + dense + path lanes → RRF (k=60)<br/>rerank → diversify"]
+  R --> A["Answer<br/>grounded prompt · citation gate<br/>semantic cache · corrections · memory"]
+  A --> F["Front-ends<br/>Desktop app (Tauri 2) · CLI · TUI · MCP<br/>local HTTP API on 127.0.0.1"]
+```
+
+**What happens when you ask.** The question (with any `folder:` / `key:value`
+filters) is checked against the exact and semantic answer caches first; a miss
+runs hybrid retrieval over three lanes (BM25, dense cosine, path tokens), fuses
+them with RRF (k=60), optionally reranks, and caps how many chunks one document
+may contribute. The top chunks — children embedded, their ~4k-char parent
+sections sent as context — go into a grounded prompt together with your
+corrections, a few relevant memories and the last conversation turns. The model
+streams the answer, inline `[n]` citations included, and the exchange is
+recorded in SQLite. Nothing above leaves the machine: the model runs through
+Ollama, MLX in-process, or an OpenAI-compatible endpoint you point at.
+
+**Where things live.**
+
+| Path | What |
+|---|---|
+| `~/.ragdesk/index.db` | the entire index: documents, chunks, FTS5, vectors, chats, caches, corrections |
+| `~/.ragdesk/backups/` | index snapshots (Settings → Index backup; restore keeps a safety copy) |
+| `~/.ragdesk/serve.log` | the desktop app's server log |
+| `~/.config/ragdesk/credentials.json` | connection credentials, mode `0600` |
+| `~/.config/ragdesk/settings.json` | app settings, mode `0600` |
 
 ## Quickstart
 
 ```bash
 # 1. install ([onnx] for CPU embeddings; [mlx] on Apple Silicon to run the
-#    answer model in-process; [vision] for image OCR — all optional)
-uv tool install 'ragdesk[onnx,mlx,vision] @ git+https://github.com/dtduc-git/ragdesk'
+#    answer model in-process; [vision] for image OCR; [tui] for the full-screen
+#    terminal app — all optional)
+uv tool install 'ragdesk[onnx,mlx,vision,tui] @ git+https://github.com/dtduc-git/ragdesk'
 
 # 2. index your stuff (incremental, read-only)
 ragdesk index ~/notes ~/repos/myrepo
@@ -29,7 +122,7 @@ ragdesk index ~/notes ~/repos/myrepo
 #    a running Ollama with qwen3.5:4b (or another model via RAGDESK_LLM) wins;
 #    otherwise MLX runs mlx-community/Qwen3.5-4B-MLX-4bit in-process.
 ragdesk ask "how does the deploy rollback work?"
-ragdesk ask "who calls hybrid_search?"             # call graph: defs + call sites (no LLM)
+ragdesk ask "who calls hybrid_search?"           # call graph: defs + call sites (no LLM)
 ragdesk ask "..." --llm ollama:qwen3.5:9b        # force a specific backend
 ragdesk ask "..." --llm mlx:some/hf-repo         # or a specific MLX repo
 
@@ -71,7 +164,7 @@ ragdesk chat                    # REPL: streaming answers + citations
 ragdesk chat --chat-id 12       # resume a conversation (shared with the GUI)
 echo "what is RRF fusion?" | ragdesk chat   # script-friendly one-shot
 ragdesk chat --server http://127.0.0.1:8765  # attach to the running app
-ragdesk tui                     # full-screen (needs: pip install 'ragdesk[tui]')
+ragdesk tui                     # full-screen (needs the 'tui' extra)
 ```
 
 `/new`, `/history`, `/sources` and the `folder:` / `key:value` filters work in
@@ -82,7 +175,8 @@ and both front-ends share one index and one set of loaded models.
 ## Use ragdesk from Claude Code, Claude Desktop or Codex (MCP)
 
 `ragdesk mcp` speaks MCP over stdio, read-only, and reads the same index the
-desktop app uses — the app does not need to be running.
+desktop app uses — the app does not need to be running. The Settings card
+copies the exact snippet for your client.
 
 ```bash
 # Claude Code
@@ -97,24 +191,29 @@ args = ["mcp"]
 { "mcpServers": { "ragdesk": { "command": "ragdesk", "args": ["mcp"] } } }
 ```
 
-Tools exposed: `ragdesk_search` (hybrid retrieval), `ragdesk_document` (full
-text of one indexed file), `ragdesk_sources` (document/chunk counts per source).
+Tools exposed: `ragdesk_search` (hybrid retrieval with paths and scores),
+`ragdesk_document` (full text of one indexed file), `ragdesk_sources`
+(document/chunk counts per source). Pass the same `--embedder` you indexed with
+— the index refuses mismatched embeddings.
 
 ## Desktop app (Tauri 2)
 
 ```bash
 # one-time: make the CLI visible to the packaged app
-uv tool install ".[onnx]"
+uv tool install '.[onnx,mlx,vision,tui]'
 
 cd desktop
 npm install
 npm run tauri dev     # dev window; spawns the local server automatically
-npm run tauri build   # .app + .dmg on macOS
+npm run tauri build   # .app + .dmg on macOS (sign with APPLE_SIGNING_IDENTITY
+                      # so the folder-access grant survives rebuilds)
 ```
 
-The shell spawns `ragdesk serve` (loopback only) and renders the card-catalog
-UI: streaming chat with citations, hybrid search, source connectors, and the
-status/preset panel.
+The shell spawns `ragdesk serve` (loopback only) and renders the catalog-drawer
+UI: a ledger-style transcript with entry numbers and citations, ⌘K command
+palette (conversations, tabs, live document search), source connectors, the
+Indexed ledger with health/topics/duplicates, and Settings for the answer
+engine, auto re-index, never-index patterns and one-click backups.
 
 Per-source connection guides — API tokens, browser consent, bring-your-own
 OAuth apps and their caveats — live in **[docs/sources.md](docs/sources.md)**.
@@ -125,33 +224,14 @@ OAuth apps and their caveats — live in **[docs/sources.md](docs/sources.md)**.
   client ID ships with the app, so no CLI is needed; `gh` login and tokens
   also work), Confluence (API token — no app registration — or your own
   Atlassian OAuth app for one-click consent), Google Drive (BYO OAuth client,
-  browser consent). Credentials are stored `0600` under `~/.config/ragdesk/`
-  and can be disconnected from the same card. Atlassian client secrets are
-  never shipped in the repository (see `SECURITY.md`).
+  browser consent), Microsoft OneDrive/SharePoint (device flow), Notion
+  (integration token), email (IMAP app password). Credentials are stored `0600`
+  under `~/.config/ragdesk/` and can be disconnected from the same card.
+  Atlassian client secrets are never shipped in the repository (see
+  `SECURITY.md`).
 
 The same UI also runs in a browser for development:
 `uv run ragdesk serve --ui desktop/dist`.
-
-## Use the index from Claude Code / Cursor (MCP)
-
-`ragdesk mcp` runs a dependency-free MCP server over stdio, so any MCP client
-can search your local index:
-
-```json
-{
-  "mcpServers": {
-    "ragdesk": {
-      "command": "ragdesk",
-      "args": ["--embedder", "onnx", "--db", "/Users/you/.ragdesk/index.db", "mcp"]
-    }
-  }
-}
-```
-
-Tools: `ragdesk_search` (hybrid retrieval with paths and scores),
-`ragdesk_document` (full text of one indexed document), `ragdesk_sources`
-(per-source document/chunk counts). Pass the same `--embedder` you indexed
-with — the index refuses mismatched embeddings.
 
 ## What works today (honest list)
 
@@ -163,7 +243,7 @@ with — the index refuses mismatched embeddings.
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) | Connector auto-sync (local paths only for now) |
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Metadata: a `--- key: value ---` front-matter header is parsed, stored per document and filterable — no YAML dependency; `authority:`/`status:` tags give a small rank nudge (canonical up, draft down) | |
-| Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images; sidecar bundling in the DMG |
+| Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML), email (mbox / IMAP) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images; sidecar bundling in the DMG |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
 | Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | |
@@ -196,7 +276,7 @@ with — the index refuses mismatched embeddings.
 ## Eval
 
 Every number below is reproducible from the repo. `fixtures/` is a tiny
-7-query smoke corpus; `fixtures/golden_repo.jsonl` is a 9-query golden set over
+7-query smoke corpus; `fixtures/golden_repo.jsonl` is a 12-query golden set over
 this repository's own docs and source.
 
 | corpus / preset | recall@5 | nDCG@10 | MRR@10 |
@@ -205,6 +285,7 @@ this repository's own docs and source.
 | corpus (24 queries: VN notes, PDFs, two codebases) | 1.000 | 0.964 | 0.951 |
 | repo (12 queries, `folder:`-scoped) / EmbeddingGemma int8, text chunking | **0.917** | **0.874** | **0.833** |
 | repo (12 queries) / + smart retrieval (rewrite + HyDE + sub-queries, one call) | 0.917 | 0.832 | 0.778 |
+| repo, checkout only (the CI run) / EmbeddingGemma int8 | 1.000 | 0.746 | 0.660 |
 | follow-ups (5 queries, `fixtures/golden_multiturn.jsonl`) raw | 1.000 | 0.926 | 0.900 |
 | follow-ups (5 queries) / `--rewrite` (Qwen3.5-4B MLX) | 1.000 | **1.000** | **1.000** |
 
@@ -257,8 +338,9 @@ same 12 scoped queries):
   12-query repo golden is the harder one.
 - The dependency-free `lexical` reranker **lowers** nDCG/MRR here — it is a
   test baseline, not a quality feature.
-- CI gates `recall@5 >= 0.8` on both harnesses, so retrieval regressions fail
-  the build.
+- CI gates `recall@5 >= 0.8` on both harnesses (the fixtures set with the
+  offline hash embedder, the repo golden with the real EmbeddingGemma model),
+  so retrieval regressions fail the build.
 
 Reproduce (first run downloads the ~0.3 GB int8 model):
 
@@ -296,6 +378,7 @@ uv run ragdesk --embedder onnx --db /tmp/eval-mt.db eval --golden fixtures/golde
 uv sync --all-groups
 uv run pytest
 uv run ruff check .
+uv run --extra tui pytest     # includes the full-screen TUI tests
 ```
 
 ## Security & privacy
