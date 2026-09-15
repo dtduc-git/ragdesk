@@ -1425,7 +1425,9 @@ class Handler(BaseHTTPRequestHandler):
         cache_embedding: list[float] | None = None,
         fingerprint: str = "",
     ) -> int:
-        with self.state.lock, Store(self.state.db) as store:
+        # A short write must never queue behind a long index: SQLite's
+        # busy_timeout serialises writers on its own.
+        with Store(self.state.db) as store:
             if not chat_id:
                 title = query if len(query) <= 60 else f"{query[:57]}…"
                 chat_id = store.create_chat(title)
