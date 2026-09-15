@@ -99,6 +99,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("--stream", action="store_true", help="print tokens as they arrive")
     p_ask.add_argument("--llm-host", default=DEFAULT_HOST, help="Ollama host override")
 
+    p_chat = sub.add_parser("chat", help="terminal chat over the same index (TUI)")
+    p_chat.add_argument("--chat-id", type=int, default=0, help="resume a conversation")
+    p_chat.add_argument("--top-k", type=int, default=6)
+
     p_eval = sub.add_parser("eval", help="retrieval eval on a golden set")
     p_eval.add_argument("--golden", required=True, type=Path)
     p_eval.add_argument("--top-k", type=int, default=10)
@@ -515,6 +519,23 @@ def main(argv: list[str] | None = None) -> int:
                 for rank, hit in enumerate(hits, start=1):
                     print(f"  [{rank}] {hit.path}")
             return 0
+
+        if args.command == "chat":
+            from ragdesk.tui import run_chat
+
+            try:
+                chat_llm = resolve_llm(None, preset=settings["preset"])
+            except (LLMUnavailable, OllamaUnavailable) as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            return run_chat(
+                store,
+                embedder,
+                chat_llm,
+                chat_id=args.chat_id,
+                reranker=reranker,
+                top_k=args.top_k,
+            )
 
         if args.command == "eval":
             golden = load_golden(args.golden)

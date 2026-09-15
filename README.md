@@ -51,6 +51,17 @@ ragdesk eval --golden fixtures/golden.jsonl
 ragdesk stats
 ```
 
+## Terminal chat (same index as the app)
+
+```bash
+ragdesk chat                    # REPL: streaming answers + citations
+ragdesk chat --chat-id 12       # resume a conversation (shared with the GUI)
+echo "what is RRF fusion?" | ragdesk chat   # script-friendly one-shot
+```
+
+`/new`, `/history`, `/sources` and the `folder:` / `key:value` filters work in
+the REPL; answers stream, citations print as `path:line`.
+
 ## Use ragdesk from Claude Code, Claude Desktop or Codex (MCP)
 
 `ragdesk mcp` speaks MCP over stdio, read-only, and reads the same index the

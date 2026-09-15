@@ -1715,7 +1715,20 @@ def system_info() -> dict[str, Any]:
         suggested = "balanced"
     else:
         suggested = "quality"
-    return {"ram_gb": ram_gb, "platform": sys.platform, "suggested_preset": suggested}
+    screenshots = [
+        str(candidate)
+        for candidate in (
+            Path.home() / "Desktop",
+            Path.home() / "Pictures" / "Screenshots",
+        )
+        if candidate.is_dir()
+    ]
+    return {
+        "ram_gb": ram_gb,
+        "platform": sys.platform,
+        "suggested_preset": suggested,
+        "screenshot_dirs": screenshots,
+    }
 
 
 def parse_memory_list(raw: str) -> list[str]:

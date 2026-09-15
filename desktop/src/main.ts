@@ -57,7 +57,12 @@ type Status = {
     openai_key_set: boolean;
   };
   onboarded: boolean;
-  system: { ram_gb: number; platform: string; suggested_preset: string };
+  system: {
+    ram_gb: number;
+    platform: string;
+    suggested_preset: string;
+    screenshot_dirs: string[];
+  };
   llm_setup: {
     ollama_model: string;
     ollama_reachable: boolean;
@@ -2065,6 +2070,14 @@ function wizardFolders(): string {
     <div class="button-row">
       <button class="btn" type="button" id="wizard-pick-folder">Choose folder…</button>
       <button class="btn btn-quiet" type="button" id="wizard-pick-files">Choose files…</button>
+      ${
+        (status?.system.screenshot_dirs ?? [])
+          .map(
+            (dir) =>
+              `<button class="btn btn-quiet" type="button" data-watch="${escapeHtml(dir)}">Watch screenshots (${escapeHtml(dir.split("/").pop() ?? "")})</button>`,
+          )
+          .join("")
+      }
     </div>
     <ul class="wizard-list">${list}</ul>`;
 }
@@ -2178,6 +2191,16 @@ function wizardSteps(): WizardStep[] {
       bind: () => {
         $("wizard-pick-folder").addEventListener("click", () => void pickPaths("folder"));
         $("wizard-pick-files").addEventListener("click", () => void pickPaths("files"));
+        document
+          .querySelectorAll<HTMLElement>("#wizard-body [data-watch]")
+          .forEach((button) =>
+            button.addEventListener("click", () => {
+              const dir = button.dataset.watch ?? "";
+              if (dir && !selectedPaths.includes(dir)) selectedPaths.push(dir);
+              renderSources();
+              renderWizard();
+            }),
+          );
       },
     },
     {
