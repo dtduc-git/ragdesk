@@ -23,7 +23,11 @@
   --stamp-ink: #f4f5f0;
   --lamp: #a97a1e; /* amber: live activity, citations */
   --flag: #a33b32;
-  --shadow: 0 1px 1px rgb(27 31 35 / 6%), 0 18px 40px -24px rgb(27 31 35 / 35%);
+  --shadow: 0 1px 2px rgb(27 31 35 / 5%), 0 20px 44px -26px rgb(27 31 35 / 30%);
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
 
   --font-sans: -apple-system, "SF Pro Text", system-ui, sans-serif;
   --font-serif: "Iowan Old Style", "Charter", ui-serif, Georgia, serif;
@@ -53,7 +57,7 @@
   --stamp-ink: #171a1f;
   --lamp: #e0b15f;
   --flag: #d98b7a;
-  --shadow: 0 1px 1px rgb(0 0 0 / 40%), 0 24px 60px -30px rgb(0 0 0 / 70%);
+  --shadow: 0 1px 2px rgb(0 0 0 / 35%), 0 26px 64px -32px rgb(0 0 0 / 62%);
 }
 
 * {
@@ -197,7 +201,7 @@ kbd {
   background: none;
   border: none;
   border-bottom: 1px solid var(--rule);
-  border-radius: 0 9px 9px 0;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
   cursor: pointer;
   transition: color 0.12s ease, background 0.12s ease, transform 0.12s ease;
 }
@@ -293,6 +297,7 @@ kbd {
   overflow-y: auto;
   background: var(--sheet);
   border: 1px solid var(--rule-strong);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow);
 }
 
@@ -355,7 +360,7 @@ kbd {
   font-size: var(--text-sm);
   background: var(--card);
   border: 1px solid var(--rule);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 
@@ -388,6 +393,7 @@ kbd {
   overflow-y: auto;
   background: var(--sheet);
   border: 1px solid var(--rule-strong);
+  border-radius: var(--r-md);
   box-shadow: var(--shadow);
 }
 
@@ -568,7 +574,7 @@ kbd {
   font-size: var(--text-xs);
   color: var(--stamp);
   border: 1px solid color-mix(in srgb, var(--stamp) 45%, transparent);
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   transform: rotate(-0.6deg);
 }
 
@@ -615,6 +621,7 @@ kbd {
   gap: 10px;
   padding: 10px 12px 12px 0;
   border-bottom: 1px solid var(--rule);
+  border-radius: var(--r-sm);
   animation: rise 0.25s ease-out both;
   animation-delay: var(--stagger, 0ms);
 }
@@ -676,7 +683,7 @@ kbd {
   color: var(--ink-soft);
   background: var(--card);
   border: 1px solid var(--rule);
-  border-radius: 2px;
+  border-radius: var(--r-xs);
 }
 
 .cite-snippet {
@@ -696,6 +703,7 @@ kbd {
   margin-top: 7px;
   padding-top: 6px;
   border-top: 1px dashed var(--rule);
+  border-radius: var(--r-sm);
 }
 
 .cite-nav-item {
@@ -758,7 +766,7 @@ kbd {
   color: var(--ink-soft);
   background: var(--card);
   border: 1px solid var(--rule);
-  border-radius: 2px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   transition: border-color 0.12s ease, color 0.12s ease;
 }
@@ -778,18 +786,21 @@ kbd {
   background: var(--sheet);
   border: 1px solid var(--rule-strong);
   border-top: 3px solid var(--stamp);
-  box-shadow: 0 10px 18px -18px rgb(27 31 35 / 55%);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 22px -20px rgb(27 31 35 / 50%);
 }
 
 #chat-input {
   width: 100%;
-  max-height: 9em;
+  min-height: 26px;
+  max-height: 216px; /* JS grows it with the text; this is the ceiling */
   padding: 0;
   font-size: var(--text-md);
   line-height: 1.5;
   background: transparent;
   border: none;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
 }
 
 #chat-input::placeholder {
@@ -815,7 +826,7 @@ kbd {
   color: var(--ink);
   background: var(--card);
   border: 1px solid var(--rule-strong);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
 }
@@ -887,7 +898,7 @@ select {
   font-size: var(--text-base);
   background: var(--card);
   border: 1px solid var(--rule);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
 }
 
 input:focus,
@@ -909,10 +920,17 @@ textarea::placeholder {
   min-width: 0;
 }
 
+/* fields inside a card read as inset: one step lighter than the card */
+.source-card input,
+.source-card textarea,
+.source-card select {
+  background: var(--sheet);
+}
+
 .seg {
   display: inline-flex;
   border: 1px solid var(--rule-strong);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   overflow: hidden;
 }
 
@@ -963,6 +981,7 @@ textarea::placeholder {
   background: var(--card);
   border: 1px solid var(--rule);
   border-top: 3px solid var(--rule-strong);
+  border-radius: var(--r-md);
 }
 
 .source-card.is-connected {
@@ -988,6 +1007,7 @@ textarea::placeholder {
   font-size: var(--text-xs);
   color: var(--stamp);
   border: 1px solid color-mix(in srgb, var(--stamp) 45%, transparent);
+  border-radius: var(--r-xs);
   transform: rotate(-0.8deg);
 }
 
@@ -1020,7 +1040,7 @@ textarea::placeholder {
   font-size: var(--text-sm);
   background: var(--sheet);
   border: 1px solid var(--rule);
-  border-radius: 2px;
+  border-radius: var(--r-xs);
 }
 
 .chip-x {
@@ -1041,6 +1061,7 @@ textarea::placeholder {
   padding: 11px 13px;
   background: var(--sheet);
   border: 1px dashed var(--rule-strong);
+  border-radius: var(--r-sm);
 }
 
 .device-code {
@@ -1055,6 +1076,7 @@ textarea::placeholder {
   overflow: hidden;
   background: var(--card);
   border: 1px solid var(--rule);
+  border-radius: 999px;
 }
 
 .progress-bar {
@@ -1444,6 +1466,7 @@ textarea::placeholder {
   background: var(--sheet);
   border: 1px solid var(--rule-strong);
   border-left: 3px solid var(--stamp);
+  border-radius: var(--r-md);
   box-shadow: var(--shadow);
   animation: rise 0.18s ease-out both;
 }
@@ -1468,7 +1491,7 @@ textarea::placeholder {
   color: var(--ink-soft);
   background: none;
   border: 1px solid transparent;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   cursor: pointer;
 }
 
@@ -1502,6 +1525,7 @@ textarea::placeholder {
   background: var(--card);
   border: 1px solid var(--rule);
   border-left: 3px solid var(--stamp);
+  border-radius: var(--r-sm);
 }
 
 .score-value {
@@ -1551,6 +1575,7 @@ textarea::placeholder {
   width: min(700px, 92vw);
   background: var(--sheet);
   border: 1px solid var(--rule-strong);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow);
   animation: lift 0.16s ease-out both;
 }
@@ -1562,6 +1587,7 @@ textarea::placeholder {
   background: transparent;
   border: none;
   border-bottom: 2px solid var(--ink);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
 }
 
 .palette-input:focus {
@@ -1659,7 +1685,7 @@ kbd {
   background: var(--card);
   border: 1px solid var(--rule-strong);
   border-bottom-width: 2px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
 }
 
 /* --- diagrams, wizard, misc ---------------------------------------------------- */
@@ -1669,6 +1695,7 @@ kbd {
   padding: 12px;
   background: var(--card);
   border: 1px solid var(--rule);
+  border-radius: var(--r-md);
 }
 
 .diagram svg {
@@ -1705,6 +1732,7 @@ kbd {
   background: var(--sheet);
   border: 1px solid var(--rule-strong);
   border-top: 3px solid var(--stamp);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow);
 }
 
@@ -1766,6 +1794,7 @@ kbd {
   text-align: left;
   background: var(--card);
   border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
   cursor: pointer;
 }
 

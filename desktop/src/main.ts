@@ -707,11 +707,21 @@ function renderCites(container: HTMLElement, hits: Hit[]): void {
   });
 }
 
+function growComposer(): void {
+  const input = $<HTMLTextAreaElement>("chat-input");
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, 216)}px`;
+}
+
+$<HTMLTextAreaElement>("chat-input").addEventListener("input", growComposer);
+
 $<HTMLFormElement>("chat-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  const query = $<HTMLTextAreaElement>("chat-input").value.trim();
+  const input = $<HTMLTextAreaElement>("chat-input");
+  const query = input.value.trim();
   if (query) {
-    $<HTMLTextAreaElement>("chat-input").value = "";
+    input.value = "";
+    growComposer();
     void ask(query);
   }
 });
