@@ -173,11 +173,13 @@ def index_document(
     mtime: float = 0.0,
     chunk_chars: int = 0,
     chunk_overlap: int = 0,
+    metadata: dict[str, str] | None = None,
 ) -> int:
     """Embed + upsert one document. Returns the chunk count, or 0 if unchanged."""
-    metadata: dict[str, str] = {}
+    parsed: dict[str, str] = {}
     if Path(path).suffix.lower() in {".md", ".markdown", ".txt", ""}:
-        metadata, content = parse_front_matter(content)
+        parsed, content = parse_front_matter(content)
+    metadata = {**(metadata or {}), **parsed}
     digest = hashlib.sha256(content.encode()).hexdigest()
     if store.doc_hash(path) == digest:
         if mtime:

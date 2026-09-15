@@ -42,6 +42,14 @@ ragdesk ask "..." --min-cosine 0.35
 # retrieval only
 ragdesk search "oauth pkce desktop"
 
+# save one web page (bookmark) or crawl a whole docs site
+ragdesk save https://example.com/article
+ragdesk web https://docs.example.com/ --max-pages 50
+
+# shell completions + man page
+ragdesk completions zsh > ~/.zsh/completions/_ragdesk
+ragdesk man > ~/.local/share/man/man1/ragdesk.1
+
 # reranking (optional)
 ragdesk --rerank lexical search "..."    # dependency-free baseline
 ragdesk --rerank fastembed search "..."  # ONNX cross-encoder (model downloads on first use)
@@ -160,6 +168,9 @@ with — the index refuses mismatched embeddings.
 | HyDE lane (Settings, off by default): drafts an answer with the local model, then searches with it too | |
 | Scoping: `folder:` / `source:` and any front-matter key (`type:runbook service:payments`) as query filters; metadata shows as chips on citations | |
 | Parent-child context: children are embedded, parents (~4k chars) go to the LLM | |
+| Bookmarks: save one page from the Sources tab (or `ragdesk save <url>`), then Open or Refresh it later | |
+| Duplicates: the Indexed tab lists documents that share most of their exact chunks (the same file saved twice), with open-file links | Automatic cleanup — sources stay read-only |
+| Completions + man page: `ragdesk completions bash\|zsh\|fish` and `ragdesk man`, generated from the CLI itself | |
 | Eval: per-category metrics + category gates, plus `--answers` faithfulness scoring and `--rewrite` follow-up scoring | |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
 | RAM presets (`light` / `balanced` / `quality`) — switchable in Settings, applied live; per-flag overrides still work | |

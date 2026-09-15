@@ -73,7 +73,7 @@ from ragdesk.presets import PRESETS
 from ragdesk.rerank import get_reranker
 from ragdesk.search import Hit, parse_filters, retrieve
 from ragdesk.store import Store
-from ragdesk.web import WebError, crawl_site
+from ragdesk.web import WebError, crawl_site, save_page
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -345,6 +345,15 @@ class Handler(BaseHTTPRequestHandler):
             with Store(self.state.db) as store:
                 self._send(200, {"corrections": store.corrections()})
             return
+        if self.path == "/api/bookmarks":
+            with Store(self.state.db) as store:
+                self._send(200, {"pages": store.web_pages()})
+            return
+        if self.path == "/api/duplicates":
+            with Store(self.state.db) as store:
+                clusters = store.duplicate_clusters()
+            self._send(200, {"clusters": clusters})
+            return
         if self.path == "/api/chats":
             with Store(self.state.db) as store:
                 self._send(200, {"chats": store.chats()})
@@ -473,6 +482,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_gdrive(body)
             elif self.path == "/api/sync/web":
                 self._handle_sync_web(body)
+            elif self.path == "/api/save":
+                self._handle_save_page(body)
             elif self.path == "/api/search":
                 self._handle_search(body)
             elif self.path == "/api/ask":
@@ -1167,6 +1178,25 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "url": url,
                 "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_save_page(self, body: dict[str, Any]) -> None:
+        """Save one page from the web (the Sources tab's Save button)."""
+        url = str(body.get("url", "")).strip()
+        if not url:
+            self._send(400, {"error": "url required"})
+            return
+        with self.state.lock, Store(self.state.db) as store:
+            stats = save_page(store, self.state.embedder, url)
+        self._send(
+            200,
+            {
+                "url": url,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,
                 "skipped": stats.skipped,

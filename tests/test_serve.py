@@ -128,6 +128,41 @@ def test_smart_retrieval_prompt_renders_its_json_example():
     assert "{history}" not in rendered
 
 
+def test_duplicates_endpoint_and_bookmarks(base_url: str, tmp_path: Path, monkeypatch):
+    docs = tmp_path / "dupes"
+    docs.mkdir()
+    body = "\n\n".join(
+        f"paragraph {i} " + "alpha beta gamma delta " * 20 for i in range(12)
+    )
+    (docs / "copy-a.md").write_text(body)
+    (docs / "copy-b.md").write_text(body)
+    status, payload = request(f"{base_url}/api/index", {"paths": [str(docs)]})
+    assert status == 200 and payload["indexed"] == 2
+
+    status, payload = request(f"{base_url}/api/duplicates")
+    assert status == 200
+    assert len(payload["clusters"]) == 1
+    assert sorted(Path(path).name for path in payload["clusters"][0]["paths"]) == [
+        "copy-a.md",
+        "copy-b.md",
+    ]
+
+    page = "<html><title>Saved</title><body><p>a saved page about widgets</p></body></html>"
+    monkeypatch.setattr("ragdesk.web._fetch", lambda url, timeout=30.0: page)
+    status, payload = request(
+        f"{base_url}/api/save", {"url": "https://example.com/post/1"}
+    )
+    assert status == 200 and payload["indexed"] == 1
+
+    status, payload = request(f"{base_url}/api/bookmarks")
+    assert status == 200
+    assert [row["url"] for row in payload["pages"]] == ["https://example.com/post/1"]
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/save", {"url": ""})
+    assert excinfo.value.code == 400
+
+
 def test_corrections_endpoints(base_url: str):
     status, payload = request(
         f"{base_url}/api/corrections",

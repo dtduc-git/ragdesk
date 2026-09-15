@@ -1193,6 +1193,40 @@ details.alt[open] summary {
   gap: 6px;
 }
 
+/* --- bookmarks + duplicates ------------------------------------------------- */
+
+.bookmark-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.bookmark-tools {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.dup-cluster {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.dup-meta {
+  margin: 0 0 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.dup-path {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
 /* --- settings -------------------------------------------------------------- */
 
 .status-table {

@@ -217,6 +217,8 @@ function activateTab(tab: string): void {
   document.querySelectorAll<HTMLElement>(".panel").forEach((panel) => {
     panel.classList.toggle("is-active", panel.id === `panel-${tab}`);
   });
+  if (tab === "indexed") void loadDuplicates();
+  if (tab === "sources") void loadBookmarks();
 }
 
 document.querySelectorAll<HTMLButtonElement>(".nav-item").forEach((item) => {
@@ -1345,7 +1347,7 @@ function notesCard(available: boolean): string {
 function webCard(): string {
   return `<div class="source-card">
     <h3>Website</h3>
-    <p class="source-note">Crawl a docs site: same host, HTML only, capped pages. Read-only.</p>
+    <p class="source-note">Save a single page, or crawl a docs site. HTML only, read-only.</p>
     <form data-form="web-sync" class="stack">
       <input name="url" placeholder="https://docs.example.com/start" required />
       <div class="field-row">
@@ -1354,7 +1356,13 @@ function webCard(): string {
       </div>
       <button class="btn btn-primary" type="submit">Crawl site</button>
     </form>
+    <form data-form="web-save" class="field-row">
+      <input name="url" placeholder="https://example.com/article" required />
+      <button class="btn" type="submit">Save page</button>
+    </form>
     <p class="source-result" data-result="web"></p>
+    <p class="caption">Saved pages</p>
+    <div class="memory-list" id="bookmark-list"></div>
   </div>`;
 }
 
@@ -1474,6 +1482,25 @@ $("source-grid").addEventListener("submit", async (event) => {
       await post("/api/connections/msgraph", { client_id: payload.client_id });
       await loadConnections();
       void startDevice("msgraph");
+      return;
+    }
+    if (kind === "web-save") {
+      const url = String(payload.url ?? "");
+      if (!url) {
+        setResult("web", "paste a URL first");
+        return;
+      }
+      setResult("web", "saving…");
+      const response = await post<Record<string, number>>("/api/save", { url });
+      setResult(
+        "web",
+        response.indexed || response.unchanged
+          ? summarize(response)
+          : "fetched, but no readable text — not an HTML page?",
+      );
+      (form as HTMLFormElement).reset();
+      await loadBookmarks();
+      await loadStatus();
       return;
     }
     const endpoints: Record<string, string> = {
@@ -1865,6 +1892,100 @@ $("correction-list").addEventListener("click", async (event) => {
     await loadCorrections();
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error));
+  }
+});
+
+// --- bookmarks + duplicates ----------------------------------------------------
+
+type Bookmark = { url: string; path: string; source: string; indexed_at: string };
+type DuplicateCluster = { paths: string[]; shared_chunks: number; ratio: number };
+
+async function loadBookmarks(): Promise<void> {
+  const box = document.getElementById("bookmark-list");
+  if (!box) return;
+  try {
+    const { pages } = await get<{ pages: Bookmark[] }>("/api/bookmarks");
+    box.innerHTML = pages.length
+      ? pages
+          .map(
+            (page) => `<div class="memory-item">
+              <span class="bookmark-url" title="${escapeHtml(page.path)}">${escapeHtml(page.url)}</span>
+              <span class="bookmark-tools">
+                <button class="action" type="button" data-open-url="${escapeHtml(page.url)}">Open</button>
+                <button class="action" type="button" data-refresh-url="${escapeHtml(page.url)}">Refresh</button>
+              </span>
+            </div>`,
+          )
+          .join("")
+      : `<p class="caption">nothing saved yet</p>`;
+  } catch {
+    box.innerHTML = "";
+  }
+}
+
+async function loadDuplicates(): Promise<void> {
+  const box = document.getElementById("duplicate-list");
+  if (!box) return;
+  box.innerHTML = `<p class="caption">checking…</p>`;
+  try {
+    const { clusters } = await get<{ clusters: DuplicateCluster[] }>("/api/duplicates");
+    box.innerHTML = clusters.length
+      ? clusters
+          .map(
+            (cluster) => `<div class="dup-cluster">
+              <p class="dup-meta">${cluster.paths.length} copies · ${cluster.shared_chunks} shared chunks · ${Math.round(cluster.ratio * 100)}% overlap</p>
+              ${cluster.paths
+                .map(
+                  (path) =>
+                    `<p class="dup-path"><code class="cite-path" data-open-path="${escapeHtml(path)}" title="Open file">${escapeHtml(path)}</code></p>`,
+                )
+                .join("")}
+            </div>`,
+          )
+          .join("")
+      : `<p class="caption">no duplicates found — every document is unique here</p>`;
+  } catch (error) {
+    box.innerHTML = `<p class="caption">${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
+  }
+}
+
+async function openUrl(url: string): Promise<void> {
+  if (isTauri()) {
+    try {
+      const { openUrl: open } = await import("@tauri-apps/plugin-opener");
+      await open(url);
+      return;
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+      return;
+    }
+  }
+  window.open(url, "_blank");
+}
+
+// --- bookmarks + duplicates handlers -------------------------------------------
+
+document.addEventListener("click", (event) => {
+  const element = event.target as HTMLElement;
+  const openTarget = element.closest<HTMLElement>("[data-open-url]");
+  if (openTarget?.dataset.openUrl) {
+    void openUrl(openTarget.dataset.openUrl);
+    return;
+  }
+  const refresh = element.closest<HTMLElement>("[data-refresh-url]");
+  if (refresh?.dataset.refreshUrl) {
+    const url = refresh.dataset.refreshUrl;
+    refresh.textContent = "saving…";
+    void post<{ indexed: number; unchanged: number }>("/api/save", { url })
+      .then(async (result) => {
+        toast(result.indexed ? `refreshed ${url}` : `already current: ${url}`);
+        await loadBookmarks();
+        await loadStatus();
+      })
+      .catch((error: unknown) => {
+        toast(error instanceof Error ? error.message : String(error));
+        refresh.textContent = "Refresh";
+      });
   }
 });
 

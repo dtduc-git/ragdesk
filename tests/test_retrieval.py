@@ -174,6 +174,46 @@ def test_metadata_boost_prefers_the_canonical_twin(tmp_path: Path):
         assert next(hit for hit in hits if hit.path.endswith("plain.md")).metadata == {}
 
 
+def test_duplicate_clusters_find_exact_copies(tmp_path: Path):
+    body = "\n\n".join(
+        f"paragraph {i} " + "alpha beta gamma delta " * 20 for i in range(12)
+    )
+    with make_store(
+        tmp_path,
+        {
+            "/docs/copy-a.md": body,
+            "/docs/copy-b.md": body,
+            "/docs/other.md": "something completely different about widgets",
+        },
+    ) as store:
+        clusters = store.duplicate_clusters()
+    assert len(clusters) == 1, clusters
+    assert sorted(Path(path).name for path in clusters[0]["paths"]) == [
+        "copy-a.md",
+        "copy-b.md",
+    ]
+    assert clusters[0]["ratio"] == 1.0
+    assert clusters[0]["shared_chunks"] >= 3
+
+
+def test_duplicate_clusters_ignore_topical_neighbours(tmp_path: Path):
+    def body(topic: str) -> str:
+        return "\n\n".join(
+            f"paragraph {i} about {topic} " + f"filler {i} {topic} " * 20
+            for i in range(12)
+        )
+
+    with make_store(
+        tmp_path,
+        {
+            "/docs/a.md": body("deploys"),
+            "/docs/b.md": body("rollbacks"),
+        },
+    ) as store:
+        # both long enough to qualify, but they share no exact chunk text
+        assert store.duplicate_clusters() == []
+
+
 def test_hyde_lane_can_change_the_ranking(tmp_path: Path):
     with make_store(
         tmp_path,

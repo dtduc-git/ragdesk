@@ -13,6 +13,7 @@ from ragdesk.llm import OllamaLLM
 from ragdesk.rerank import LexicalReranker, get_reranker
 from ragdesk.search import Hit, hybrid_search
 from ragdesk.store import EmbedderMismatch, Store
+from ragdesk.web import WebError, save_page
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
@@ -131,6 +132,34 @@ def test_orphan_fts_rows_are_pruned_on_open(tmp_path: Path):
         stats = index_paths(store, embedder, [docs])
         # would raise sqlite3.IntegrityError (the live wedge) without the prune
         assert stats.indexed == 1
+
+
+def test_save_page_indexes_one_page_and_keeps_its_url(tmp_path: Path, monkeypatch):
+    page = (
+        "<html><head><title>Rollback notes</title></head>"
+        "<body><p>Roll back with kubectl rollout undo when the canary fails.</p></body></html>"
+    )
+    monkeypatch.setattr("ragdesk.web._fetch", lambda url, timeout=30.0: page)
+    embedder = HashingEmbedder()
+    with make_store(tmp_path) as store:
+        stats = save_page(
+            store, embedder, "https://docs.example.com/runbooks/rollback"
+        )
+        assert stats.indexed == 1 and stats.skipped == 0
+        again = save_page(store, embedder, "https://docs.example.com/runbooks/rollback")
+        assert again.unchanged == 1
+        pages = store.web_pages()
+        assert [page["url"] for page in pages] == [
+            "https://docs.example.com/runbooks/rollback"
+        ]
+        assert pages[0]["path"] == "web://docs.example.com/runbooks/rollback"
+        assert store.document_text(pages[0]["path"])
+
+
+def test_save_page_rejects_a_non_http_url(tmp_path: Path):
+    with make_store(tmp_path) as store:
+        with pytest.raises(WebError):
+            save_page(store, HashingEmbedder(), "file:///etc/passwd")
 
 
 def test_index_survives_one_bad_file(tmp_path: Path, monkeypatch):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import array
+import hashlib
 import json
 import math
 import re
@@ -336,6 +337,31 @@ class Store:
             entry = dict(row)
             entry["metadata"] = json.loads(entry.get("metadata") or "{}")
             out.append(entry)
+        return out
+
+    def web_pages(self, limit: int = 200) -> list[dict[str, Any]]:
+        """Pages saved from the web — the bookmark list behind the Sources tab."""
+        rows = self.conn.execute(
+            "SELECT path, source, indexed_at, metadata FROM documents "
+            "WHERE source LIKE 'web:%' ORDER BY indexed_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            metadata = json.loads(row["metadata"] or "{}")
+            url = str(metadata.get("url") or "").strip()
+            if not url:
+                # pages saved before the url metadata existed: rebuild a best guess
+                host_path = str(row["path"])[len("web://") :]
+                url = f"https://{host_path}" if host_path else str(row["path"])
+            out.append(
+                {
+                    "url": url,
+                    "path": str(row["path"]),
+                    "source": str(row["source"]),
+                    "indexed_at": str(row["indexed_at"]),
+                }
+            )
         return out
 
     def touch_document(self, path: str, mtime: float) -> None:
@@ -748,6 +774,69 @@ class Store:
             {"path": other_path, "score": round(score, 3)}
             for score, other_path in scored[:limit]
         ]
+
+    def duplicate_clusters(
+        self, min_ratio: float = 0.5, min_shared: int = 3
+    ) -> list[dict[str, Any]]:
+        """Documents that share a large fraction of their exact chunks.
+
+        Chunking is deterministic, so a copy of a file (or a slice export of
+        it) hashes to the same chunk texts while topical neighbours do not.
+        Containment (shared / smaller side) catches "the whole book plus its
+        part-2 slice", which document-level cosine cannot separate from a
+        similar book on the same topic.
+        """
+        paths = {
+            int(row["id"]): str(row["path"])
+            for row in self.conn.execute("SELECT id, path FROM documents")
+        }
+        digests: dict[int, set[str]] = {}
+        for row in self.conn.execute("SELECT doc_id, text FROM chunks"):
+            digests.setdefault(int(row["doc_id"]), set()).add(
+                hashlib.sha1(str(row["text"]).encode()).hexdigest()
+            )
+        parent = {doc_id: doc_id for doc_id in digests}
+
+        def find(doc_id: int) -> int:
+            while parent[doc_id] != doc_id:
+                parent[doc_id] = parent[parent[doc_id]]
+                doc_id = parent[doc_id]
+            return doc_id
+
+        ids = [doc_id for doc_id, hashes in digests.items() if len(hashes) >= min_shared]
+        matches: list[tuple[int, int, int, float]] = []
+        for index, left in enumerate(ids):
+            for right in ids[index + 1 :]:
+                shared = len(digests[left] & digests[right])
+                if shared < min_shared:
+                    continue
+                ratio = shared / min(len(digests[left]), len(digests[right]))
+                if ratio < min_ratio:
+                    continue
+                matches.append((left, right, shared, ratio))
+                root_left, root_right = find(left), find(right)
+                if root_left != root_right:
+                    parent[root_right] = root_left
+
+        clusters: dict[int, dict[str, Any]] = {}
+        for left, right, shared, ratio in matches:
+            entry = clusters.setdefault(
+                find(left), {"paths": set(), "shared_chunks": 0, "ratio": 0.0}
+            )
+            entry["paths"].update((left, right))
+            entry["shared_chunks"] = max(entry["shared_chunks"], shared)
+            entry["ratio"] = max(entry["ratio"], ratio)
+        return sorted(
+            (
+                {
+                    "paths": sorted(paths[doc_id] for doc_id in entry["paths"]),
+                    "shared_chunks": entry["shared_chunks"],
+                    "ratio": round(entry["ratio"], 3),
+                }
+                for entry in clusters.values()
+            ),
+            key=lambda entry: (-entry["ratio"], -entry["shared_chunks"]),
+        )
 
     def backlinks(self, path: str, limit: int = 8) -> list[dict[str, Any]]:
         """Documents that mention this file's name, via the folded FTS index."""

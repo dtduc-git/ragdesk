@@ -9,12 +9,17 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   (HashingEmbedder for CI, OllamaEmbedder, OnnxEmbedder = EmbeddingGemma int8
   with query/doc prompts; shared `tokenize`), `store` (SQLite: FTS5 + float32
   vectors + fail-closed embedder guard; keeps the chosen local roots in `meta`
-  for the per-path Indexed breakdown via `local_paths()`), `search` (BM25 +
+  for the per-path Indexed breakdown via `local_paths()`; `duplicate_clusters`
+  groups docs by exact chunk-hash containment — a copied or sliced file shares
+  chunks, a topical neighbour does not, which document-level cosine cannot
+  separate; `web_pages()` is the bookmark list), `search` (BM25 +
   dense + RRF; `retrieve` adds the optional rerank stage), `rerank`
   (LexicalReranker baseline; FastEmbedReranker + OnnxReranker = multilingual
   gte behind the `onnx` extra), `index` (incremental local files; `iter_files`
   prunes `SKIP_DIRS` during the walk so `target/`/`node_modules/` are never
-  traversed), `office` (PDF/DOCX/PPTX/XLSX text extraction: docx/pptx/xlsx via
+  traversed; `index_document` takes optional `metadata` merged over any
+  front-matter; one bad file becomes a skip with the reason, never a dead
+  watcher), `office` (PDF/DOCX/PPTX/XLSX text extraction: docx/pptx/xlsx via
   zip+XML with zero deps — sheets keep `r<row>` refs, shared + inline strings;
   PDFs via pypdf, the only runtime dependency; XML with a DTD is refused;
   scanned PDFs return empty and are skipped, no OCR), `vision` (image OCR through Apple's
@@ -22,7 +27,8 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   upscaled 2× before recognition, header carries file name + Spotlight capture
   date; non-macOS or no extra → images skip as before), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
   `msgraph` (OneDrive + SharePoint, device flow) connectors, `web` (same-host
-  HTML crawl, capped pages/depth), `archive`
+  HTML crawl, capped pages/depth; `save_page` = one page, failures raise),
+  `archive`
   (shared repo-tarball extraction), `htmlutil` (shared HTML→text),
   `evaluate` (recall@5 / nDCG@10 / MRR), `answer` (Ollama LLM: non-stream +
   stream, grounding gate), `credentials` (0600 store under `~/.config/ragdesk/`),
@@ -124,6 +130,20 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   message), `GET /api/feedback/golden` (rated answers exported as a golden
   JSONL), `POST /api/verify {message_id}` (`ground_answer_detail`: per-sentence
   grounded/loose verdicts against the stored citations, stopword-free overlap).
+- Library surfaces: `GET /api/duplicates` (chunk-hash clusters, display-only —
+  ranking is untouched by design), `POST /api/save {url}` + `GET /api/bookmarks`
+  (one page saved with `web.save_page`, `metadata.url` keeps the real address),
+  and the CLI mirrors: `ragdesk save <url>`, `ragdesk completions
+  bash|zsh|fish`, `ragdesk man` (all in `complete.py`, generated from the
+  argparse tree so they cannot drift; `complete._subparsers` reads argparse
+  internals on purpose).
+- **FTS wedge (fixed 2026-09-15, live incident):** a `chunks_fts` row whose
+  chunk was gone collided with the next chunk id once ids were reused
+  ("constraint failed" on insert), every re-index of that file failed, and the
+  exception killed the watch + auto-index threads for the session. `Store._prune_orphan_fts_rows` repairs on every open (cheap count check),
+  `index_paths` turns a per-file failure into a skip with the reason, and the
+  serve loops log a failed pass instead of dying. If indexing "stops" again,
+  check `~/.ragdesk/serve.log` first.
 - Corrections: `corrections` table (`question`, `answer`, embedding of the
   question; `corrections_revision` for invalidation). The UI's Fix button under
   an answer opens an editor and `POST /api/corrections {question, answer}`;

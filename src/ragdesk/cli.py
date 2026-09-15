@@ -14,6 +14,7 @@ from typing import Any
 from ragdesk import __version__
 from ragdesk import settings as app_settings
 from ragdesk.answer import REFUSAL, answer, answer_stream
+from ragdesk.complete import bash_script, fish_script, man_page, zsh_script
 from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import get_embedder
 from ragdesk.envfile import load_env_file
@@ -44,7 +45,7 @@ from ragdesk.serve import (
     watch_pass,
 )
 from ragdesk.store import Store
-from ragdesk.web import WebError, crawl_site
+from ragdesk.web import WebError, crawl_site, save_page
 
 # Same database the desktop app uses, so CLI/TUI/MCP all see one index.
 DEFAULT_DB = str(Path.home() / ".ragdesk" / "index.db")
@@ -202,6 +203,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p_web.add_argument("--depth", type=int, default=2)
     p_web.add_argument("--json", action="store_true", help="machine-readable output")
 
+    p_save = sub.add_parser("save", help="save one web page (bookmark) into the index")
+    p_save.add_argument("url", help="page URL, e.g. https://example.com/article")
+    p_save.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p_completions = sub.add_parser(
+        "completions", help="print a shell completion script (bash/zsh/fish)"
+    )
+    p_completions.add_argument("shell", choices=["bash", "zsh", "fish"])
+
+    sub.add_parser("man", help="print the man page (roff) for ragdesk")
+
     sub.add_parser("mcp", help="run the MCP server over stdio (for Claude Code / Cursor)")
 
     p_serve = sub.add_parser("serve", help="local HTTP API for the desktop app")
@@ -285,7 +297,15 @@ def _standalone_rewrite(llm, question: str, history: list[tuple[str, str]]) -> s
 
 def main(argv: list[str] | None = None) -> int:
     load_env_file()  # local .env (gitignored) for development
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "completions":
+        emitters = {"bash": bash_script, "zsh": zsh_script, "fish": fish_script}
+        print(emitters[args.shell](parser), end="")
+        return 0
+    if args.command == "man":
+        print(man_page(parser), end="")
+        return 0
     try:
         # The saved preset wins over the built-in default; an explicit flag wins over both.
         saved_preset = app_settings.load().get("preset") or DEFAULT_PRESET
@@ -537,6 +557,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             emit_stats(stats, getattr(args, 'json', False))
+            return 0
+
+        if args.command == "save":
+            try:
+                stats = save_page(store, embedder, args.url)
+            except WebError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            emit_stats(stats, getattr(args, "json", False), url=args.url)
             return 0
 
         if args.command == "search":

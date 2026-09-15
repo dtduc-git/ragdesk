@@ -71,6 +71,54 @@ def _fetch(url: str, *, timeout: float = 30.0) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _index_page(
+    store: Store, embedder: Embedder, url: str, page: str
+) -> int | None:
+    """Index one fetched HTML page. Returns chunks, 0 if unchanged, None if empty."""
+    parser = _PageParser()
+    parser.feed(page)
+    text = html_to_text(page)
+    if not text.strip():
+        return None
+    title = parser.title or url
+    content = f"# {title}\n\nURL: {url}\n\n{text}".strip()
+    parsed = urllib.parse.urlparse(url)
+    path = f"web://{parsed.netloc}{parsed.path or '/'}"
+    return index_document(
+        store,
+        embedder,
+        source=f"web:{parsed.netloc}",
+        path=path,
+        content=content,
+        metadata={"url": url},
+    )
+
+
+def save_page(
+    store: Store, embedder: Embedder, url: str, *, timeout: float = 30.0
+) -> IndexStats:
+    """Fetch and index exactly one page (the bookmark button).
+
+    Unlike a crawl, a fetch failure raises: saving one URL must say what went
+    wrong instead of reporting a silent skip.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise WebError(f"invalid start URL: {url!r}")
+    store.ensure_embedder(embedder.name, embedder.dim)
+    stats = IndexStats()
+    stats.files_scanned = 1
+    chunks = _index_page(store, embedder, url, _fetch(url, timeout=timeout))
+    if chunks is None:
+        stats.skipped += 1
+    elif chunks:
+        stats.indexed += 1
+        stats.chunks += chunks
+    else:
+        stats.unchanged += 1
+    return stats
+
+
 def crawl_site(
     store: Store,
     embedder: Embedder,
@@ -103,18 +151,10 @@ def crawl_site(
 
         parser = _PageParser()
         parser.feed(page)
-        text = html_to_text(page)
-        if not text.strip():
+        chunks = _index_page(store, embedder, url, page)
+        if chunks is None:
             stats.skipped += 1
-            continue
-
-        title = parser.title or url
-        content = f"# {title}\n\nURL: {url}\n\n{text}".strip()
-        path = f"web://{host}{urllib.parse.urlparse(url).path or '/'}"
-        chunks = index_document(
-            store, embedder, source=f"web:{host}", path=path, content=content
-        )
-        if chunks:
+        elif chunks:
             stats.indexed += 1
             stats.chunks += chunks
         else:
