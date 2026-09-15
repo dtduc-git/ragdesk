@@ -616,7 +616,7 @@ async function ask(query: string): Promise<void> {
             }
             if (event.chat_id) currentChatId = event.chat_id;
             if (event.answer_id) {
-              renderAnswerActions(shellElement, actions, event.answer_id, 0);
+              renderAnswerActions(shellElement, actions, event.answer_id, 0, query);
               void autoVerify(actions, event.answer_id);
             }
             renderRichText(answer, answer.textContent ?? "");
@@ -792,16 +792,18 @@ function renderChat(messages: ChatMessage[]): void {
     return;
   }
   $("chat-log").innerHTML = "";
+  let question = "";
   for (const message of messages) {
     if (message.role === "user") {
       appendUserMessage(message.text);
+      question = message.text;
       continue;
     }
     const { answer, cites, actions, element } = appendAssistantShell();
     answer.classList.remove("streaming");
     answer.textContent = message.text;
     answer.classList.toggle("is-refused", message.text === REFUSAL);
-    renderAnswerActions(element, actions, message.id, message.feedback ?? 0);
+    renderAnswerActions(element, actions, message.id, message.feedback ?? 0, question);
     renderCites(cites, message.citations ?? []);
     renderRichText(answer, message.text);
     void renderDiagrams(answer, cites, message.text);
@@ -1822,11 +1824,48 @@ $("memory-extract").addEventListener("click", async () => {
   }
 });
 
+// --- corrections --------------------------------------------------------------
+
+type Correction = { id: number; question: string; answer: string; created_at: string };
+
+async function loadCorrections(): Promise<void> {
+  try {
+    const { corrections } = await get<{ corrections: Correction[] }>("/api/corrections");
+    $("correction-list").innerHTML = corrections.length
+      ? corrections
+          .map(
+            (correction) => `<div class="correction-item">
+              <div class="correction-text">
+                <p class="correction-q">${escapeHtml(correction.question)}</p>
+                <p class="correction-a">${escapeHtml(snippet(correction.answer, 180))}</p>
+              </div>
+              <button class="memory-drop" type="button" data-id="${correction.id}" aria-label="Remove this correction">×</button>
+            </div>`,
+          )
+          .join("")
+      : `<p class="caption">no corrections yet — use Fix under an answer</p>`;
+  } catch {
+    $("correction-list").innerHTML = "";
+  }
+}
+
+$("correction-list").addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>(".memory-drop");
+  if (!button) return;
+  try {
+    await post("/api/corrections/delete", { id: Number(button.dataset.id) });
+    await loadCorrections();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
+  }
+});
+
 function renderAnswerActions(
   message: HTMLElement,
   actions: HTMLElement,
   answerId: number,
   feedbackValue: number,
+  question: string,
 ): void {
   if (!answerId) {
     actions.innerHTML = "";
@@ -1836,6 +1875,7 @@ function renderAnswerActions(
     <button class="action" type="button" data-thumb="1" aria-label="Good answer" class="${feedbackValue === 1 ? "is-on" : ""}">▲</button>
     <button class="action" type="button" data-thumb="-1" aria-label="Bad answer" class="${feedbackValue === -1 ? "is-on" : ""}">▼</button>
     <button class="action action-text" type="button" data-verify="1">Verify</button>
+    ${question ? `<button class="action action-text" type="button" data-fix="1">Fix</button>` : ""}
     <span class="action-note" data-note></span>`;
   actions.querySelectorAll<HTMLElement>("[data-thumb]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1844,7 +1884,7 @@ function renderAnswerActions(
       try {
         await post("/api/feedback", { message_id: answerId, value });
         feedbackValue = value;
-        renderAnswerActions(message, actions, answerId, value);
+        renderAnswerActions(message, actions, answerId, value, question);
         const note = actions.querySelector<HTMLElement>("[data-note]");
         if (note) note.textContent = value === 0 ? "" : "noted — thanks";
       } catch (error) {
@@ -1881,6 +1921,51 @@ function renderAnswerActions(
       toast(error instanceof Error ? error.message : String(error));
     }
   });
+  const fix = actions.querySelector<HTMLElement>("[data-fix]");
+  fix?.addEventListener("click", () => {
+    openFixEditor(message, actions, answerId, feedbackValue, question);
+  });
+}
+
+function openFixEditor(
+  message: HTMLElement,
+  actions: HTMLElement,
+  answerId: number,
+  feedbackValue: number,
+  question: string,
+): void {
+  const current = message.querySelector<HTMLElement>(".answer")?.textContent ?? "";
+  const editor = document.createElement("div");
+  editor.className = "fix-editor";
+  editor.innerHTML = `
+    <textarea class="fix-input" rows="5" aria-label="Corrected answer"></textarea>
+    <div class="fix-row">
+      <button class="action action-text is-on" type="button" data-save>Save correction</button>
+      <button class="action action-text" type="button" data-cancel>Cancel</button>
+      <span class="action-note" data-note></span>
+    </div>`;
+  const input = editor.querySelector<HTMLTextAreaElement>(".fix-input") as HTMLTextAreaElement;
+  input.value = current;
+  actions.innerHTML = "";
+  actions.append(editor);
+  input.focus();
+  const restore = (note: string) => {
+    renderAnswerActions(message, actions, answerId, feedbackValue, question);
+    const target = actions.querySelector<HTMLElement>("[data-note]");
+    if (target && note) target.textContent = note;
+  };
+  editor.querySelector<HTMLElement>("[data-save]")?.addEventListener("click", async () => {
+    const corrected = input.value.trim();
+    if (!corrected) return;
+    try {
+      await post("/api/corrections", { question, answer: corrected });
+      void loadCorrections();
+      restore("correction saved — matching questions reuse it");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+    }
+  });
+  editor.querySelector<HTMLElement>("[data-cancel]")?.addEventListener("click", () => restore(""));
 }
 
 async function autoVerify(actions: HTMLElement, answerId: number): Promise<void> {
@@ -2313,6 +2398,7 @@ async function boot(): Promise<void> {
     renderStatus();
     await loadConnections();
     void loadMemories();
+    void loadCorrections();
     void loadMcp();
     if (!status.onboarded) {
       wizardStep = 0;

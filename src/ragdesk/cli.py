@@ -34,9 +34,11 @@ from ragdesk.rerank import get_reranker
 from ragdesk.search import parse_filters, retrieve
 from ragdesk.serve import (
     HYDE_PROMPT,
+    SMART_RETRIEVAL_PROMPT,
     AppState,
     auto_index_due,
     make_server,
+    parse_smart_retrieval,
     release_idle_models,
     run_auto_index,
     watch_pass,
@@ -132,6 +134,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--answers",
         action="store_true",
         help="also answer each query with the local LLM and score grounding",
+    )
+    p_eval.add_argument(
+        "--rewrite",
+        action="store_true",
+        help="score follow-up rows (a history field) both raw and rewritten by the local model",
     )
 
     p_stats = sub.add_parser("stats", help="index statistics")
@@ -261,6 +268,19 @@ def _print_hits(hits) -> None:
         snippet = " ".join(hit.text.split())[:160]
         print(f"{rank}. score={hit.score:.4f} cos={hit.cosine:.3f} [{hit.lanes}] {hit.path}")
         print(f"   {snippet}")
+
+
+def _standalone_rewrite(llm, question: str, history: list[tuple[str, str]]) -> str:
+    """The same rewrite ``serve`` does before searching; ``eval --rewrite`` scores it."""
+    convo = "\n".join(
+        f"{'User' if role == 'user' else 'ragdesk'}: {text[:300]}"
+        for role, text in history[-4:]
+    )
+    raw = llm.generate(
+        SMART_RETRIEVAL_PROMPT.format(history=convo or "(none)", question=question),
+        {"num_predict": 300, "temperature": 0.2},
+    )
+    return str(parse_smart_retrieval(str(raw)).get("standalone") or "").strip()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -612,6 +632,21 @@ def main(argv: list[str] | None = None) -> int:
                             {"num_predict": 120, "temperature": 0.3},
                         )
                     ).strip()[:1200]
+            rewrite_for = None
+            if args.rewrite:
+                try:
+                    rewrite_llm = resolve_llm(None, preset=settings["preset"])
+                except LLMUnavailable as exc:
+                    print(f"--rewrite needs a local model: {exc}", file=sys.stderr)
+                    return 2
+                rewrite_for = lambda question, history: _standalone_rewrite(  # noqa: E731
+                    rewrite_llm, question, history
+                )
+            baseline = None
+            if rewrite_for is not None:
+                baseline, _baseline_rows = evaluate(
+                    store, embedder, golden, top_k=args.top_k, reranker=reranker
+                )
             metrics, per_query = evaluate(
                 store,
                 embedder,
@@ -619,8 +654,11 @@ def main(argv: list[str] | None = None) -> int:
                 top_k=args.top_k,
                 reranker=reranker,
                 hyde_for=hyde_for,
+                rewrite_for=rewrite_for,
             )
             report: dict[str, Any] = {"metrics": metrics, "queries": per_query}
+            if baseline is not None:
+                report["baseline"] = baseline
             if args.answers:
                 answer_llm = resolve_llm(None, preset=settings["preset"])
                 grounded: list[dict[str, Any]] = []
@@ -645,6 +683,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 print(json.dumps(report, indent=2))
             else:
+                if baseline is not None:
+                    print("baseline (no rewrite):")
+                    print(format_report(baseline, []))
+                    print("with rewrite:")
                 print(format_report(metrics, per_query))
                 if args.answers:
                     print(f"grounded: {metrics['grounded_ratio']:.3f}")

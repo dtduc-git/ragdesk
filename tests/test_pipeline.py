@@ -118,6 +118,30 @@ def test_eval_on_fixtures_is_good(tmp_path: Path):
         assert metrics["mrr@10"] >= 0.8, per_query
 
 
+def test_eval_multiturn_rewrites_followups_with_history(tmp_path: Path):
+    embedder = HashingEmbedder()
+    with make_store(tmp_path) as store:
+        index_paths(store, embedder, [FIXTURES / "docs"])
+        golden = load_golden(FIXTURES / "golden_multiturn.jsonl")
+        assert golden and all(row.get("history") for row in golden)
+
+        raw_metrics, raw_rows = evaluate(store, embedder, golden, top_k=10)
+        assert all(row["rewritten"] is False for row in raw_rows)
+        assert all(row["search_query"] == row["query"] for row in raw_rows)
+
+        seen: list[tuple[str, int]] = []
+
+        def rewrite(question: str, history: list[tuple[str, str]]) -> str:
+            seen.append((question, len(history)))
+            return history[0][1]  # the opening turn names the topic
+
+        metrics, rows = evaluate(store, embedder, golden, top_k=10, rewrite_for=rewrite)
+        assert len(seen) == len(golden)
+        assert all(row["rewritten"] for row in rows)
+        assert metrics["recall@5"] >= 0.8, rows
+        assert metrics["recall@5"] >= raw_metrics["recall@5"], (raw_metrics, metrics)
+
+
 class FakeLLM:
     """Test double for a ragdesk.llm backend: never touches the network."""
 
@@ -252,3 +276,31 @@ def test_answer_stream_maps_pieces():
 def test_answer_stream_refuses_when_model_emits_nothing():
     hit = make_hit("a.md", "some context", chunk_id=1)
     assert list(answer_stream("q", [hit], FakeLLM(pieces=[]))) == [REFUSAL]
+
+
+def test_corrections_roundtrip_and_nearest(tmp_path: Path):
+    embedder = HashingEmbedder()
+    with make_store(tmp_path) as store:
+        key = embedder.embed_query("when do access tokens expire")
+        far = embedder.embed_query("what is the on-call escalation path")
+        assert store.corrections_revision() == "0:0"
+        correction_id = store.add_correction("when do access tokens expire", "90 minutes [1]", key)
+        rows = store.corrections()
+        assert [row["id"] for row in rows] == [correction_id]
+        assert rows[0]["answer"] == "90 minutes [1]"
+        assert store.nearest_correction(key, 0.88)["answer"] == "90 minutes [1]"
+        assert store.nearest_correction(far, 0.88) is None
+        assert store.corrections_revision() != "0:0"
+        store.delete_correction(correction_id)
+        assert store.corrections() == []
+        assert store.nearest_correction(key, 0.88) is None
+
+
+def test_build_prompt_injects_corrections():
+    hit = make_hit("docs/auth.md", "tokens expire after 60 minutes", chunk_id=1)
+    corrections = [{"question": "when do tokens expire", "answer": "after 90 minutes [1]"}]
+    prompt = build_prompt("when do tokens expire", [hit], corrections=corrections)
+    assert "Corrections the user made" in prompt
+    assert "after 90 minutes [1]" in prompt
+    plain = build_prompt("when do tokens expire", [hit])
+    assert "Corrections the user made" not in plain

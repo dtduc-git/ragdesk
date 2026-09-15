@@ -74,6 +74,13 @@ CREATE TABLE IF NOT EXISTS memories (
     embedding BLOB NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS corrections (
+    id INTEGER PRIMARY KEY,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 TOKEN_RE = re.compile(r"\w+", re.UNICODE)
@@ -614,6 +621,60 @@ class Store:
             "SELECT 1 FROM memories WHERE lower(text) = lower(?)", (text.strip(),)
         ).fetchone()
         return row is not None
+
+    # --- corrections --------------------------------------------------------------
+
+    def add_correction(self, question: str, answer: str, embedding: list[float]) -> int:
+        with self.conn:
+            cursor = self.conn.execute(
+                "INSERT INTO corrections (question, answer, embedding) VALUES (?, ?, ?)",
+                (question, answer, array.array("f", embedding).tobytes()),
+            )
+        return int(cursor.lastrowid)
+
+    def corrections(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT id, question, answer, created_at FROM corrections ORDER BY id DESC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_correction(self, correction_id: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM corrections WHERE id = ?", (correction_id,))
+
+    def corrections_revision(self) -> str:
+        """Changes whenever a correction is added or removed (cache invalidation)."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM corrections"
+        ).fetchone()
+        return f"{row['n']}:{row['last']}"
+
+    def nearest_correction(
+        self, embedding: list[float], min_cosine: float
+    ) -> dict[str, Any] | None:
+        """Closest correction for this question, if one is close enough."""
+        rows = self.conn.execute(
+            "SELECT id, question, answer, embedding FROM corrections ORDER BY id DESC"
+        ).fetchall()
+        q_norm = math.sqrt(sum(v * v for v in embedding)) or 1.0
+        best: tuple[float, dict[str, Any]] | None = None
+        for row in rows:
+            vec = array.array("f")
+            vec.frombytes(row["embedding"])
+            dot = sum(a * b for a, b in zip(embedding, vec, strict=False))
+            norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+            score = dot / (q_norm * norm)
+            if score >= min_cosine and (best is None or score > best[0]):
+                best = (
+                    score,
+                    {
+                        "id": int(row["id"]),
+                        "question": str(row["question"]),
+                        "answer": str(row["answer"]),
+                        "cosine": score,
+                    },
+                )
+        return best[1] if best else None
 
     # --- navigation -------------------------------------------------------------
 

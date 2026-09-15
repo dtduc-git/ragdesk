@@ -4,7 +4,16 @@ from pathlib import Path
 
 from ragdesk.embed import HashingEmbedder
 from ragdesk.index import index_document, index_paths
-from ragdesk.search import Filters, Hit, hybrid_search, parse_filters, retrieve
+from ragdesk.search import (
+    META_BOOST,
+    META_PENALTY,
+    Filters,
+    Hit,
+    hybrid_search,
+    metadata_factor,
+    parse_filters,
+    retrieve,
+)
 from ragdesk.store import Store
 
 
@@ -130,6 +139,39 @@ def test_semantic_cache_roundtrip(tmp_path: Path):
         # rows without an embedding are ignored by the semantic path
         store.cache_put("k2", "no vector", "x", [], fingerprint="fp1")
         assert store.cache_nearest([0.0, 1.0, 0.0], "fp1", 0.0)["answer"] == "an answer"
+
+
+def test_metadata_factor_values():
+    assert metadata_factor({}) == 1.0
+    assert metadata_factor(None) == 1.0
+    assert metadata_factor({"service": "payments"}) == 1.0
+    assert metadata_factor({"authority": "Canonical"}) == META_BOOST
+    assert metadata_factor({"status": "draft"}) == META_PENALTY
+    assert metadata_factor({"authority": "official", "status": "deprecated"}) == (
+        META_BOOST * META_PENALTY
+    )
+
+
+def test_metadata_boost_prefers_the_canonical_twin(tmp_path: Path):
+    body = "Deploy rollback procedure: run kubectl rollout undo when the canary fails."
+    with make_store(
+        tmp_path,
+        {
+            "/docs/canonical.md": f"---\nauthority: canonical\n---\n{body}",
+            "/docs/draft.md": f"---\nstatus: draft\n---\n{body}",
+            "/docs/plain.md": body,
+        },
+    ) as store:
+        embedder = HashingEmbedder(dim=512)
+        hits = hybrid_search(store, embedder, "deploy rollback procedure", top_k=5)
+        paths = [hit.path for hit in hits]
+        assert paths[0].endswith("canonical.md"), paths
+        assert paths.index("/docs/canonical.md") < paths.index("/docs/plain.md") < paths.index(
+            "/docs/draft.md"
+        ), paths
+        tagged = next(hit for hit in hits if hit.path.endswith("canonical.md"))
+        assert tagged.metadata == {"authority": "canonical"}  # dict, never a raw JSON string
+        assert next(hit for hit in hits if hit.path.endswith("plain.md")).metadata == {}
 
 
 def test_hyde_lane_can_change_the_ranking(tmp_path: Path):

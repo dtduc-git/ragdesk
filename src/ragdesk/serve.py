@@ -83,6 +83,10 @@ CORS_HEADERS = {
 
 MEMORY_MIN_COSINE = 0.35
 MEMORY_LIMIT = 3
+# Same calibration as the semantic cache: paraphrases score 0.91-0.93, so a
+# correction only rides along when the question clearly repeats its own.
+CORRECTION_MIN_COSINE = 0.88
+CORRECTION_CHARS = 2000
 # Calibrated with the real embedder: same-intent paraphrases score 0.91-0.93,
 # different intents 0.14-0.35, so 0.88 replays only true paraphrases.
 SEMANTIC_CACHE_MIN_COSINE = 0.88
@@ -91,9 +95,9 @@ SEMANTIC_CACHE_MIN_COSINE = 0.88
 ANSWER_PROMPT_VERSION = "answer-v2-structured"
 SMART_RETRIEVAL_PROMPT = """You prepare a search over the reader's own notes and code.
 Given the conversation so far and the new question, reply with ONLY a JSON object:
-{"standalone": "<the question rewritten to stand alone, same language>",
+{{"standalone": "<the question rewritten to stand alone, same language>",
  "sub_queries": ["<at most 2 alternative phrasings or sub-questions>"],
- "hypothetical": "<a short factual paragraph that would answer it, as if from the notes>"}
+ "hypothetical": "<a short factual paragraph that would answer it, as if from the notes>"}}
 Keep every field short. Use the same language as the question.
 
 Conversation:
@@ -336,6 +340,10 @@ class Handler(BaseHTTPRequestHandler):
             with Store(self.state.db) as store:
                 self._send(200, {"memories": store.memories()})
             return
+        if self.path == "/api/corrections":
+            with Store(self.state.db) as store:
+                self._send(200, {"corrections": store.corrections()})
+            return
         if self.path == "/api/chats":
             with Store(self.state.db) as store:
                 self._send(200, {"chats": store.chats()})
@@ -450,6 +458,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_memory_delete(body)
             elif self.path == "/api/memories/extract":
                 self._handle_memory_extract(body)
+            elif self.path == "/api/corrections":
+                self._handle_correction_add(body)
+            elif self.path == "/api/corrections/delete":
+                self._handle_correction_delete(body)
             elif self.path == "/api/chats/delete":
                 self._handle_chat_delete(body)
             elif self.path == "/api/sync/github":
@@ -1238,7 +1250,13 @@ class Handler(BaseHTTPRequestHandler):
                         query_vec, fingerprint, SEMANTIC_CACHE_MIN_COSINE
                     )
                 history = store.recent_turns(chat_id) if chat_id else []
-                memory = None if cached is not None else self._relevant_memories(store, query)
+                if cached is None:
+                    question_vec = self.state.embedder.embed_query(query)
+                    memory = self._relevant_memories(store, query, question_vec)
+                    corrections = self._corrections_for(store, question_vec)
+                else:
+                    memory = None
+                    corrections = []
             if cached is not None:
                 cached_answer = str(cached["answer"])
                 emit({"delta": cached_answer})
@@ -1267,6 +1285,7 @@ class Handler(BaseHTTPRequestHandler):
                 history=history,
                 memory=memory,
                 diagram=wants_diagram(query),
+                corrections=corrections,
             ):
                 pieces.append(str(piece))
                 emit({"delta": piece})
@@ -1369,6 +1388,7 @@ class Handler(BaseHTTPRequestHandler):
                 str(store.stats()["documents"]),
                 str(store.stats()["chunks"]),
                 store.corpus_revision(),
+                store.corrections_revision(),
             ]
         )
 
@@ -1402,7 +1422,10 @@ class Handler(BaseHTTPRequestHandler):
                 SMART_RETRIEVAL_PROMPT.format(history=convo or "(none)", question=question),
                 {"num_predict": 300, "temperature": 0.2},
             )
-        except Exception:  # noqa: BLE001 - retrieval never depends on this
+        except Exception as exc:  # noqa: BLE001 - retrieval never depends on this
+            # Loud on purpose: a broken prompt hid here once (JSON braces) and
+            # returned plain retrieval for weeks without a trace.
+            print(f"smart retrieval skipped: {exc}", file=sys.stderr)
             return {}
         return parse_smart_retrieval(str(raw))
 
@@ -1417,7 +1440,8 @@ class Handler(BaseHTTPRequestHandler):
                 HYDE_PROMPT.format(question=question),
                 {"num_predict": 120, "temperature": 0.3},
             )
-        except Exception:  # noqa: BLE001 - HyDE is an enhancement, never a requirement
+        except Exception as exc:  # noqa: BLE001 - HyDE is an enhancement, never a requirement
+            print(f"hyde skipped: {exc}", file=sys.stderr)
             return ""
         return str(text).strip()[:1200]
 
@@ -1484,7 +1508,13 @@ class Handler(BaseHTTPRequestHandler):
                     query_vec, fingerprint, SEMANTIC_CACHE_MIN_COSINE
                 )
             history = store.recent_turns(chat_id) if chat_id else []
-            memory = None if cached is not None else self._relevant_memories(store, query)
+            if cached is None:
+                question_vec = self.state.embedder.embed_query(query)
+                memory = self._relevant_memories(store, query, question_vec)
+                corrections = self._corrections_for(store, question_vec)
+            else:
+                memory = None
+                corrections = []
         if cached is not None:
             text = str(cached["answer"])
             citations = list(cached["citations"])
@@ -1499,6 +1529,7 @@ class Handler(BaseHTTPRequestHandler):
                 history=history,
                 memory=memory,
                 diagram=wants_diagram(query),
+                corrections=corrections,
             )
             from_cache = False
         chat_id = self._record_exchange(
@@ -1523,12 +1554,14 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
-    def _relevant_memories(self, store: Store, query: str) -> list[str]:
+    def _relevant_memories(
+        self, store: Store, query: str, query_vec: list[float] | None = None
+    ) -> list[str]:
         """Top durable notes for this question; empty when nothing is close."""
         vectors = store.memory_vectors()
         if not vectors:
             return []
-        query_vec = self.state.embedder.embed_query(query)
+        query_vec = query_vec or self.state.embedder.embed_query(query)
         q_norm = math.sqrt(sum(v * v for v in query_vec)) or 1.0
         scored: list[tuple[float, str]] = []
         for _memory_id, text, vector in vectors:
@@ -1539,6 +1572,13 @@ class Handler(BaseHTTPRequestHandler):
                 scored.append((score, text))
         scored.sort(key=lambda item: -item[0])
         return [text for _score, text in scored[:MEMORY_LIMIT]]
+
+    def _corrections_for(
+        self, store: Store, query_vec: list[float]
+    ) -> list[dict[str, Any]]:
+        """The closest user correction for this question, or nothing."""
+        correction = store.nearest_correction(query_vec, CORRECTION_MIN_COSINE)
+        return [correction] if correction else []
 
     def _handle_mcp_install(self) -> None:
         self._send(200, install_cli_shim())
@@ -1619,6 +1659,28 @@ class Handler(BaseHTTPRequestHandler):
                 store.add_memory(text, self.state.embedder.embed_query(text))
                 added.append(text)
         self._send(200, {"added": added, "raw": "" if added else str(raw)[:300]})
+
+    def _handle_correction_add(self, body: dict[str, Any]) -> None:
+        """Save a user-edited answer so matching questions reuse it."""
+        question = str(body.get("question", "")).strip()[:500]
+        corrected = str(body.get("answer", "")).strip()[:CORRECTION_CHARS]
+        if not question or not corrected:
+            self._send(400, {"error": "question and answer required"})
+            return
+        with self.state.lock, Store(self.state.db) as store:
+            correction_id = store.add_correction(
+                question, corrected, self.state.embedder.embed_query(question)
+            )
+        self._send(200, {"added": True, "id": correction_id})
+
+    def _handle_correction_delete(self, body: dict[str, Any]) -> None:
+        correction_id = int(body.get("id") or 0)
+        if not correction_id:
+            self._send(400, {"error": "id required"})
+            return
+        with Store(self.state.db) as store:
+            store.delete_correction(correction_id)
+        self._send(200, {"deleted": correction_id})
 
     def _handle_chat_delete(self, body: dict[str, Any]) -> None:
         chat_id = int(body.get("chat_id") or 0)

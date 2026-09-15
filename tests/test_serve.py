@@ -12,7 +12,7 @@ import pytest
 
 from ragdesk.embed import HashingEmbedder
 from ragdesk.index import index_paths
-from ragdesk.serve import AppState, make_server
+from ragdesk.serve import SMART_RETRIEVAL_PROMPT, AppState, make_server
 from ragdesk.store import Store
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
@@ -117,6 +117,67 @@ def test_ask_grounding_gate_skips_llm(base_url: str):
     assert status == 200
     assert payload["refused"] is True
     assert payload["hits"]
+
+
+def test_smart_retrieval_prompt_renders_its_json_example():
+    rendered = SMART_RETRIEVAL_PROMPT.format(
+        history="User: how do tokens work?", question="when do they expire?"
+    )
+    assert '{"standalone"' in rendered
+    assert "when do they expire?" in rendered
+    assert "{history}" not in rendered
+
+
+def test_corrections_endpoints(base_url: str):
+    status, payload = request(
+        f"{base_url}/api/corrections",
+        {"question": "when do access tokens expire", "answer": "after 90 minutes [1]"},
+    )
+    assert status == 200
+    assert payload["added"] is True
+    correction_id = payload["id"]
+
+    _, payload = request(f"{base_url}/api/corrections")
+    assert [row["question"] for row in payload["corrections"]] == [
+        "when do access tokens expire"
+    ]
+
+    status, payload = request(f"{base_url}/api/corrections/delete", {"id": correction_id})
+    assert status == 200
+    _, payload = request(f"{base_url}/api/corrections")
+    assert payload["corrections"] == []
+
+
+def test_ask_injects_a_matching_correction(base_url: str, monkeypatch):
+    prompts: list[str] = []
+
+    class RecordingLLM:
+        def generate(self, prompt: str, options: dict) -> str:
+            prompts.append(prompt)
+            return "Access tokens expire after 90 minutes. [1]"
+
+        def generate_stream(self, prompt: str, options: dict):
+            prompts.append(prompt)
+            yield "Access tokens expire after 90 minutes. [1]"
+
+    monkeypatch.setattr("ragdesk.serve.LazyLLM", lambda state: RecordingLLM())
+    question = "when do access tokens expire"
+
+    status, payload = request(f"{base_url}/api/ask", {"query": question})
+    assert status == 200
+    assert "Corrections the user made" not in prompts[0]
+
+    request(
+        f"{base_url}/api/corrections",
+        {"question": question, "answer": "90 minutes, per the new policy [1]"},
+    )
+    # the cache fingerprint carries the corrections revision, so this ask
+    # regenerates instead of replaying the uncorrected cached answer
+    status, payload = request(f"{base_url}/api/ask", {"query": question})
+    assert status == 200
+    assert payload["cached"] is False
+    assert "Corrections the user made" in prompts[1]
+    assert "90 minutes, per the new policy [1]" in prompts[1]
 
 
 def test_connections_empty(base_url: str):
@@ -548,7 +609,7 @@ def test_settings_accepts_idle_unload(base_url: str):
 def test_chat_history_roundtrip(base_url: str, monkeypatch):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "an answer",
+        lambda q, hits, llm, **kwargs: "an answer",
     )
     status, payload = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
     assert status == 200
@@ -579,7 +640,7 @@ def test_chat_history_roundtrip(base_url: str, monkeypatch):
 def test_ask_passes_recent_turns_as_history(base_url: str, monkeypatch):
     seen: dict = {}
 
-    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False):
+    def fake_answer(question, hits, llm, history=None, **kwargs):
         seen["history"] = list(history or [])
         return "ok"
 
@@ -594,7 +655,7 @@ def test_ask_passes_recent_turns_as_history(base_url: str, monkeypatch):
 def test_answer_cache_hits_on_repeat(base_url: str, monkeypatch):
     calls = {"n": 0}
 
-    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False):
+    def fake_answer(question, hits, llm, **kwargs):
         calls["n"] += 1
         return f"answer #{calls['n']}"
 
@@ -613,7 +674,7 @@ def test_answer_cache_hits_on_repeat(base_url: str, monkeypatch):
 def test_cache_invalidates_when_the_corpus_changes(base_url: str, monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "answer v1",
+        lambda q, hits, llm, **kwargs: "answer v1",
     )
     request(f"{base_url}/api/ask", {"query": "what is oauth?"})
     _, cached = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
@@ -626,7 +687,7 @@ def test_cache_invalidates_when_the_corpus_changes(base_url: str, monkeypatch, t
 
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "answer v2",
+        lambda q, hits, llm, **kwargs: "answer v2",
     )
     _, after = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
     assert after["cached"] is False
@@ -636,7 +697,7 @@ def test_cache_invalidates_when_the_corpus_changes(base_url: str, monkeypatch, t
 def test_stream_replays_a_cached_answer_without_the_model(base_url: str, monkeypatch):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: (
+        lambda q, hits, llm, **kwargs: (
             "cached later"
         ),
     )
@@ -673,7 +734,7 @@ def test_parse_memory_list_tolerates_prose():
 def test_memory_add_list_delete_and_injection(base_url: str, monkeypatch):
     prompts: list[str] = []
 
-    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False):
+    def fake_answer(question, hits, llm, memory=None, **kwargs):
         prompts.append(str(memory))
         return "ok"
 
@@ -712,7 +773,7 @@ def test_memory_extract_reads_the_latest_chat(base_url: str, monkeypatch):
     monkeypatch.setattr("ragdesk.serve.LazyLLM", lambda state: FakeLLM())
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "ok",
+        lambda q, hits, llm, **kwargs: "ok",
     )
     request(f"{base_url}/api/ask", {"query": "what is oauth?"})
 
@@ -761,7 +822,7 @@ def test_status_reports_activity_shape(base_url: str, tmp_path: Path):
 def test_feedback_and_golden_export(base_url: str, monkeypatch):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "ok",
+        lambda q, hits, llm, **kwargs: "ok",
     )
     _, ask = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
     request(f"{base_url}/api/ask", {"query": "and pkce?", "chat_id": ask["chat_id"]})
@@ -788,7 +849,7 @@ def test_feedback_and_golden_export(base_url: str, monkeypatch):
 def test_verify_endpoint_scores_sentences(base_url: str, monkeypatch):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: (
+        lambda q, hits, llm, **kwargs: (
             "Access tokens expire after 60 minutes [1]. The moon is cheese."
         ),
     )
@@ -1017,7 +1078,7 @@ def test_sync_github_success(base_url: str, monkeypatch):
 
 
 def test_ask_stream(base_url: str, monkeypatch):
-    def fake_stream(question, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False):
+    def fake_stream(question, hits, llm, **kwargs):
         yield "Hel"
         yield "lo"
 

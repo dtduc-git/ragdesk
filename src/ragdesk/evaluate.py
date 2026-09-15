@@ -8,6 +8,11 @@ Golden set format (JSONL, one object per line):
 ``relevant`` entries match by exact path or path suffix, so fixtures stay
 portable between machines. ``category`` is optional and groups the report, so
 one weak area cannot hide behind a strong overall number.
+
+A row may also carry ``"history": [["user", "…"], ["assistant", "…"]]`` for a
+follow-up question. With a ``rewrite_for`` callable the harness searches the
+rewritten (standalone) question too, which is how the follow-up rewrite from
+``serve`` is scored instead of trusted.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from ragdesk.store import Store
 Sentence = Callable[[str], list[str]]
 _CITATION_RE = re.compile(r"\[(\d+)\]")
 HydeFor = Callable[[str], str]
+RewriteFor = Callable[[str, list[tuple[str, str]]], str]
 
 
 def load_golden(path: str | Path) -> list[dict[str, Any]]:
@@ -62,15 +68,23 @@ def evaluate(
     top_k: int = 10,
     reranker: Any = None,
     hyde_for: HydeFor | None = None,
+    rewrite_for: RewriteFor | None = None,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     per_query: list[dict[str, Any]] = []
     for row in golden:
         query, filters = parse_filters(row["query"])
-        hyde_text = hyde_for(query) if hyde_for is not None else ""
+        history = [
+            (str(role), str(text)) for role, text in (row.get("history") or [])
+        ]
+        rewritten = ""
+        if rewrite_for is not None and history:
+            rewritten = str(rewrite_for(query, history)).strip()
+        search_text = rewritten or query
+        hyde_text = hyde_for(search_text) if hyde_for is not None else ""
         hits = retrieve(
             store,
             embedder,
-            query,
+            search_text,
             top_k=top_k,
             reranker=reranker,
             hyde_text=hyde_text,
@@ -101,6 +115,8 @@ def evaluate(
             {
                 "query": row["query"],
                 "category": str(row.get("category") or "uncategorised"),
+                "search_query": search_text,
+                "rewritten": bool(rewritten) and rewritten != query,
                 "recall@5": recall,
                 "ndcg@10": ndcg,
                 "mrr@10": reciprocal,

@@ -34,7 +34,7 @@ Cite the sources you used inline as [1], [2] and so on — end each factual
 sentence with its citation marker, but never reply with citations alone.
 If the sources do not contain the answer, say exactly:
 "{refusal}". Never use outside knowledge.
-{history}{memory}{diagram}
+{history}{memory}{corrections}{diagram}
 Sources:
 {context}
 
@@ -49,6 +49,12 @@ HISTORY_CHARS = 400
 MEMORY_HEADER = (
     "Durable notes the user asked you to remember (context, still answer from the sources):\n"
 )
+CORRECTION_HEADER = (
+    "Corrections the user made to earlier answers. When one applies to this question, "
+    "follow it as the authoritative answer and still cite the sources:\n"
+)
+CORRECTION_QUESTION_CHARS = 200
+CORRECTION_ANSWER_CHARS = 800
 DIAGRAM_NOTE = """The user asked for a diagram. Reply with ONE fenced ```mermaid block and at
 most two sentences of context. Use ONLY this Mermaid vocabulary: `flowchart TD` or
 `flowchart LR`, nodes `id[Label]`, edges `A --> B` or `A -->|label| B`, optional grouping
@@ -89,6 +95,7 @@ def build_prompt(
     history: list[tuple[str, str]] | None = None,
     memory: list[str] | None = None,
     diagram: bool = False,
+    corrections: list[dict] | None = None,
 ) -> str:
     blocks = [
         f"[{i}] {hit.path}\n{hit.context}" for i, hit in enumerate(hits, start=1)
@@ -98,10 +105,16 @@ def build_prompt(
         speaker = "User" if role == "user" else "ragdesk"
         lines.append(f"{speaker}: {text[:HISTORY_CHARS]}")
     notes = [f"- {note}" for note in (memory or [])]
+    fixes = [
+        f"- Q: {str(item.get('question', ''))[:CORRECTION_QUESTION_CHARS]}\n"
+        f"  A: {str(item.get('answer', ''))[:CORRECTION_ANSWER_CHARS]}"
+        for item in (corrections or [])
+    ]
     return PROMPT_TEMPLATE.format(
         refusal=REFUSAL,
         history=(HISTORY_HEADER + "\n".join(lines) + "\n\n") if lines else "",
         memory=(MEMORY_HEADER + "\n".join(notes) + "\n\n") if notes else "",
+        corrections=(CORRECTION_HEADER + "\n".join(fixes) + "\n\n") if fixes else "",
         diagram=(DIAGRAM_NOTE if diagram else "") + length_hint(),
         context="\n\n".join(blocks),
         question=question,
@@ -117,11 +130,12 @@ def answer(
     history: list[tuple[str, str]] | None = None,
     memory: list[str] | None = None,
     diagram: bool = False,
+    corrections: list[dict] | None = None,
 ) -> str:
     best_cosine = max((hit.cosine for hit in hits), default=0.0)
     if not hits or best_cosine < min_cosine:
         return REFUSAL
-    prompt = build_prompt(question, hits, history, memory, diagram)
+    prompt = build_prompt(question, hits, history, memory, diagram, corrections)
     # Small models occasionally return an empty completion; one retry.
     for _ in range(2):
         text = str(llm.generate(prompt, answer_options())).strip()
@@ -139,6 +153,7 @@ def answer_stream(
     history: list[tuple[str, str]] | None = None,
     memory: list[str] | None = None,
     diagram: bool = False,
+    corrections: list[dict] | None = None,
 ) -> Iterator[str]:
     """Same contract as :func:`answer`, but yields text pieces as they arrive."""
     best_cosine = max((hit.cosine for hit in hits), default=0.0)
@@ -146,7 +161,7 @@ def answer_stream(
         yield REFUSAL
         return
     emitted = False
-    prompt = build_prompt(question, hits, history, memory, diagram)
+    prompt = build_prompt(question, hits, history, memory, diagram, corrections)
     for piece in llm.generate_stream(prompt, answer_options()):
         if piece:
             emitted = True

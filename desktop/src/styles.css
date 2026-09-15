@@ -1135,6 +1135,64 @@ details.alt[open] summary {
   color: var(--flag);
 }
 
+/* --- corrections ----------------------------------------------------------- */
+
+.correction-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 13px;
+}
+
+.correction-text {
+  min-width: 0;
+}
+
+.correction-q {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.correction-a {
+  margin: 2px 0 0;
+  color: var(--ink);
+}
+
+.fix-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 4px 0;
+}
+
+.fix-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.fix-input:focus {
+  outline: none;
+  border-color: var(--stamp);
+}
+
+.fix-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* --- settings -------------------------------------------------------------- */
 
 .status-table {

@@ -6,6 +6,7 @@ query scoping via ``folder:`` / ``source:`` prefixes.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
@@ -23,6 +24,12 @@ RERANK_POOL = 30
 MAX_CHUNKS_PER_DOC = 2  # diversity: one long document must not fill every slot
 RECENCY_WEIGHT = 0.10  # a mild nudge for fresh documents, not a re-rank
 RECENCY_TAU_DAYS = 45.0
+# Front-matter tags that move a document a little, never a lot: same intent as
+# the recency nudge, and the same rule applies — measure before changing them.
+META_BOOST = 1.05
+META_PENALTY = 0.90
+CANONICAL_VALUES = {"canonical", "authoritative", "official", "high", "true", "yes", "1"}
+DRAFT_VALUES = {"draft", "deprecated", "archived", "superseded", "obsolete", "wip"}
 
 _FILTER_RE = re.compile(r"(?<![\w-])([a-z][a-z0-9_-]*):(\S+)")
 _RESERVED_KEYS = {"http", "https", "file", "ragdesk", "ollama", "github", "web"}
@@ -93,6 +100,35 @@ def recency_factor(mtime: float, *, now: float | None = None) -> float:
     return 1.0 + RECENCY_WEIGHT * math.exp(-age_days / RECENCY_TAU_DAYS)
 
 
+def metadata_factor(metadata: dict | None) -> float:
+    """Small rank nudge from front-matter tags: canonical docs up, drafts down.
+
+    Opt-in by tag: a document without ``authority``/``status`` ranks exactly as
+    it did before, so the boost can never quietly re-rank an untagged corpus.
+    """
+    if not metadata:
+        return 1.0
+    authority = str(metadata.get("authority", "")).strip().lower()
+    status = str(metadata.get("status", "")).strip().lower()
+    factor = 1.0
+    if authority in CANONICAL_VALUES:
+        factor *= META_BOOST
+    if status in DRAFT_VALUES:
+        factor *= META_PENALTY
+    return factor
+
+
+def _decode_metadata(raw: object) -> dict:
+    """Rows reach the fusion from lanes that may or may not have decoded the JSON."""
+    if isinstance(raw, dict):
+        return raw
+    try:
+        value = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def diversify(hits: list[Hit], top_k: int, max_per_doc: int = MAX_CHUNKS_PER_DOC) -> list[Hit]:
     """Cap how many chunks one document may contribute, then backfill if short."""
     picked: list[Hit] = []
@@ -154,6 +190,7 @@ def hybrid_search(
     payloads: dict[int, dict] = {}
     for _lane, rows in lane_rows:
         for row in rows:
+            row["metadata"] = _decode_metadata(row.get("metadata"))
             payloads.setdefault(row["id"], row)
     dense_rows = next(rows for lane, rows in lane_rows if lane == "dense")
     cosine = {row["id"]: row["score"] for row in dense_rows}
@@ -168,7 +205,9 @@ def hybrid_search(
         weights=lane_weights,
     )
     for chunk_id in list(fused):
-        fused[chunk_id] *= recency_factor(float(payloads.get(chunk_id, {}).get("mtime") or 0.0))
+        payload = payloads.get(chunk_id, {})
+        fused[chunk_id] *= recency_factor(float(payload.get("mtime") or 0.0))
+        fused[chunk_id] *= metadata_factor(payload.get("metadata"))
     ranked = sorted(fused.items(), key=lambda item: item[1], reverse=True)[:top_k]
 
     hits: list[Hit] = []

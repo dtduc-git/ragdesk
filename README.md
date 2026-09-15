@@ -143,7 +143,7 @@ with — the index refuses mismatched embeddings.
 | Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme — **built from source** (no DMG release yet) | Packaged DMG + notarization (Apple Developer ID) when the project ships binaries |
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) | Connector auto-sync (local paths only for now) |
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
-| Metadata: a `--- key: value ---` front-matter header is parsed, stored per document and filterable — no YAML dependency | |
+| Metadata: a `--- key: value ---` front-matter header is parsed, stored per document and filterable — no YAML dependency; `authority:`/`status:` tags give a small rank nudge (canonical up, draft down) | |
 | Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images; sidecar bundling in the DMG |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
@@ -152,6 +152,7 @@ with — the index refuses mismatched embeddings.
 | Live progress: phased status while answering (searching → thinking, elapsed seconds) with a Stop button; sync/index activity in the rail | |
 | Answer cache: an identical question on an unchanged corpus replays instantly | |
 | Memory: durable notes you add (or extract from a chat) ride along with every answer | |
+| Corrections: fix an answer in place (Fix) and matching questions reuse your version — corrections invalidate the answer cache | |
 | Semantic answer cache: a paraphrase of an answered question replays instantly (cosine ≥ 0.88, calibrated) | |
 | Answer engines: Ollama, local MLX, or any OpenAI-compatible endpoint (LM Studio, llama.cpp, vLLM, OpenAI) — switchable in Settings, no terminal | |
 | First-run wizard: folders → answer engine → RAM-sized preset → index, all in the UI (re-runnable from Settings) | |
@@ -159,7 +160,7 @@ with — the index refuses mismatched embeddings.
 | HyDE lane (Settings, off by default): drafts an answer with the local model, then searches with it too | |
 | Scoping: `folder:` / `source:` and any front-matter key (`type:runbook service:payments`) as query filters; metadata shows as chips on citations | |
 | Parent-child context: children are embedded, parents (~4k chars) go to the LLM | |
-| Eval: per-category metrics + category gates, plus `--answers` faithfulness scoring | |
+| Eval: per-category metrics + category gates, plus `--answers` faithfulness scoring and `--rewrite` follow-up scoring | |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
 | RAM presets (`light` / `balanced` / `quality`) — switchable in Settings, applied live; per-flag overrides still work | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |
@@ -176,6 +177,14 @@ this repository's own docs and source.
 | corpus (24 queries: VN notes, PDFs, two codebases) | 1.000 | 0.964 | 0.951 |
 | repo (12 queries, `folder:`-scoped) / EmbeddingGemma int8, text chunking | **0.917** | **0.874** | **0.833** |
 | repo (12 queries) / + smart retrieval (rewrite + HyDE + sub-queries, one call) | 0.917 | 0.832 | 0.778 |
+| follow-ups (5 queries, `fixtures/golden_multiturn.jsonl`) raw | 1.000 | 0.926 | 0.900 |
+| follow-ups (5 queries) / `--rewrite` (Qwen3.5-4B MLX) | 1.000 | **1.000** | **1.000** |
+
+The follow-up set is deliberately vague ("how long do they last?") — the raw
+question finds the right *documents* but not at the top; the rewrite moves them
+to rank 1 on all five. The same harness scores it with
+`eval --golden fixtures/golden_multiturn.jsonl --rewrite`, which prints the raw
+baseline next to the rewritten run.
 
 Per-category breakdown (the `[eval]` row is the honest weak spot):
 
@@ -226,9 +235,15 @@ same 12 scoped queries):
 Reproduce (first run downloads the ~0.3 GB int8 model):
 
 ```bash
-uv run ragdesk --embedder onnx --db /tmp/eval.db index README.md AGENTS.md SECURITY.md src .github fixtures/docs
+# the repo golden scopes its queries with `folder:dtduc-git/ragdesk`, so index
+# an absolute path that contains it (or edit that prefix in the golden file)
+uv run ragdesk --embedder onnx --db /tmp/eval.db index "$PWD"
 uv run ragdesk --embedder onnx --db /tmp/eval.db eval --golden fixtures/golden_repo.jsonl
 uv run ragdesk --embedder onnx --db /tmp/eval.db --rerank lexical eval --golden fixtures/golden_repo.jsonl
+
+# follow-up rewrite (needs a local model: Ollama with the preset model, or MLX)
+uv run ragdesk --embedder onnx --db /tmp/eval-mt.db index fixtures
+uv run ragdesk --embedder onnx --db /tmp/eval-mt.db eval --golden fixtures/golden_multiturn.jsonl --rewrite
 ```
 
 ## Roadmap

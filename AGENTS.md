@@ -101,8 +101,17 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   (md/txt), `documents.metadata` stores it as JSON, `parse_filters` turns any
   unrecognised `key:value` (minus URL schemes) into `Filters.meta`, and
   `_filter_sql` matches it through `json_extract` with a sanitised key. Hits
-  carry the metadata for citation chips. Soft metadata boosts are NOT wired:
-  measure first (see the symbol-lane lesson).
+  carry the metadata for citation chips. `search.metadata_factor` is the soft
+  boost (measure first — see the symbol-lane lesson): `authority: canonical`
+  (or authoritative/official/high/true/yes/1) multiplies the fused score by
+  `META_BOOST` 1.05, `status: draft` (or deprecated/archived/superseded/
+  obsolete/wip) by `META_PENALTY` 0.90; no tag = 1.0, so the boost is opt-in
+  and cannot re-rank an untagged corpus. `hybrid_search` decodes every lane's
+  metadata JSON into the same dict shape (bm25/path lanes used to leak the raw
+  string into `Hit.metadata`). Measured 2026-09-15: whole-repo index (93 docs /
+  2408 chunks, absolute paths) bench none+onnx and the 24-query corpus copy
+  both identical before/after (0.917/0.752/0.694 and 0.542/0.557/0.549);
+  `tests/test_retrieval.py` proves the reorder canonical > plain > draft.
 - Ranking extras: `diversify` caps chunks per document (2 by default, backfills
   when a query is dominated by one file) and `recency_factor` adds a mild
   freshness nudge to the RRF score (RECENCY_WEIGHT).
@@ -115,6 +124,16 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   message), `GET /api/feedback/golden` (rated answers exported as a golden
   JSONL), `POST /api/verify {message_id}` (`ground_answer_detail`: per-sentence
   grounded/loose verdicts against the stored citations, stopword-free overlap).
+- Corrections: `corrections` table (`question`, `answer`, embedding of the
+  question; `corrections_revision` for invalidation). The UI's Fix button under
+  an answer opens an editor and `POST /api/corrections {question, answer}`;
+  `GET /api/corrections` + `POST /api/corrections/delete` back the Settings
+  card. On ask, `serve._corrections_for` injects the nearest correction
+  (cosine ≥ `CORRECTION_MIN_COSINE` 0.88, same calibration as the semantic
+  cache) into the prompt as an authoritative block (`answer.build_prompt`,
+  `CORRECTION_HEADER`) — retrieval numbers are untouched by design; the
+  fingerprint carries `corrections_revision`, so a new correction invalidates
+  cached answers instead of replaying an uncorrected one.
 - Retrieval lanes (`search.hybrid_search`): BM25 (FTS5), dense cosine, path
   tokens (file names), plus an optional HyDE dense lane — RRF-fused. HyDE text
   comes from `settings.hyde` (Settings toggle, off by default; measured:
@@ -126,7 +145,18 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
 - Eval: `evaluate` groups per-category metrics, `category_metrics` powers
   `--min-recall-category name=value` gates, and `ground_answer` is the
   deterministic faithfulness proxy (sentence overlap against cited chunks +
-  citation range checks) used by `eval --answers`.
+  citation range checks) used by `eval --answers`. Golden rows may carry
+  `"history": [["user", "…"], ["assistant", "…"]]` for follow-ups; passing
+  `rewrite_for(question, history)` makes the harness search the standalone
+  rewrite too, and `eval --rewrite` prints the raw baseline next to it (the
+  rewriter is `cli._standalone_rewrite`, the same prompt `serve` uses; it needs
+  a resolvable local model or exits 2). `fixtures/golden_multiturn.jsonl`
+  scores 0.926 → 1.000 nDCG / 0.900 → 1.000 MRR (raw → rewrite, Qwen3.5-4B MLX,
+  2026-09-15). **Lesson: `SMART_RETRIEVAL_PROMPT` holds a JSON example, so its
+  braces must be doubled for `.format()` — the un-doubled prompt raised
+  `KeyError: '"standalone"'`, the bare `except` in `_smart_retrieval` swallowed
+  it, and follow-up rewriting was silently off; those handlers now print the
+  reason to stderr.**
 - Connectors ingest payloads through `index.extract_bytes(data, name)`: one
   dispatcher for PDFs, office files, images (OCR) and plain text. Never decode
   raw bytes to text at a call site — `is_indexable` admits those types now, so
@@ -163,7 +193,8 @@ uv run ruff check .
 uv run ragdesk --embedder hash --db /tmp/eval.db index fixtures/docs
 uv run ragdesk --embedder hash --db /tmp/eval.db eval --golden fixtures/golden.jsonl
 # repo golden (real numbers; --embedder onnx downloads ~0.3GB on first run)
-uv run ragdesk --embedder hash --db /tmp/eval-repo.db index README.md AGENTS.md SECURITY.md src .github fixtures/docs
+# NB: the golden scopes with folder:dtduc-git/ragdesk, so index an absolute path
+uv run ragdesk --embedder hash --db /tmp/eval-repo.db index "$PWD"
 uv run ragdesk --embedder hash --db /tmp/eval-repo.db eval --golden fixtures/golden_repo.jsonl
 # desktop shell
 cd desktop && npm install && npm run tauri build
