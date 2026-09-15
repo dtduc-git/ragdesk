@@ -12,10 +12,13 @@ PRESETS: dict[str, dict[str, str]] = {
     },
     "balanced": {
         "embedder": "onnx",
-        "rerank": "fastembed:BAAI/bge-reranker-base",
+        # Measured 2026-09-15: the English fastembed cross-encoder drops recall
+        # on a Vietnamese+code corpus (0.750 vs 0.833 without), while the
+        # multilingual gte-onnx reranker lifts it to 0.917.
+        "rerank": "onnx",
         "llm": "qwen3.5:4b",
         "llm_mlx": "mlx-community/Qwen3.5-4B-MLX-4bit",
-        "note": "16GB machines: adds a cross-encoder reranker",
+        "note": "16GB machines: adds the multilingual reranker",
     },
     "quality": {
         "embedder": "onnx",
