@@ -570,6 +570,7 @@ async function ask(query: string): Promise<void> {
               answer.before(badge);
             }
             if (event.chat_id) currentChatId = event.chat_id;
+            void renderDiagrams(answer, cites, answer.textContent ?? "");
             void loadChats();
           }
         }
@@ -745,6 +746,7 @@ function renderChat(messages: ChatMessage[]): void {
     answer.textContent = message.text;
     answer.classList.toggle("is-refused", message.text === REFUSAL);
     renderCites(cites, message.citations ?? []);
+    void renderDiagrams(answer, cites, message.text);
   }
 }
 
@@ -1657,6 +1659,84 @@ $("memory-extract").addEventListener("click", async () => {
     $("memory-status").textContent = error instanceof Error ? error.message : String(error);
   }
 });
+
+// --- diagrams -----------------------------------------------------------------
+
+const MERMAID_FENCE = /```mermaid\s*\n([\s\S]*?)```/g;
+
+async function renderDiagrams(
+  answer: HTMLElement,
+  container: HTMLElement,
+  text: string,
+): Promise<void> {
+  const blocks = [...text.matchAll(MERMAID_FENCE)];
+  if (blocks.length === 0) return;
+  // The prose stays; the fence becomes the rendered figure below it.
+  answer.textContent = text.replace(MERMAID_FENCE, "").trim();
+  const { default: mermaid } = await import("mermaid");
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string) => styles.getPropertyValue(name).trim();
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "base",
+    fontFamily: token("--font-sans") || "system-ui, sans-serif",
+    themeVariables: {
+      background: token("--card") || "#f6f7f2",
+      primaryColor: token("--paper") || "#e6e8e0",
+      primaryTextColor: token("--ink") || "#1d2830",
+      primaryBorderColor: token("--rule") || "#c8cdc0",
+      secondaryColor: token("--card") || "#f6f7f2",
+      tertiaryColor: token("--paper") || "#e6e8e0",
+      lineColor: token("--ink-soft") || "#57646c",
+      textColor: token("--ink") || "#1d2830",
+      fontSize: "13px",
+    },
+  });
+
+  for (const [index, match] of blocks.entries()) {
+    // Small models slip on keywords; repair the common ones before rendering.
+    const code = match[1]
+      .trim()
+      .replace(/\bsubregion\b/g, "subgraph")
+      .replace(/^\s*(flowchart|graph)\s+graph\b/gm, "$1 TD");
+    const figure = document.createElement("figure");
+    figure.className = "diagram";
+    container.append(figure);
+    try {
+      const { svg } = await mermaid.render(`ragdesk-diagram-${Date.now()}-${index}`, code);
+      figure.innerHTML = svg;
+      const toolbar = document.createElement("div");
+      toolbar.className = "diagram-tools";
+      const download = document.createElement("button");
+      download.type = "button";
+      download.className = "btn btn-quiet";
+      download.textContent = "Download SVG";
+      download.addEventListener("click", () => {
+        const blob = new Blob([figure.querySelector("svg")?.outerHTML ?? ""], {
+          type: "image/svg+xml",
+        });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `ragdesk-diagram-${index + 1}.svg`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      });
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "btn btn-quiet";
+      copy.textContent = "Copy Mermaid";
+      copy.addEventListener("click", () => void navigator.clipboard.writeText(code));
+      toolbar.append(download, copy);
+      figure.append(toolbar);
+    } catch {
+      const pre = document.createElement("pre");
+      pre.className = "diagram-source";
+      pre.textContent = code;
+      figure.append(pre);
+    }
+  }
+}
 
 // --- setup wizard -------------------------------------------------------------
 

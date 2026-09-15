@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from ragdesk import __version__, credentials, settings
-from ragdesk.answer import REFUSAL, answer, answer_stream
+from ragdesk.answer import REFUSAL, answer, answer_stream, wants_diagram
 from ragdesk.confluence import (
     ConfluenceError,
     connect_oauth,
@@ -1163,6 +1163,7 @@ class Handler(BaseHTTPRequestHandler):
                 min_cosine=min_cosine,
                 history=history,
                 memory=memory,
+                diagram=wants_diagram(query),
             ):
                 pieces.append(str(piece))
                 emit({"delta": piece})
@@ -1348,6 +1349,7 @@ class Handler(BaseHTTPRequestHandler):
                 min_cosine=min_cosine,
                 history=history,
                 memory=memory,
+                diagram=wants_diagram(query),
             )
             from_cache = False
         chat_id = self._record_exchange(

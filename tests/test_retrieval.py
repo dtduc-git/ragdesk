@@ -242,3 +242,22 @@ def test_index_paths_creates_parents_for_new_docs(tmp_path: Path):
             "SELECT COUNT(*) AS n FROM chunks WHERE parent_ordinal IS NULL"
         ).fetchone()
         assert rows["n"] == 0
+
+
+def test_wants_diagram_detection():
+    from ragdesk.answer import wants_diagram
+
+    assert wants_diagram("draw a diagram of the pipeline")
+    assert wants_diagram("vẽ sơ đồ kiến trúc ragdesk")
+    assert wants_diagram("show me a flowchart of the auth flow")
+    assert not wants_diagram("what does the grounding gate do?")
+
+
+def test_prompt_includes_diagram_rules_only_when_asked(tmp_path: Path):
+    from ragdesk.answer import DIAGRAM_NOTE, build_prompt
+
+    plain = build_prompt("what is rrf?", [hit("a.md")])
+    asked = build_prompt("vẽ sơ đồ rrf", [hit("a.md")], diagram=True)
+    assert DIAGRAM_NOTE.splitlines()[0] not in plain
+    assert "```mermaid" in asked
+    assert "accent" in asked

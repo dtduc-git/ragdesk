@@ -114,12 +114,15 @@ with — the index refuses mismatched embeddings.
 | Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images; sidecar bundling in the DMG |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
-| Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | OpenAI-compatible endpoint (LM Studio / llama.cpp / cloud) |
+| Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | |
 | Chat history: conversations in SQLite, multi-turn context, a history popover (open/delete), resume or start fresh | |
 | Live progress: phased status while answering (searching → thinking, elapsed seconds) with a Stop button; sync/index activity in the rail | |
 | Answer cache: an identical question on an unchanged corpus replays instantly | |
 | Memory: durable notes you add (or extract from a chat) ride along with every answer | |
 | Semantic answer cache: a paraphrase of an answered question replays instantly (cosine ≥ 0.88, calibrated) | |
+| Answer engines: Ollama, local MLX, or any OpenAI-compatible endpoint (LM Studio, llama.cpp, vLLM, OpenAI) — switchable in Settings, no terminal | |
+| First-run wizard: folders → answer engine → RAM-sized preset → index, all in the UI (re-runnable from Settings) | |
+| Diagrams on request: "vẽ sơ đồ …" returns a themed Mermaid figure inline, with SVG download | Charts beyond Mermaid's set |
 | HyDE lane (Settings, off by default): drafts an answer with the local model, then searches with it too | |
 | Scoping: `folder:` / `source:` prefixes in any query, e.g. `folder:Financial thuế` | |
 | Parent-child context: children are embedded, parents (~4k chars) go to the LLM | |

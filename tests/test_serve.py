@@ -548,7 +548,7 @@ def test_settings_accepts_idle_unload(base_url: str):
 def test_chat_history_roundtrip(base_url: str, monkeypatch):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "an answer",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "an answer",
     )
     status, payload = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
     assert status == 200
@@ -579,7 +579,7 @@ def test_chat_history_roundtrip(base_url: str, monkeypatch):
 def test_ask_passes_recent_turns_as_history(base_url: str, monkeypatch):
     seen: dict = {}
 
-    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None):
+    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False):
         seen["history"] = list(history or [])
         return "ok"
 
@@ -594,7 +594,7 @@ def test_ask_passes_recent_turns_as_history(base_url: str, monkeypatch):
 def test_answer_cache_hits_on_repeat(base_url: str, monkeypatch):
     calls = {"n": 0}
 
-    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None):
+    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False):
         calls["n"] += 1
         return f"answer #{calls['n']}"
 
@@ -613,7 +613,7 @@ def test_answer_cache_hits_on_repeat(base_url: str, monkeypatch):
 def test_cache_invalidates_when_the_corpus_changes(base_url: str, monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "answer v1",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "answer v1",
     )
     request(f"{base_url}/api/ask", {"query": "what is oauth?"})
     _, cached = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
@@ -626,7 +626,7 @@ def test_cache_invalidates_when_the_corpus_changes(base_url: str, monkeypatch, t
 
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "answer v2",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "answer v2",
     )
     _, after = request(f"{base_url}/api/ask", {"query": "what is oauth?"})
     assert after["cached"] is False
@@ -636,7 +636,9 @@ def test_cache_invalidates_when_the_corpus_changes(base_url: str, monkeypatch, t
 def test_stream_replays_a_cached_answer_without_the_model(base_url: str, monkeypatch):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "cached later",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: (
+            "cached later"
+        ),
     )
     request(f"{base_url}/api/ask", {"query": "access tokens"})
 
@@ -671,7 +673,7 @@ def test_parse_memory_list_tolerates_prose():
 def test_memory_add_list_delete_and_injection(base_url: str, monkeypatch):
     prompts: list[str] = []
 
-    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None):
+    def fake_answer(question, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False):
         prompts.append(str(memory))
         return "ok"
 
@@ -710,7 +712,7 @@ def test_memory_extract_reads_the_latest_chat(base_url: str, monkeypatch):
     monkeypatch.setattr("ragdesk.serve.LazyLLM", lambda state: FakeLLM())
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None: "ok",
+        lambda q, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False: "ok",
     )
     request(f"{base_url}/api/ask", {"query": "what is oauth?"})
 
@@ -900,7 +902,7 @@ def test_sync_github_success(base_url: str, monkeypatch):
 
 
 def test_ask_stream(base_url: str, monkeypatch):
-    def fake_stream(question, hits, llm, min_cosine=0.0, history=None, memory=None):
+    def fake_stream(question, hits, llm, min_cosine=0.0, history=None, memory=None, diagram=False):
         yield "Hel"
         yield "lo"
 

@@ -66,6 +66,17 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   cache replays included. Chat/cache/memory tables live in the same SQLite
   file; `/api/chats` and `/api/memories` (+ `/api/memories/extract`) back the
   UI. A semantic hit reports `cached_question` so the UI can say what it matched.
+- Answer engines: `llm.llm_preference` (Settings/wizard) picks Ollama, MLX, or an
+  OpenAI-compatible endpoint; host/model live in settings.json and the API key
+  in credentials (`openai`). `auto` ladder: ollama-with-model → configured
+  endpoint → MLX.
+- Diagrams: `answer.wants_diagram` detects intent (EN + VI words) and adds
+  `DIAGRAM_NOTE` to the prompt, which pins the allowed Mermaid vocabulary;
+  the UI strips the fence from the prose and renders the figure with mermaid
+  (strict security, themed from the CSS tokens) plus SVG download. Small-model
+  keyword slips (`subregion`) are repaired before rendering.
+- Wizard: `/api/status.onboarded` gates the first-run overlay; `system_info()`
+  reports RAM + suggested preset; `/api/settings {onboarded}` marks it done.
 - Retrieval lanes (`search.hybrid_search`): BM25 (FTS5), dense cosine, path
   tokens (file names), plus an optional HyDE dense lane — RRF-fused. HyDE text
   comes from `settings.hyde` (Settings toggle, off by default; measured:

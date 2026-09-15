@@ -1377,3 +1377,39 @@ details.alt[open] summary {
 .backend-picker .seg {
   align-self: flex-start;
 }
+
+
+/* --- diagrams --------------------------------------------------------------- */
+
+.diagram {
+  margin: 12px 0 4px;
+  padding: 14px;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--stamp);
+  border-radius: 3px;
+  overflow-x: auto;
+}
+
+.diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.diagram-tools {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.diagram-tools .btn {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.diagram-source {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
