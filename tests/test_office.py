@@ -84,6 +84,67 @@ def make_xlsx(rows: list[list[str]], sheet_name: str = "Sheet1") -> bytes:
     return out.getvalue()
 
 
+def make_xlsx_with_dates(rows: list[list[tuple[str, int | None]]]) -> bytes:
+    """Workbook where a cell may carry a style index (0 = general, 1 = date)."""
+    strings: list[str] = []
+    row_xml: list[str] = []
+    for row_index, row in enumerate(rows, start=1):
+        cells = []
+        for column, (value, style) in enumerate(row):
+            ref = f"{chr(ord('A') + column)}{row_index}"
+            style_attr = f' s="{style}"' if style else ""
+            if value.isdigit() and style == 1:
+                cells.append(f'<c r="{ref}"{style_attr}><v>{value}</v></c>')
+            else:
+                strings.append(value)
+                cells.append(f'<c r="{ref}" t="s">{style_attr}<v>{len(strings) - 1}</v></c>')
+        row_xml.append(f'<row r="{row_index}">' + "".join(cells) + "</row>")
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        archive.writestr(
+            "xl/workbook.xml",
+            '<?xml version="1.0"?><workbook xmlns="s"><sheets>'
+            '<sheet name="Chi phi" sheetId="1"/></sheets></workbook>',
+        )
+        archive.writestr(
+            "xl/styles.xml",
+            '<?xml version="1.0"?><styleSheet xmlns="s">'
+            '<numFmts count="1"><numFmt numFmtId="164" formatCode="dd/mm/yyyy"/></numFmts>'
+            '<cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs>'
+            "</styleSheet>",
+        )
+        archive.writestr(
+            "xl/sharedStrings.xml",
+            '<?xml version="1.0"?><sst xmlns="s">'
+            + "".join(f"<si><t>{value}</t></si>" for value in strings)
+            + "</sst>",
+        )
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<?xml version="1.0"?><worksheet xmlns="s"><sheetData>'
+            + "".join(row_xml)
+            + "</sheetData></worksheet>",
+        )
+    return out.getvalue()
+
+
+def test_xlsx_dates_and_header_row():
+    from ragdesk.office import extract_xlsx_text
+
+    data = make_xlsx_with_dates(
+        [
+            [("Hosting", None), ("Amount", None), ("Paid", None)],
+            [("ACME", None), ("1200", None), ("45661", 1)],
+        ]
+    )
+    text = extract_xlsx_text(data)
+    assert text is not None
+    assert "columns: Hosting | Amount | Paid" in text
+    # 45661 days from the 1899-12-30 epoch == 2025-01-04
+    assert "2025-01-04" in text
+    assert "45661" not in text
+
+
 def test_xlsx_rows_and_sheet_name():
     from ragdesk.office import extract_xlsx_text
 

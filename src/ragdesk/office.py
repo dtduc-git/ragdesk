@@ -79,7 +79,60 @@ def _sheet_titles(archive: zipfile.ZipFile) -> list[str]:
     ]
 
 
-def _cell_text(cell: ElementTree.Element, shared: list[str]) -> str:
+DATE_NUMFMT_IDS = set(range(14, 23)) | {27, 30, 36, 45, 46, 47, 50, 57}
+_DATE_TOKENS = re.compile(r"[yYdDhHsS]|[mM]{2,}")
+
+
+def _date_styles(archive: zipfile.ZipFile) -> set[int]:
+    """Style indices whose number format is a date (builtin id or custom code)."""
+    try:
+        styles_xml = archive.read("xl/styles.xml")
+    except KeyError:
+        return set()
+    root = _safe_parse(styles_xml)
+    if root is None:
+        return set()
+    custom: dict[int, str] = {}
+    for node in root.iter():
+        if _local(node.tag) == "numFmt":
+            try:
+                custom[int(node.get("numFmtId", "0"))] = str(node.get("formatCode", ""))
+            except (TypeError, ValueError):
+                continue
+    styles: set[int] = set()
+    index = 0
+    for node in root.iter():
+        if _local(node.tag) != "xf":
+            continue
+        try:
+            numfmt = int(node.get("numFmtId", "0"))
+        except (TypeError, ValueError):
+            numfmt = 0
+        code = custom.get(numfmt, "")
+        is_date = numfmt in DATE_NUMFMT_IDS or bool(code and _DATE_TOKENS.search(code))
+        if is_date:
+            styles.add(index)
+        index += 1
+    return styles
+
+
+def _serial_to_date(value: str, with_time: bool) -> str:
+    from datetime import datetime, timedelta  # noqa: PLC0415 - only needed here
+
+    try:
+        serial = float(value)
+    except ValueError:
+        return value
+    # Excel serials count from 1899-12-30 (the 1900 leap-year quirk included).
+    stamp = datetime(1899, 12, 30) + timedelta(days=serial)
+    return stamp.strftime("%Y-%m-%d %H:%M" if with_time else "%Y-%m-%d")
+
+
+def _cell_text(
+    cell: ElementTree.Element,
+    shared: list[str],
+    date_styles: set[int] | None = None,
+) -> str:
     kind = str(cell.get("t") or "")
     value = ""
     for node in cell.iter():
@@ -92,10 +145,14 @@ def _cell_text(cell: ElementTree.Element, shared: list[str]) -> str:
             return shared[int(value)]
         except (ValueError, IndexError):
             return ""
+    if date_styles and str(cell.get("s") or "") in {str(index) for index in date_styles}:
+        return _serial_to_date(value, with_time=":" in value)
     return value.strip()
 
 
-def _sheet_rows(xml_bytes: bytes, shared: list[str]) -> list[str]:
+def _sheet_rows(
+    xml_bytes: bytes, shared: list[str], date_styles: set[int] | None = None
+) -> list[str]:
     root = _safe_parse(xml_bytes)
     if root is None:
         return []
@@ -104,7 +161,7 @@ def _sheet_rows(xml_bytes: bytes, shared: list[str]) -> list[str]:
         if _local(row.tag) != "row":
             continue
         values = [
-            _cell_text(cell, shared)
+            _cell_text(cell, shared, date_styles)
             for cell in row
             if _local(cell.tag) == "c"
         ]
@@ -136,13 +193,20 @@ def extract_xlsx_text(data: bytes) -> str | None:
                 return None
             shared = _shared_strings(archive)
             titles = _sheet_titles(archive)
+            date_styles = _date_styles(archive)
             blocks: list[str] = []
             for index, sheet in enumerate(sheets):
-                rows = _sheet_rows(archive.read(sheet), shared)
+                rows = _sheet_rows(archive.read(sheet), shared, date_styles)
                 if not rows:
                     continue
                 title = titles[index] if index < len(titles) else Path(sheet).stem
-                blocks.append(f"[sheet] {title}\n" + "\n".join(rows))
+                # The first row is the header: repeat it as column context so a
+                # chunk holding only later rows still knows what the columns are.
+                header = ""
+                if rows and "|" in rows[0]:
+                    columns = rows[0].split(": ", 1)[-1]
+                    header = f"columns: {columns}\n"
+                blocks.append(f"[sheet] {title}\n{header}" + "\n".join(rows))
     except (KeyError, zipfile.BadZipFile, OSError):
         return None
     text = "\n\n".join(blocks).strip()
