@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import sys
 import threading
 import time
@@ -312,6 +313,9 @@ class Handler(BaseHTTPRequestHandler):
             with Store(self.state.db) as store:
                 self._send(200, {"backlinks": store.backlinks(target)})
             return
+        if self.path == "/api/mcp":
+            self._send(200, mcp_setup_info(self.state))
+            return
         if self.path == "/api/feedback/golden":
             with Store(self.state.db) as store:
                 rows = store.feedback_rows()
@@ -434,6 +438,8 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/connections/"
             ):
                 self._handle_disconnect(self.path.split("/")[3])
+            elif self.path == "/api/mcp/install":
+                self._handle_mcp_install()
             elif self.path == "/api/feedback":
                 self._handle_feedback(body)
             elif self.path == "/api/verify":
@@ -1534,6 +1540,9 @@ class Handler(BaseHTTPRequestHandler):
         scored.sort(key=lambda item: -item[0])
         return [text for _score, text in scored[:MEMORY_LIMIT]]
 
+    def _handle_mcp_install(self) -> None:
+        self._send(200, install_cli_shim())
+
     def _handle_feedback(self, body: dict[str, Any]) -> None:
         message_id = int(body.get("message_id") or 0)
         value = int(body.get("value") or 0)
@@ -1652,6 +1661,44 @@ def parse_smart_retrieval(raw: str) -> dict[str, Any]:
     if hypothetical and hypothetical.lower() != "none":
         out["hypothetical"] = hypothetical[:1200]
     return out
+
+
+def mcp_setup_info(state: AppState) -> dict[str, Any]:
+    """Everything the Settings card needs to wire ragdesk into Claude/Codex."""
+    on_path = shutil.which("ragdesk")
+    return {
+        "cli_on_path": bool(on_path),
+        "cli_path": on_path or "",
+        "db": state.db,
+        "snippets": {
+            "claude_code": "claude mcp add ragdesk -- ragdesk mcp",
+            "claude_desktop": json.dumps(
+                {
+                    "mcpServers": {
+                        "ragdesk": {"command": "ragdesk", "args": ["mcp"]}
+                    }
+                },
+                indent=2,
+            ),
+            "codex": '[mcp_servers.ragdesk]\ncommand = "ragdesk"\nargs = ["mcp"]',
+        },
+    }
+
+
+def install_cli_shim() -> dict[str, Any]:
+    """Make `ragdesk` reachable on PATH for MCP clients (macOS/Linux)."""
+    if shutil.which("ragdesk"):
+        return {"installed": False, "reason": "already on PATH", "path": shutil.which("ragdesk")}
+    target = Path.home() / ".local" / "bin" / "ragdesk"
+    source = Path(sys.argv[0]).resolve()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        target.symlink_to(source)
+    except OSError as exc:
+        return {"installed": False, "reason": str(exc), "path": ""}
+    return {"installed": True, "reason": "linked", "path": str(target)}
 
 
 def system_info() -> dict[str, Any]:

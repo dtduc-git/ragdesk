@@ -1496,8 +1496,46 @@ $("source-grid").addEventListener("submit", async (event) => {
   }
 });
 
+async function loadMcp(): Promise<void> {
+  try {
+    const info = await get<{ cli_on_path: boolean; cli_path: string }>("/api/mcp");
+    $("mcp-dot").classList.toggle("is-hot", info.cli_on_path);
+    $("mcp-state").textContent = info.cli_on_path
+      ? `ready — clients run "ragdesk mcp" (${info.cli_path})`
+      : "the ragdesk command is missing from PATH — click Install";
+  } catch {
+    $("mcp-state").textContent = "server offline";
+  }
+}
+
 document.addEventListener("click", async (event) => {
   const element = event.target as HTMLElement;
+  const mcp = element.closest<HTMLElement>("[data-mcp]");
+  if (mcp) {
+    try {
+      const info = await get<{ cli_on_path: boolean; snippets: Record<string, string> }>("/api/mcp");
+      let snippet = info.snippets[mcp.dataset.mcp ?? ""] ?? "";
+      if (!info.cli_on_path) {
+        await post("/api/mcp/install", {});
+        snippet += "\n# or point the client at the ragdesk binary directly";
+      }
+      await navigator.clipboard.writeText(snippet);
+      toast("MCP setup copied — paste it into your client");
+      await loadMcp();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error));
+    }
+    return;
+  }
+  if (element.closest<HTMLElement>("#mcp-install")) {
+    const result = await post<{ installed: boolean; reason: string; path: string }>(
+      "/api/mcp/install",
+      {},
+    );
+    toast(result.installed ? `Installed at ${result.path}` : `Nothing to do: ${result.reason}`);
+    await loadMcp();
+    return;
+  }
   const use = element.closest<HTMLElement>("[data-use]");
   if (use) {
     await saveSetting({ llm_preference: use.dataset.use ?? "" });
@@ -2252,6 +2290,7 @@ async function boot(): Promise<void> {
     renderStatus();
     await loadConnections();
     void loadMemories();
+    void loadMcp();
     if (!status.onboarded) {
       wizardStep = 0;
       wizardOpenForm(true);

@@ -850,6 +850,29 @@ def test_answer_length_setting(base_url: str):
     assert excinfo.value.code == 400
 
 
+def test_mcp_setup_info_and_install(base_url: str, tmp_path: Path, monkeypatch):
+    status, payload = request(f"{base_url}/api/mcp")
+    assert status == 200
+    assert "cli_on_path" in payload
+    assert payload["snippets"]["claude_code"].startswith("claude mcp add ragdesk")
+    assert "mcpServers" in payload["snippets"]["claude_desktop"]
+    assert "[mcp_servers.ragdesk]" in payload["snippets"]["codex"]
+
+    # missing CLI -> a shim is created; already on PATH -> nothing to do
+    monkeypatch.setattr("ragdesk.serve.shutil.which", lambda name: None)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("ragdesk.serve.sys.argv", ["/opt/ragdesk/bin/ragdesk", "serve"])
+    status, installed = request(f"{base_url}/api/mcp/install", {})
+    assert status == 200 and installed["installed"] is True
+    shim = tmp_path / ".local" / "bin" / "ragdesk"
+    assert shim.is_symlink()
+
+    monkeypatch.setattr("ragdesk.serve.shutil.which", lambda name: "/usr/bin/ragdesk")
+    _, again = request(f"{base_url}/api/mcp/install", {})
+    assert again["installed"] is False
+    assert "already on PATH" in again["reason"]
+
+
 def test_sync_gitlab_requires_project(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/sync/gitlab", {})
