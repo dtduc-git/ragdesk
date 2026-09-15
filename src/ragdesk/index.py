@@ -10,8 +10,9 @@ from pathlib import Path
 
 from ragdesk.chunk import chunk_text
 from ragdesk.embed import Embedder
-from ragdesk.office import DOCUMENT_EXTENSIONS, extract_document
+from ragdesk.office import DOCUMENT_EXTENSIONS
 from ragdesk.store import Store
+from ragdesk.vision import IMAGE_EXTENSIONS
 
 TEXT_EXTENSIONS = {
     ".md", ".markdown", ".rst", ".txt",
@@ -65,30 +66,50 @@ def is_document_file(path: Path) -> bool:
     return path.suffix.lower() in DOCUMENT_EXTENSIONS
 
 
+def is_image_file(path: Path) -> bool:
+    return path.suffix.lower() in IMAGE_EXTENSIONS
+
+
 def is_indexable(path: Path, size: int) -> bool:
     """Admission rules shared by local files and connector payloads."""
     if any(part in SKIP_DIRS for part in path.parts):
         return False
-    if is_document_file(path):
+    if is_document_file(path) or is_image_file(path):
         return size <= MAX_DOCUMENT_BYTES
     if size > MAX_FILE_BYTES:
         return False
     return is_text_file(path)
 
 
-def read_text(path: Path) -> str | None:
-    if is_document_file(path):
-        return extract_document(path)
+def extract_bytes(data: bytes, name: str) -> str | None:
+    """Text for a connector payload, by file name: documents, images, or plain text."""
+    suffix = Path(name).suffix.lower()
+    if suffix == ".pdf":
+        from ragdesk.office import extract_pdf_text  # noqa: PLC0415 - avoid a cycle
+
+        return extract_pdf_text(data)
+    if suffix in DOCUMENT_EXTENSIONS:
+        from ragdesk.office import extract_office_text  # noqa: PLC0415
+
+        return extract_office_text(data, suffix)
+    if suffix in IMAGE_EXTENSIONS:
+        from ragdesk.vision import extract_image_bytes  # noqa: PLC0415
+
+        return extract_image_bytes(data, name)
+    if b"\x00" in data[:1024]:
+        return None
     try:
-        raw = path.read_bytes()
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("utf-8", errors="replace")
+
+
+def read_text(path: Path) -> str | None:
+    try:
+        data = path.read_bytes()
     except OSError:
         return None
-    if b"\x00" in raw[:1024]:
-        return None
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw.decode("utf-8", errors="replace")
+    return extract_bytes(data, path.name)
 
 
 def index_document(

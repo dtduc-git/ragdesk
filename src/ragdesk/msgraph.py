@@ -23,8 +23,7 @@ from pathlib import Path
 
 from ragdesk import credentials, defaults
 from ragdesk.embed import Embedder
-from ragdesk.index import IndexStats, index_document, is_indexable
-from ragdesk.office import extract_office_text
+from ragdesk.index import IndexStats, extract_bytes, index_document, is_indexable
 from ragdesk.store import Store
 
 TENANT = "common"
@@ -34,7 +33,6 @@ GRAPH = "https://graph.microsoft.com/v1.0"
 SCOPES = "Files.Read.All Sites.Read.All offline_access"
 USER_AGENT = "ragdesk-msgraph/0.1"
 MAX_ITEMS = 2000
-OFFICE_SUFFIXES = {".docx", ".pptx"}
 
 
 class MsGraphError(RuntimeError):
@@ -286,15 +284,11 @@ def sync_onedrive(
     ):
         stats.files_scanned += 1
         name = str(item.get("name", "untitled"))
-        suffix = Path(name).suffix.lower()
         size = int(item.get("size") or 0)
         text: str | None = None
-        if suffix in OFFICE_SUFFIXES:
+        if is_indexable(Path(name), max(size, 1)):
             raw = _get_bytes(f"{drive}/items/{item['id']}/content", token)
-            text = extract_office_text(raw, suffix)
-        elif is_indexable(Path(name), max(size, 1)):
-            raw = _get_bytes(f"{drive}/items/{item['id']}/content", token)
-            text = raw.decode("utf-8", errors="replace")
+            text = extract_bytes(raw, name)
         if text is None or not text.strip():
             stats.skipped += 1
             continue

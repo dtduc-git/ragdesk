@@ -16,7 +16,10 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   prunes `SKIP_DIRS` during the walk so `target/`/`node_modules/` are never
   traversed), `office` (PDF/DOCX/PPTX text extraction: docx/pptx via zip+XML
   with zero deps, PDFs via pypdf — the only runtime dependency; scanned PDFs
-  return empty and are skipped, no OCR), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
+  return empty and are skipped, no OCR), `vision` (image OCR through Apple's
+  on-device Vision framework via the `vision` extra: `en-US` + `vi-VT`, images
+  upscaled 2× before recognition, header carries file name + Spotlight capture
+  date; non-macOS or no extra → images skip as before), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
   `msgraph` (OneDrive + SharePoint, device flow) connectors, `web` (same-host
   HTML crawl, capped pages/depth), `archive`
   (shared repo-tarball extraction), `htmlutil` (shared HTML→text),
@@ -58,6 +61,10 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   in `chats`/`messages`, refusals and cache replays included. Chat/cache/
   memory tables live in the same SQLite file; `/api/chats` and `/api/memories`
   (+ `/api/memories/extract` via the local LLM) back the UI.
+- Connectors ingest payloads through `index.extract_bytes(data, name)`: one
+  dispatcher for PDFs, office files, images (OCR) and plain text. Never decode
+  raw bytes to text at a call site — `is_indexable` admits those types now, so
+  a local decode would index image bytes as mojibake.
 - Idle unload: the serve timer releases the embedder session and the LLM after
   `idle_unload_minutes` (Settings; 0 = never) of no POSTs; ONNX workspace
   memory does not respond to arena/batch tuning, so dropping the session is

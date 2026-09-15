@@ -10,10 +10,10 @@ from ragdesk.embed import HashingEmbedder
 from ragdesk.msgraph import (
     device_flow_connect,
     device_flow_poll_once,
-    extract_office_text,
     resolve_client_id,
     sync_onedrive,
 )
+from ragdesk.office import extract_office_text
 from ragdesk.store import Store
 
 
@@ -108,7 +108,11 @@ def test_sync_onedrive_indexes_and_dedupes(store: Store, monkeypatch):
         {"id": "f2", "name": "runbook.docx", "size": 100, "file": {}},
         {"id": "f3", "name": "photo.png", "size": 500, "file": {}},
     ]
-    contents = {"f1": b"# notes\n\nalpha rollback", "f2": make_docx("docx canary rollback")}
+    contents = {
+        "f1": b"# notes\n\nalpha rollback",
+        "f2": make_docx("docx canary rollback"),
+        "f3": b"\x89PNG\r\n\x1a\n not a real image",
+    }
     monkeypatch.setattr("ragdesk.msgraph.resolve_access_token", lambda *a, **k: "tok")
     monkeypatch.setattr(
         "ragdesk.msgraph._drive_base",

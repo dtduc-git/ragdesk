@@ -6,7 +6,7 @@ import io
 import tarfile
 from pathlib import Path
 
-from ragdesk.index import is_indexable
+from ragdesk.index import extract_bytes, is_indexable
 
 
 def tar_text_files(data: bytes, subdir: str = "") -> list[tuple[str, str]]:
@@ -32,7 +32,8 @@ def tar_text_files(data: bytes, subdir: str = "") -> list[tuple[str, str]]:
             if extracted is None:
                 continue
             raw = extracted.read()
-            if b"\x00" in raw[:1024]:
+            text = extract_bytes(raw, str(rel))
+            if text is None or not text.strip():
                 continue
-            files.append((str(rel), raw.decode("utf-8", errors="replace")))
+            files.append((str(rel), text))
     return files
