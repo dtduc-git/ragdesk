@@ -153,7 +153,18 @@ Per-category breakdown (the `[eval]` row is the honest weak spot):
 Measured 2026-09-15 on the repo tree (824-document corpus including a synced
 repo, hence the `folder:` scoping in the golden set).
 
-Honest notes:
+Tuning measured with `scripts/bench.py` (fresh index per chunking config, the
+same 12 scoped queries):
+
+| lever | recall@5 | nDCG@10 | MRR@10 | verdict |
+|---|---|---|---|---|
+| chunk 600 chars (4158 chunks) | 0.833 | **0.792** | **0.778** | ranking up, recall down |
+| chunk 1000 chars (2288) — default | 0.917 | 0.746 | 0.688 | kept |
+| chunk 1500 chars (1464) | 0.917 | 0.724 | 0.660 | no gain |
+| rerank `fastembed` bge-reranker-base (EN) | 0.750 | 0.708 | 0.694 | hurts a VN+code corpus |
+| rerank `onnx` gte-multilingual | **0.917** | 0.782 | 0.739 | **kept for the quality preset** |
+| rerank `lexical` (baseline) | 0.750 | 0.538 | 0.465 | test baseline only |
+| lane weights (path 0.6 / bm25 0.9 / dense 1.2) | 0.833 | — | — | no effect; equal weights stay |
 
 - **Symbol-aware code chunking was tried three ways and rejected**, each
   measured on fresh indexes of the same corpus (plain baseline: recall 1.000 /

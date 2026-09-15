@@ -90,6 +90,13 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   The path lane already answers "where is X defined". Real symbol intelligence
   is a call-graph index (defs + references + callers), a separate feature —
   not a chunking trick.
+- Tuning tool: `scripts/bench.py` indexes once per chunking config and sweeps
+  rerankers/weights over the same db (`--db`). Measured 2026-09-15 on the
+  scoped golden: 600-char chunks rank better but lose recall; the multilingual
+  `onnx` reranker lifts recall 0.833 → 0.917 while the English fastembed one
+  drops it to 0.750; lane weights change nothing. Chunking stays 1000 chars
+  (settings `chunk_chars`/`chunk_overlap`), weights stay equal, and the quality
+  preset keeps `rerank: onnx`.
 - Ranking extras: `diversify` caps chunks per document (2 by default, backfills
   when a query is dominated by one file) and `recency_factor` adds a mild
   freshness nudge to the RRF score (RECENCY_WEIGHT).

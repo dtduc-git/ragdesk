@@ -100,12 +100,17 @@ def diversify(hits: list[Hit], top_k: int, max_per_doc: int = MAX_CHUNKS_PER_DOC
     return picked[:top_k]
 
 
-def fuse(rankings: list[list[int]], k: int = RRF_K) -> dict[int, float]:
-    """Reciprocal Rank Fusion over chunk-id rankings."""
+def fuse(
+    rankings: list[list[int]],
+    k: int = RRF_K,
+    weights: list[float] | None = None,
+) -> dict[int, float]:
+    """Reciprocal Rank Fusion over chunk-id rankings, with optional lane weights."""
     scores: dict[int, float] = {}
-    for ranking in rankings:
+    for lane, ranking in enumerate(rankings):
+        weight = weights[lane] if weights and lane < len(weights) else 1.0
         for rank, chunk_id in enumerate(ranking):
-            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (k + rank + 1)
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + weight * (1.0 / (k + rank + 1))
     return scores
 
 
@@ -120,6 +125,7 @@ def hybrid_search(
     hyde_vec: list[float] | None = None,
     filters: Filters | None = None,
     extra_queries: list[str] | None = None,
+    weights: dict[str, float] | None = None,
 ) -> list[Hit]:
     """BM25 + dense (+ HyDE, + path, + sub-query) lanes, RRF-fused, chunk-level."""
     query_vec = query_vec if query_vec is not None else embedder.embed_query(query)
@@ -141,7 +147,15 @@ def hybrid_search(
     dense_rows = next(rows for lane, rows in lane_rows if lane == "dense")
     cosine = {row["id"]: row["score"] for row in dense_rows}
     members = {lane: {row["id"] for row in rows} for lane, rows in lane_rows}
-    fused = fuse([[row["id"] for row in rows] for _lane, rows in lane_rows])
+    lane_weights = (
+        [float(weights.get(lane, 1.0)) for lane, _rows in lane_rows]
+        if weights
+        else None
+    )
+    fused = fuse(
+        [[row["id"] for row in rows] for _lane, rows in lane_rows],
+        weights=lane_weights,
+    )
     for chunk_id in list(fused):
         fused[chunk_id] *= recency_factor(float(payloads.get(chunk_id, {}).get("mtime") or 0.0))
     ranked = sorted(fused.items(), key=lambda item: item[1], reverse=True)[:top_k]

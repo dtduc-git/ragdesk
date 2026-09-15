@@ -17,6 +17,8 @@ DEFAULTS: dict = {
     "openai_host": "",
     "openai_model": "",
     "onboarded": False,
+    "chunk_chars": 1000,
+    "chunk_overlap": 150,
 }
 
 

@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from ragdesk.chunk import chunk_text
+from ragdesk.chunk import DEFAULT_MAX_CHARS, DEFAULT_OVERLAP, chunk_text
 from ragdesk.embed import Embedder
 from ragdesk.office import DOCUMENT_EXTENSIONS
 from ragdesk.store import Store
@@ -142,12 +142,18 @@ def index_document(
     path: str,
     content: str,
     mtime: float = 0.0,
+    chunk_chars: int = 0,
+    chunk_overlap: int = 0,
 ) -> int:
     """Embed + upsert one document. Returns the chunk count, or 0 if unchanged."""
     digest = hashlib.sha256(content.encode()).hexdigest()
     if store.doc_hash(path) == digest:
         return 0
-    chunks = chunk_text(content)
+    chunks = chunk_text(
+        content,
+        max_chars=chunk_chars or DEFAULT_MAX_CHARS,
+        overlap=chunk_overlap or DEFAULT_OVERLAP,
+    )
     embeddings: list[list[float]] = []
     for start in range(0, len(chunks), EMBED_BATCH):
         batch = chunks[start : start + EMBED_BATCH]
@@ -173,8 +179,18 @@ def index_paths(
     embedder: Embedder,
     paths: list[Path],
     progress: Callable[[str, int, int], None] | None = None,
+    chunk_chars: int = 0,
+    chunk_overlap: int = 0,
 ) -> IndexStats:
     store.ensure_embedder(embedder.name, embedder.dim)
+    if not chunk_chars or not chunk_overlap:
+        from ragdesk import settings as app_settings  # noqa: PLC0415 - optional knob
+
+        values = app_settings.load()
+        chunk_chars = chunk_chars or int(values.get("chunk_chars") or DEFAULT_MAX_CHARS)
+        chunk_overlap = chunk_overlap or int(
+            values.get("chunk_overlap") or DEFAULT_OVERLAP
+        )
     stats = IndexStats()
     for file in iter_files(paths):
         stats.files_scanned += 1
@@ -200,6 +216,8 @@ def index_paths(
             path=str(file),
             content=content,
             mtime=file.stat().st_mtime,
+            chunk_chars=chunk_chars,
+            chunk_overlap=chunk_overlap,
         )
         if chunks:
             stats.indexed += 1
