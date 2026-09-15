@@ -97,6 +97,12 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   drops it to 0.750; lane weights change nothing. Chunking stays 1000 chars
   (settings `chunk_chars`/`chunk_overlap`), weights stay equal, and the quality
   preset keeps `rerank: onnx`.
+- Metadata: `index.parse_front_matter` reads a flat `--- key: value ---` header
+  (md/txt), `documents.metadata` stores it as JSON, `parse_filters` turns any
+  unrecognised `key:value` (minus URL schemes) into `Filters.meta`, and
+  `_filter_sql` matches it through `json_extract` with a sanitised key. Hits
+  carry the metadata for citation chips. Soft metadata boosts are NOT wired:
+  measure first (see the symbol-lane lesson).
 - Ranking extras: `diversify` caps chunks per document (2 by default, backfills
   when a query is dominated by one file) and `recency_factor` adds a mild
   freshness nudge to the RRF score (RECENCY_WEIGHT).

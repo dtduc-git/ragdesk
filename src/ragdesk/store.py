@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS documents (
     path TEXT NOT NULL UNIQUE,
     content_hash TEXT NOT NULL,
     mtime REAL NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS chunks (
@@ -111,6 +112,7 @@ class Store:
                 "line_start": "INTEGER NOT NULL DEFAULT 1",
             },
             "messages": {"feedback": "INTEGER NOT NULL DEFAULT 0"},
+            "documents": {"metadata": "TEXT NOT NULL DEFAULT '{}'"},
             "answer_cache": {
                 "fingerprint": "TEXT NOT NULL DEFAULT ''",
                 "embedding": "BLOB",
@@ -241,6 +243,7 @@ class Store:
         path: str,
         content_hash: str,
         mtime: float,
+        metadata: dict | None = None,
         texts: list[str],
         embeddings: list[list[float]],
         parents: list[str] | None = None,
@@ -256,8 +259,9 @@ class Store:
             if row:
                 self._delete_doc(row["id"])
             cursor = self.conn.execute(
-                "INSERT INTO documents (source, path, content_hash, mtime) VALUES (?, ?, ?, ?)",
-                (source, path, content_hash, mtime),
+                "INSERT INTO documents (source, path, content_hash, mtime, metadata) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (source, path, content_hash, mtime, json.dumps(metadata or {})),
             )
             doc_id = cursor.lastrowid
             for ordinal, text in enumerate(parents or []):
@@ -296,10 +300,15 @@ class Store:
 
     def documents(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
-            "SELECT id, source, path, content_hash, mtime, indexed_at FROM documents "
+            "SELECT id, source, path, content_hash, mtime, indexed_at, metadata FROM documents "
             "ORDER BY path"
         ).fetchall()
-        return [dict(row) for row in rows]
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            entry = dict(row)
+            entry["metadata"] = json.loads(entry.get("metadata") or "{}")
+            out.append(entry)
+        return out
 
     def stats(self) -> dict[str, int]:
         docs = self.conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]
@@ -606,6 +615,12 @@ class Store:
             if getattr(filters, "source", ""):
                 clauses.append("d.source = ?")
                 params.append(str(filters.source))
+            for key, value in (getattr(filters, "meta", None) or {}).items():
+                safe = re.sub(r"[^a-z0-9_-]", "", key.lower())
+                if not safe:
+                    continue
+                clauses.append(f"lower(json_extract(d.metadata, '$.{safe}')) = ?")
+                params.append(str(value).lower())
         return (" AND " + " AND ".join(clauses)) if clauses else "", params
 
     def bm25_search(
@@ -619,7 +634,7 @@ class Store:
         rows = self.conn.execute(
             f"""
             SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source,
-                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime,
+                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime, d.metadata,
                    bm25(chunks_fts) AS score
             FROM chunks_fts
             JOIN chunks c ON c.id = chunks_fts.rowid
@@ -646,7 +661,8 @@ class Store:
         rows = self.conn.execute(
             f"""
             SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source,
-                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime
+                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime,
+                   d.metadata
             FROM documents d
             JOIN chunks c ON c.doc_id = d.id
             LEFT JOIN parents p ON p.doc_id = d.id AND p.ordinal = c.parent_ordinal
@@ -672,7 +688,8 @@ class Store:
         rows = self.conn.execute(
             f"""
             SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source, c.embedding,
-                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime
+                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime,
+                   d.metadata
             FROM chunks c JOIN documents d ON d.id = c.doc_id
             LEFT JOIN parents p ON p.doc_id = d.id AND p.ordinal = c.parent_ordinal
             WHERE 1=1{scope}
@@ -700,6 +717,7 @@ class Store:
                         "parent_text": row["parent_text"],
                         "line_start": row["line_start"],
                         "mtime": row["mtime"],
+                        "metadata": json.loads(row["metadata"] or "{}"),
                         "score": score,
                     },
                 )

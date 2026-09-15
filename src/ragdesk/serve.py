@@ -130,6 +130,7 @@ def hit_to_dict(hit: Hit) -> dict[str, Any]:
         "cosine": hit.cosine,
         "lanes": hit.lanes,
         "line": hit.line,
+        "metadata": (hit.metadata or {}) if hasattr(hit, "metadata") else {},
     }
 
 

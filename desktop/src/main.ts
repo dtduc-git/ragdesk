@@ -17,6 +17,7 @@ type Hit = {
   cosine: number;
   lanes: string;
   line?: number;
+  metadata?: Record<string, string>;
 };
 
 type SourceStat = { source: string; documents: number; chunks: number; indexed_at: string };
@@ -434,6 +435,13 @@ function citeCard(hit: Hit, rank: number): string {
   const pathTag = openable
     ? `<code class="cite-path" data-open-path="${escapeHtml(hit.path)}" title="Open file">${escapeHtml(where)}</code>`
     : `<code class="cite-path">${escapeHtml(where)}</code>`;
+  const chips = Object.entries(hit.metadata ?? {})
+    .slice(0, 3)
+    .map(
+      ([key, value]) =>
+        `<span class="meta-chip">${escapeHtml(key)}: ${escapeHtml(String(value))}</span>`,
+    )
+    .join("");
   return `<article class="cite">
     <span class="cite-rank">[${rank}]</span>
     <div class="cite-body">
@@ -441,6 +449,7 @@ function citeCard(hit: Hit, rank: number): string {
         ${pathTag}
         <span class="cite-score">${hit.cosine.toFixed(2)} · ${escapeHtml(hit.lanes)}</span>
       </div>
+      ${chips ? `<div class="meta-chips">${chips}</div>` : ""}
       <p class="cite-snippet">${escapeHtml(snippet(hit.text, 240))}</p>
     </div>
   </article>`;

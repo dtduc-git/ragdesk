@@ -24,34 +24,44 @@ MAX_CHUNKS_PER_DOC = 2  # diversity: one long document must not fill every slot
 RECENCY_WEIGHT = 0.10  # a mild nudge for fresh documents, not a re-rank
 RECENCY_TAU_DAYS = 45.0
 
-_FILTER_RE = re.compile(r"(?<![\w-])(folder|source):(\S+)")
+_FILTER_RE = re.compile(r"(?<![\w-])([a-z][a-z0-9_-]*):(\S+)")
+_RESERVED_KEYS = {"http", "https", "file", "ragdesk", "ollama", "github", "web"}
 
 
 @dataclass(frozen=True)
 class Filters:
     path_like: str = ""
     source: str = ""
+    meta: dict[str, str] | None = None
 
     def __bool__(self) -> bool:
-        return bool(self.path_like or self.source)
+        return bool(self.path_like or self.source or self.meta)
 
 
 def parse_filters(query: str) -> tuple[str, Filters]:
     """Pull ``folder:`` / ``source:`` out of a query; the rest is the real query."""
     folder = ""
     source = ""
+    meta: dict[str, str] = {}
 
     def take(match: re.Match[str]) -> str:
         nonlocal folder, source
         key, value = match.group(1), match.group(2)
+        if key in _RESERVED_KEYS:
+            return match.group(0)  # a URL or a word with a colon, not a filter
         if key == "folder":
             folder = value
-        else:
+        elif key == "source":
             source = value
+        else:
+            meta[key] = value
         return ""
 
     cleaned = _FILTER_RE.sub(take, query)
-    return re.sub(r"\s+", " ", cleaned).strip(), Filters(path_like=folder, source=source)
+    return (
+        re.sub(r"\s+", " ", cleaned).strip(),
+        Filters(path_like=folder, source=source, meta=meta or None),
+    )
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,7 @@ class Hit:
     lanes: str
     parent_text: str = ""
     line: int = 1
+    metadata: dict | None = None
 
     @property
     def context(self) -> str:
@@ -177,6 +188,7 @@ def hybrid_search(
                 lanes=lanes,
                 parent_text=str(row.get("parent_text") or ""),
                 line=int(row.get("line_start") or 1),
+                metadata=row.get("metadata") or {},
             )
         )
     return hits

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,28 @@ def iter_files(paths: list[Path]) -> Iterator[Path]:
             dirs[:] = sorted(name for name in dirs if name not in SKIP_DIRS)
             for name in sorted(files):
                 yield Path(root) / name
+
+
+FRONT_MATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def parse_front_matter(content: str) -> tuple[dict[str, str], str]:
+    """A simple ``--- key: value ---`` header: metadata plus the remaining text.
+
+    Only flat ``key: value`` pairs are read — enough for service/type/env tags
+    without pulling in a YAML dependency.
+    """
+    match = FRONT_MATTER_RE.match(content)
+    if not match:
+        return {}, content
+    meta: dict[str, str] = {}
+    for line in match.group(1).splitlines():
+        key, _, value = line.partition(":")
+        key = key.strip().lower()
+        value = value.strip().strip('"').strip("'")
+        if key and value and re.fullmatch(r"[a-z0-9_-]+", key):
+            meta[key] = value[:100]
+    return meta, content[match.end() :]
 
 
 def is_text_file(path: Path) -> bool:
@@ -146,6 +169,9 @@ def index_document(
     chunk_overlap: int = 0,
 ) -> int:
     """Embed + upsert one document. Returns the chunk count, or 0 if unchanged."""
+    metadata: dict[str, str] = {}
+    if Path(path).suffix.lower() in {".md", ".markdown", ".txt", ""}:
+        metadata, content = parse_front_matter(content)
     digest = hashlib.sha256(content.encode()).hexdigest()
     if store.doc_hash(path) == digest:
         return 0
@@ -165,6 +191,7 @@ def index_document(
         path=path,
         content_hash=digest,
         mtime=mtime,
+        metadata=metadata,
         texts=texts,
         embeddings=embeddings,
         parents=parents,

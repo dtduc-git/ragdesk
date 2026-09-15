@@ -367,3 +367,35 @@ def test_accent_insensitive_bm25(tmp_path: Path):
         assert accented and accented[0]["path"].endswith("thue.md")
         # the stored text stays unfolded for citations
         assert "Thuế" in str(folded[0]["text"])
+
+
+def test_front_matter_becomes_metadata_and_filters(tmp_path: Path):
+    from ragdesk.index import parse_front_matter
+    from ragdesk.search import parse_filters, retrieve
+
+    meta, body = parse_front_matter(
+        "---\nservice: payments\ntype: runbook\nweird key: dropped\n---\n# Rollback\nsteps"
+    )
+    assert meta == {"service": "payments", "type": "runbook"}
+    assert body.startswith("# Rollback")
+    assert parse_front_matter("no header here") == ({}, "no header here")
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "runbook.md").write_text("---\nservice: payments\ntype: runbook\n---\nrollback steps")
+    (docs / "chat.md").write_text("---\nservice: payments\ntype: chatlog\n---\nrollback steps")
+    (docs / "other.md").write_text("---\nservice: search\n---\nrollback steps")
+    with Store(tmp_path / "meta.db") as store:
+        index_paths(store, HashingEmbedder(dim=256), [docs])
+        rows = {row["path"]: row["metadata"] for row in store.documents()}
+        assert rows[str(docs / "runbook.md")]["type"] == "runbook"
+
+        query, filters = parse_filters("type:runbook rollback")
+        assert query == "rollback"
+        assert filters.meta == {"type": "runbook"}
+        hits = retrieve(store, HashingEmbedder(dim=256), query, top_k=5, filters=filters)
+        assert {hit.path for hit in hits} == {str(docs / "runbook.md")}
+
+        # a word with a colon (a URL) is not a filter
+        query, filters = parse_filters("see https://example.com/x for details")
+        assert filters.meta is None and "https://example.com/x" in query

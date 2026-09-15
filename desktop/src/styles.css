@@ -1468,3 +1468,20 @@ details.alt[open] summary {
   background: rgb(169 75 57 / 14%);
   text-decoration: underline dotted var(--flag);
 }
+
+
+.meta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 4px;
+}
+
+.meta-chip {
+  padding: 1px 7px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--stamp);
+  border: 1px solid var(--stamp);
+  border-radius: 999px;
+}
