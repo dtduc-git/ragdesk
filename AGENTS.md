@@ -242,6 +242,10 @@ uv run ragdesk --embedder hash --db /tmp/eval-repo.db index "$PWD"
 uv run ragdesk --embedder hash --db /tmp/eval-repo.db eval --golden fixtures/golden_repo.jsonl
 # desktop shell
 cd desktop && npm install && npm run tauri build
+# macOS: sign with a stable identity so the Documents/Desktop/Downloads TCC
+# grant survives rebuilds — an ad-hoc build gets a new identity every time and
+# macOS re-asks for folder access on the next run
+APPLE_SIGNING_IDENTITY="Apple Development: <you> (<TEAMID>)" npm run tauri build
 # release build with baked credentials
 cp .env.example .env   # fill non-confidential values (see SECURITY.md)
 uv run python -m ragdesk.buildenv && uv build
