@@ -158,6 +158,14 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   answer + `lanes="symbol"` hits, so symbol questions never reach the LLM and
   never touch the RRF lanes (graph stays at the navigation layer). The ask
   response carries `symbol` and the UI shows a "call graph" badge.
+- Topic map (`topics.py`): `cluster_documents` is greedy leader clustering over
+  `store._doc_vectors()` (the same average chunk vectors related-documents uses;
+  pure Python, `MAX_DOCS` 2000 before it needs numpy) at cosine ≥ 0.75;
+  `cluster_labels` attaches the most distinctive terms (cluster rate minus the
+  corpus rate, sampled to 20k chunks) so the label is not just the commonest
+  words. `GET /api/topics` powers the Indexed tab's Topics card, which shows
+  multi-document clusters open, collapses single-document topics, and caps
+  paths per cluster. Display only — never a ranking lane.
 - Reliability surfaces: `GET /api/health` (embedder match, last local run + `skipped_samples` from `store.last_index_report()`, oldest documents, db
   size, never-index patterns + docs still matching them), `POST
   /api/never-index {patterns}` (saves `settings.never_index` AND prunes matching

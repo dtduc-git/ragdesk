@@ -219,6 +219,7 @@ function activateTab(tab: string): void {
   });
   if (tab === "indexed") {
     void loadHealth();
+    void loadTopics();
     void loadDuplicates();
   }
   if (tab === "sources") void loadBookmarks();
@@ -2343,6 +2344,58 @@ $("backup-list")?.addEventListener("click", async (event) => {
     $("backup-status").textContent = error instanceof Error ? error.message : String(error);
   }
 });
+
+type TopicCluster = { label: string; documents: number; paths: string[] };
+const MAX_TOPIC_PATHS = 5;
+const MAX_TOPIC_CLUSTERS = 15;
+
+async function loadTopics(): Promise<void> {
+  const box = document.getElementById("topic-list");
+  if (!box) return;
+  box.innerHTML = `<p class="caption">grouping documents…</p>`;
+  try {
+    const { clusters } = await get<{ clusters: TopicCluster[] }>("/api/topics");
+    if (!clusters.length) {
+      box.innerHTML = `<p class="caption">nothing indexed yet</p>`;
+      return;
+    }
+    const multi = clusters.filter((cluster) => cluster.documents >= 2);
+    const singles = clusters.filter((cluster) => cluster.documents < 2);
+    const pool = multi.length ? multi : clusters;
+    const shown = pool.slice(0, MAX_TOPIC_CLUSTERS);
+    const hiddenClusters = pool.length - shown.length;
+    box.innerHTML =
+      shown
+        .map((cluster, index) => {
+          const paths = cluster.paths.slice(0, MAX_TOPIC_PATHS);
+          const hidden = cluster.paths.length - paths.length;
+          return `<details class="topic-cluster" ${index < 3 ? "open" : ""}>
+            <summary><strong>${escapeHtml(cluster.label || "(mixed)")}</strong> <span>${cluster.documents} document${cluster.documents === 1 ? "" : "s"}</span></summary>
+            <ul class="dup-paths">
+              ${paths
+                .map(
+                  (path) =>
+                    `<li><code class="cite-path" data-open-path="${escapeHtml(path)}" title="${escapeHtml(path)}">${escapeHtml(path)}</code></li>`,
+                )
+                .join("")}
+            </ul>
+            ${hidden > 0 ? `<p class="caption">+${hidden} more document${hidden === 1 ? "" : "s"}</p>` : ""}
+          </details>`;
+        })
+        .join("") +
+      (hiddenClusters > 0
+        ? `<p class="caption">+${hiddenClusters} more clusters</p>`
+        : "") +
+      (multi.length && singles.length
+        ? `<details class="topic-cluster">
+            <summary><strong>${singles.length} single-document topic${singles.length === 1 ? "" : "s"}</strong></summary>
+            <p class="caption">${singles.map((cluster) => escapeHtml(cluster.label || "(mixed)")).join(" · ")}</p>
+          </details>`
+        : "");
+  } catch (error) {
+    box.innerHTML = `<p class="caption">${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
+  }
+}
 
 function renderAnswerActions(
   message: HTMLElement,

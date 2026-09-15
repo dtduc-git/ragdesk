@@ -1222,6 +1222,31 @@ details.alt[open] summary {
   color: var(--ink-soft);
 }
 
+/* --- topics ------------------------------------------------------------------ */
+
+.topic-cluster {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.topic-cluster summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.topic-cluster summary strong {
+  font-weight: 600;
+}
+
+.topic-cluster summary span {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
 /* --- index health ------------------------------------------------------------ */
 
 .health-line {

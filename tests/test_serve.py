@@ -128,6 +128,16 @@ def test_smart_retrieval_prompt_renders_its_json_example():
     assert "{history}" not in rendered
 
 
+def test_topics_endpoint(base_url: str):
+    status, payload = request(f"{base_url}/api/topics")
+    assert status == 200
+    assert payload["clusters"]
+    for cluster in payload["clusters"]:
+        assert cluster["documents"] >= 1
+        assert isinstance(cluster["label"], str)
+        assert cluster["paths"]
+
+
 def test_health_endpoint_reports_the_index_state(base_url: str):
     status, payload = request(f"{base_url}/api/health")
     assert status == 200

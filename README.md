@@ -174,6 +174,7 @@ with — the index refuses mismatched embeddings.
 | Scoping: `folder:` / `source:` and any front-matter key (`type:runbook service:payments`) as query filters; metadata shows as chips on citations | |
 | Parent-child context: children are embedded, parents (~4k chars) go to the LLM | |
 | Call graph on demand: ask "who calls hybrid_search?" and get definitions + call sites with file:line, answered from the code itself (regex scan, never a ranking lane) | Full AST/cross-language precision |
+| Topic map: the Indexed tab groups documents into labelled clusters (greedy leader clustering over the stored vectors, labels = distinctive terms) | 2D visual map (needs a projection dependency) |
 | Bookmarks: save one page from the Sources tab (or `ragdesk save <url>`), then Open or Refresh it later | |
 | Email: read-only IMAP sync (last N messages, `BODY.PEEK` — nothing is marked read) and mbox files; one document per message, searchable by subject, sender or body | Attachment contents (names are listed); mail writing/deleting |
 | Duplicates: the Indexed tab lists documents that share most of their exact chunks (the same file saved twice), with open-file links | Automatic cleanup — sources stay read-only |

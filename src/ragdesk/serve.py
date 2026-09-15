@@ -82,6 +82,7 @@ from ragdesk.rerank import get_reranker
 from ragdesk.search import Hit, parse_filters, retrieve
 from ragdesk.store import Store, matches_any
 from ragdesk.symbols import find_symbol, parse_symbol_question, symbol_answer
+from ragdesk.topics import topic_map
 from ragdesk.web import WebError, crawl_site, save_page
 
 CORS_HEADERS = {
@@ -371,6 +372,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/duplicates":
             with Store(self.state.db) as store:
                 clusters = store.duplicate_clusters()
+            self._send(200, {"clusters": clusters})
+            return
+        if self.path == "/api/topics":
+            with Store(self.state.db) as store:
+                clusters = topic_map(store)
             self._send(200, {"clusters": clusters})
             return
         if self.path == "/api/chats":
