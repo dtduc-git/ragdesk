@@ -1,8 +1,8 @@
 """Text extraction for office documents and PDFs, stdlib + pypdf only.
 
-``.docx`` / ``.pptx`` are zip+XML, so they need no dependency at all. PDFs go
-through pypdf (BSD, pure Python); scanned PDFs without a text layer come back
-empty and are skipped upstream — no OCR in scope.
+``.docx`` / ``.pptx`` / ``.xlsx`` are zip+XML, so they need no dependency at
+all. PDFs go through pypdf (BSD, pure Python); scanned PDFs without a text
+layer come back empty and are skipped upstream — no OCR in scope.
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ import re
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from xml.etree import ElementTree
 
-DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx"}
+DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xlsm"}
 MAX_DOCUMENT_CHARS = 200_000  # a whole book would otherwise stall the indexer
 
 # pypdf warns per font when fontTools is absent, yet its fallback decoding is
@@ -22,8 +23,136 @@ MAX_DOCUMENT_CHARS = 200_000  # a whole book would otherwise stall the indexer
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _safe_parse(xml_bytes: bytes) -> ElementTree.Element | None:
+    """Parse Office XML with DTDs refused.
+
+    Real docx/xlsx/pptx parts never carry a DTD, so rejecting one closes the
+    entity-expansion hole that comes with the stdlib parser.
+    """
+    head = xml_bytes[:4096].lower()
+    if b"<!doctype" in head or b"<!entity" in head:
+        return None
+    try:
+        return ElementTree.fromstring(xml_bytes)
+    except ElementTree.ParseError:
+        return None
+
+
+def _shared_strings(archive: zipfile.ZipFile) -> list[str]:
+    """The workbook's shared string table; rich-text runs are concatenated."""
+    try:
+        xml = archive.read("xl/sharedStrings.xml")
+    except KeyError:
+        return []
+    root = _safe_parse(xml)
+    if root is None:
+        return []
+    strings: list[str] = []
+    for item in root:
+        if _local(item.tag) != "si":
+            continue
+        parts = [
+            (node.text or "")
+            for node in item.iter()
+            if _local(node.tag) == "t"
+        ]
+        strings.append("".join(parts))
+    return strings
+
+
+def _sheet_titles(archive: zipfile.ZipFile) -> list[str]:
+    try:
+        xml = archive.read("xl/workbook.xml")
+    except KeyError:
+        return []
+    root = _safe_parse(xml)
+    if root is None:
+        return []
+    return [
+        str(node.get("name") or "")
+        for node in root.iter()
+        if _local(node.tag) == "sheet"
+    ]
+
+
+def _cell_text(cell: ElementTree.Element, shared: list[str]) -> str:
+    kind = str(cell.get("t") or "")
+    value = ""
+    for node in cell.iter():
+        if _local(node.tag) == "v":
+            value = node.text or ""
+        elif _local(node.tag) == "t" and kind == "inlineStr":
+            value += node.text or ""
+    if kind == "s":
+        try:
+            return shared[int(value)]
+        except (ValueError, IndexError):
+            return ""
+    return value.strip()
+
+
+def _sheet_rows(xml_bytes: bytes, shared: list[str]) -> list[str]:
+    root = _safe_parse(xml_bytes)
+    if root is None:
+        return []
+    rows: list[str] = []
+    for row in root.iter():
+        if _local(row.tag) != "row":
+            continue
+        values = [
+            _cell_text(cell, shared)
+            for cell in row
+            if _local(cell.tag) == "c"
+        ]
+        values = [value for value in values if value]
+        if not values:
+            continue
+        ref = str(row.get("r") or "")
+        prefix = f"r{ref}: " if ref else ""
+        rows.append(prefix + " | ".join(values))
+    return rows
+
+
+def extract_xlsx_text(data: bytes) -> str | None:
+    """Text from a workbook: every sheet with its rows (shared + inline strings).
+
+    Cell values keep their row number so a citation can point at ``r12``.
+    Date serials stay numeric — formatting them needs the styles table, which
+    is not worth the code until someone actually misses it.
+    """
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            names = archive.namelist()
+            sheets = sorted(
+                name
+                for name in names
+                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+            )
+            if not sheets:
+                return None
+            shared = _shared_strings(archive)
+            titles = _sheet_titles(archive)
+            blocks: list[str] = []
+            for index, sheet in enumerate(sheets):
+                rows = _sheet_rows(archive.read(sheet), shared)
+                if not rows:
+                    continue
+                title = titles[index] if index < len(titles) else Path(sheet).stem
+                blocks.append(f"[sheet] {title}\n" + "\n".join(rows))
+    except (KeyError, zipfile.BadZipFile, OSError):
+        return None
+    text = "\n\n".join(blocks).strip()
+    return text or None
+
+
 def extract_office_text(data: bytes, suffix: str) -> str | None:
-    """Extract text from .docx / .pptx (both are zip+XML) without dependencies."""
+    """Extract text from .docx / .pptx / .xlsx, all zip+XML, no dependencies."""
+    if suffix in (".xlsx", ".xlsm"):
+        return extract_xlsx_text(data)
     try:
         with zipfile.ZipFile(BytesIO(data)) as archive:
             if suffix == ".docx":

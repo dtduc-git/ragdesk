@@ -47,6 +47,88 @@ def make_docx(text: str) -> bytes:
     return out.getvalue()
 
 
+def make_xlsx(rows: list[list[str]], sheet_name: str = "Sheet1") -> bytes:
+    """A minimal workbook: string cells go through sharedStrings, numbers inline."""
+    strings: list[str] = []
+    row_xml: list[str] = []
+    for row_index, row in enumerate(rows, start=1):
+        cells = []
+        for column, value in enumerate(row):
+            ref = f"{chr(ord('A') + column)}{row_index}"
+            if value.isdigit():
+                cells.append(f'<c r="{ref}"><v>{value}</v></c>')
+            else:
+                strings.append(value)
+                cells.append(f'<c r="{ref}" t="s"><v>{len(strings) - 1}</v></c>')
+        row_xml.append(f'<row r="{row_index}">' + "".join(cells) + "</row>")
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        archive.writestr(
+            "xl/workbook.xml",
+            '<?xml version="1.0"?><workbook xmlns="s"><sheets>'
+            f'<sheet name="{sheet_name}" sheetId="1"/>'
+            "</sheets></workbook>",
+        )
+        archive.writestr(
+            "xl/sharedStrings.xml",
+            '<?xml version="1.0"?><sst xmlns="s">'
+            + "".join(f"<si><t>{s}</t></si>" for s in strings)
+            + "</sst>",
+        )
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<?xml version="1.0"?><worksheet xmlns="s"><sheetData>'
+            + "".join(row_xml)
+            + "</sheetData></worksheet>",
+        )
+    return out.getvalue()
+
+
+def test_xlsx_rows_and_sheet_name():
+    from ragdesk.office import extract_xlsx_text
+
+    data = make_xlsx(
+        [["Item", "Amount"], ["Hosting", "1200"], ["Support", "800"]],
+        sheet_name="Chi phi",
+    )
+    text = extract_xlsx_text(data)
+    assert text is not None
+    assert "[sheet] Chi phi" in text
+    assert "r2: Hosting | 1200" in text
+    assert "r3: Support | 800" in text
+
+
+def test_xlsx_broken_or_empty_returns_none():
+    from ragdesk.office import extract_xlsx_text
+
+    assert extract_xlsx_text(b"not a zip") is None
+    empty = io.BytesIO()
+    with zipfile.ZipFile(empty, "w") as archive:
+        archive.writestr("docProps/app.xml", "<x/>")
+    assert extract_xlsx_text(empty.getvalue()) is None
+
+
+def test_xlsx_rejects_dtd():
+    from ragdesk.office import extract_xlsx_text
+
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY boom "y">]>'
+            "<worksheet><sheetData/></worksheet>",
+        )
+    assert extract_xlsx_text(payload.getvalue()) is None
+
+
+def test_xlsx_is_a_document_for_admission(tmp_path: Path):
+    from ragdesk.index import is_indexable
+
+    book = tmp_path / "book.xlsx"
+    book.write_bytes(b"x")
+    assert is_indexable(book, 5_000_000) is True
+
+
 def test_pdf_text_is_extracted():
     text = extract_pdf_text(make_pdf("Grounding gate notes for ragdesk"))
     assert text is not None

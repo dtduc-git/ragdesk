@@ -85,13 +85,15 @@ def extract_bytes(data: bytes, name: str) -> str | None:
     """Text for a connector payload, by file name: documents, images, or plain text."""
     suffix = Path(name).suffix.lower()
     if suffix == ".pdf":
-        from ragdesk.office import extract_pdf_text  # noqa: PLC0415 - avoid a cycle
+        from ragdesk.office import MAX_DOCUMENT_CHARS, extract_pdf_text  # noqa: PLC0415
 
-        return extract_pdf_text(data)
+        text = extract_pdf_text(data)
+        return text[:MAX_DOCUMENT_CHARS] if text else None
     if suffix in DOCUMENT_EXTENSIONS:
-        from ragdesk.office import extract_office_text  # noqa: PLC0415
+        from ragdesk.office import MAX_DOCUMENT_CHARS, extract_office_text  # noqa: PLC0415
 
-        return extract_office_text(data, suffix)
+        text = extract_office_text(data, suffix)
+        return text[:MAX_DOCUMENT_CHARS] if text else None
     if suffix in IMAGE_EXTENSIONS:
         from ragdesk.vision import extract_image_bytes  # noqa: PLC0415
 

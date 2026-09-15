@@ -14,9 +14,10 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   (LexicalReranker baseline; FastEmbedReranker + OnnxReranker = multilingual
   gte behind the `onnx` extra), `index` (incremental local files; `iter_files`
   prunes `SKIP_DIRS` during the walk so `target/`/`node_modules/` are never
-  traversed), `office` (PDF/DOCX/PPTX text extraction: docx/pptx via zip+XML
-  with zero deps, PDFs via pypdf — the only runtime dependency; scanned PDFs
-  return empty and are skipped, no OCR), `vision` (image OCR through Apple's
+  traversed), `office` (PDF/DOCX/PPTX/XLSX text extraction: docx/pptx/xlsx via
+  zip+XML with zero deps — sheets keep `r<row>` refs, shared + inline strings;
+  PDFs via pypdf, the only runtime dependency; XML with a DTD is refused;
+  scanned PDFs return empty and are skipped, no OCR), `vision` (image OCR through Apple's
   on-device Vision framework via the `vision` extra: `en-US` + `vi-VT`, images
   upscaled 2× before recognition, header carries file name + Spotlight capture
   date; non-macOS or no extra → images skip as before), `github` / `gitlab` / `confluence` / `gdrive` / `notion` /
