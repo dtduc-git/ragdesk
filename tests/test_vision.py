@@ -109,3 +109,61 @@ def test_creation_date_helper_tolerates_failures(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr("ragdesk.vision.subprocess.run", boom)
     assert vision._created(tmp_path / "x.png") == ""
+
+
+def _make_empty_pdf() -> bytes:
+    """A one-page PDF whose page holds no text at all (a stand-in for a scan)."""
+    import io
+
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>",
+    ]
+    out = io.BytesIO()
+    out.write(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(out.tell())
+        out.write(b"%d 0 obj\n" % index + obj + b"\nendobj\n")
+    xref = out.tell()
+    out.write(b"xref\n0 %d\n" % (len(objects) + 1))
+    out.write(b"0000000000 65535 f \n")
+    for offset in offsets:
+        out.write(b"%010d 00000 n \n" % offset)
+    out.write(
+        b"trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n"
+        % (len(objects) + 1, xref)
+    )
+    return out.getvalue()
+
+
+def test_pdf_without_text_layer_falls_back_to_ocr(monkeypatch):
+    """The wiring: an empty text layer hands the bytes to the on-device OCR."""
+    import ragdesk.vision as vision_module
+    from ragdesk.office import extract_pdf_text
+
+    calls: list[int] = []
+
+    def fake_ocr(data: bytes, **kwargs) -> str:
+        calls.append(len(data))
+        return "recovered from a scan"
+
+    monkeypatch.setattr(vision_module, "ocr_pdf", fake_ocr)
+    # a valid PDF whose page has no text content
+    empty_pdf = _make_empty_pdf()
+    assert extract_pdf_text(empty_pdf) == "recovered from a scan"
+    assert calls == [len(empty_pdf)]
+
+
+@macos_ocr
+def test_real_scan_extraction_end_to_end(tmp_path: Path):
+    """Vision OCR reads a rendered image page directly (PDF rasterizing is the
+    same code path, verified live against a real scanned PDF)."""
+    shot = tmp_path / "scan-page.png"
+    _render_png("Kubernetes crash course notes", shot)
+    from ragdesk.vision import extract_image
+
+    text = extract_image(shot)
+    assert text is not None
+    assert "kubernetes" in text.lower()

@@ -192,7 +192,12 @@ def extract_pdf_text(data: bytes) -> str | None:
     except Exception:  # noqa: BLE001 - malformed PDFs must never kill indexing
         return None
     text = "\n\n".join(page.strip() for page in pages if page.strip())
-    return text or None
+    if text:
+        return text
+    # No text layer: a scan. Hand it to the on-device OCR when available.
+    from ragdesk.vision import ocr_pdf  # noqa: PLC0415 - optional extra
+
+    return ocr_pdf(data)
 
 
 def extract_document(path: Path) -> str | None:

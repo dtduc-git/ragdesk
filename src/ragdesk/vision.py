@@ -104,6 +104,67 @@ def extract_image_bytes(data: bytes, name: str) -> str | None:
     return _wrap(text, name, "")
 
 
+def ocr_pdf(data: bytes, max_pages: int = 30, scale: float = 2.0) -> str | None:
+    """Scanned PDFs: rasterize each page with Quartz, then OCR it with Vision.
+
+    Only used as a fallback when the text layer is empty, so born-digital PDFs
+    keep their exact glyphs. Pages beyond ``max_pages`` are ignored to bound the
+    work on hundred-page scans.
+    """
+    if not ocr_available():
+        return None
+    try:
+        import objc  # noqa: PLC0415 - optional extra
+        import Quartz  # noqa: PLC0415
+        from AppKit import NSBitmapImageFileTypePNG, NSBitmapImageRep  # noqa: PLC0415
+        from Foundation import NSData  # noqa: PLC0415
+    except ImportError:
+        return None
+
+    payload = NSData.dataWithBytes_length_(data, len(data))
+    provider = Quartz.CGDataProviderCreateWithCFData(payload)
+    document = Quartz.CGPDFDocumentCreateWithProvider(provider)
+    if document is None:
+        return None
+    pages: list[str] = []
+    total = min(int(Quartz.CGPDFDocumentGetNumberOfPages(document)), max_pages)
+    for index in range(1, total + 1):
+        page = Quartz.CGPDFDocumentGetPage(document, index)
+        if page is None:
+            continue
+        box = Quartz.CGPDFPageGetBoxRect(page, Quartz.kCGPDFMediaBox)
+        width = int(box.size.width * scale) or 1
+        height = int(box.size.height * scale) or 1
+        with objc.autorelease_pool():
+            context = Quartz.CGBitmapContextCreate(
+                None,
+                width,
+                height,
+                8,
+                0,
+                Quartz.CGColorSpaceCreateDeviceRGB(),
+                Quartz.kCGImageAlphaPremultipliedFirst,
+            )
+            if context is None:
+                continue
+            Quartz.CGContextSetRGBFillColor(context, 1.0, 1.0, 1.0, 1.0)
+            Quartz.CGContextFillRect(context, Quartz.CGRectMake(0, 0, width, height))
+            Quartz.CGContextScaleCTM(context, scale, scale)
+            Quartz.CGContextDrawPDFPage(context, page)
+            image = Quartz.CGBitmapContextCreateImage(context)
+            if image is None:
+                continue
+            bitmap = NSBitmapImageRep.alloc().initWithCGImage_(image)
+            png = bitmap.representationUsingType_properties_(NSBitmapImageFileTypePNG, {})
+            if png:
+                text = _ocr_bytes(bytes(png))
+                if text.strip():
+                    pages.append(text.strip())
+    if not pages:
+        return None
+    return "\n\n".join(pages)
+
+
 def extract_image(path: Path) -> str | None:
     """OCR text plus a small header (file name, capture date) for context."""
     if not ocr_available():
