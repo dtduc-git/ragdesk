@@ -11,7 +11,7 @@ from ragdesk.evaluate import evaluate, load_golden
 from ragdesk.index import index_document, index_paths
 from ragdesk.llm import OllamaLLM
 from ragdesk.rerank import LexicalReranker, get_reranker
-from ragdesk.search import Hit, hybrid_search
+from ragdesk.search import Hit, hit_to_dict, hybrid_search
 from ragdesk.store import EmbedderMismatch, Store
 from ragdesk.web import WebError, save_page
 
@@ -392,6 +392,21 @@ def test_answer_stream_maps_pieces():
     hit = make_hit("a.md", "some context", chunk_id=1)
     llm = FakeLLM(pieces=["Hel", "", "lo"])
     assert list(answer_stream("q", [hit], llm)) == ["Hel", "lo"]
+
+
+def test_hit_to_dict_is_the_one_citation_shape():
+    payload = hit_to_dict(make_hit("a.md", "context"))
+    assert set(payload) == {
+        "path",
+        "source",
+        "ordinal",
+        "text",
+        "score",
+        "cosine",
+        "lanes",
+        "line",
+        "metadata",
+    }
 
 
 def test_answer_stream_refuses_when_model_emits_nothing():

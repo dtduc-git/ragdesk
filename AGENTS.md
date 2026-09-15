@@ -50,8 +50,23 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   shared embedder means no re-index; the choice persists in settings.json and
   beats the built-in default, with `--preset` still winning at launch),
   `cli`.
-- `desktop/` — Tauri 2 shell (card-catalog UI; tabs: Chat, Sources, Indexed,
-  Settings). Retrieval-only search lives in `ragdesk search` and `/api/search`;
+- UI identity (`desktop/src/styles.css`, tokens at the top): the "catalog
+  drawer" — grey-green card stock (`--paper` desk, `--sheet` working sheet,
+  `--card` insets), **violet library ink** (`--stamp`) for actions and stamps,
+  **amber** (`--lamp`) for anything live or cited, Iowan/Charter display + SF
+  interface + SF Mono for paths and figures. Structural devices carry meaning:
+  the transcript is a ruled ledger with entry numbers in the gutter, the active
+  rail tab is the pulled drawer, the Indexed stats are a ledger with
+  proportional bars, and the composer is an index card with a violet top edge.
+  Keep it restrained — hairlines and one shadow, no per-element shadows, no
+  gradient decoration, and `prefers-reduced-motion` disables all motion.
+  `main.ts` also owns the command palette (⌘K/⌘N/⌘1-4/?; documents come from
+  `/api/search`), which must keep every `$("id")` it touches present in
+  `index.html` (`tests/test_ui.py` enforces that). One more rule with a
+  precedent: citations have ONE stored shape (`search.hit_to_dict`) — the
+  terminal chats once wrote a thinner one and the GUI crashed on a missing
+  `cosine` when it replayed them, so any writer must use the shared helper.
+- `desktop/` — Tauri 2 shell (card-catalog UI; tabs: Chat, Sources, Indexed, Settings). Retrieval-only search lives in `ragdesk search` and `/api/search`;
   the Chat tab keeps its source list under every answer. Rust spawns `ragdesk serve`
   with `--db $HOME/.ragdesk/index.db`; a watchdog thread respawns it if it
   dies (skipping the respawn when another instance owns the port) and the

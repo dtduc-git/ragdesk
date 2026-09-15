@@ -27,19 +27,22 @@
         </nav>
 
         <div class="rail-status">
-          <div class="rail-numbers">
-            <div class="rail-number">
-              <span id="stat-docs">–</span>
-              <small>documents</small>
+          <dl class="rail-ledger">
+            <div class="ledger-row">
+              <dt>documents</dt>
+              <dd id="stat-docs">–</dd>
             </div>
-            <div class="rail-number">
-              <span id="stat-chunks">–</span>
-              <small>chunks</small>
+            <div class="ledger-row">
+              <dt>chunks</dt>
+              <dd id="stat-chunks">–</dd>
             </div>
-          </div>
+          </dl>
           <p class="rail-meta" id="rail-meta">connecting to the local index…</p>
-        <p class="rail-activity" id="rail-activity" hidden></p>
-          <button class="btn btn-quiet theme-toggle" type="button" id="theme-toggle">Dark theme</button>
+          <p class="rail-activity" id="rail-activity" hidden></p>
+          <div class="rail-foot">
+            <button class="btn btn-quiet theme-toggle" type="button" id="theme-toggle">Dark theme</button>
+            <button class="btn btn-quiet" type="button" id="palette-open" title="Command palette (⌘K)">⌘K</button>
+          </div>
         </div>
       </aside>
 
@@ -338,6 +341,37 @@
           <button class="btn btn-quiet" type="button" id="wizard-skip">Skip setup</button>
           <button class="btn btn-primary" type="button" id="wizard-next">Continue</button>
         </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="palette" hidden>
+      <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+        <input
+          id="palette-input"
+          class="palette-input"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search your sources, jump to a conversation, run an action…"
+        />
+        <div class="palette-list" id="palette-list"></div>
+        <p class="palette-hint">↑↓ move · ⏎ open · esc close</p>
+      </div>
+    </div>
+
+    <div class="overlay" id="shortcuts" hidden>
+      <div class="palette keys-sheet" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+        <h3 class="keys-title">Keyboard</h3>
+        <div class="key-row"><kbd>⌘K</kbd><span>Command palette</span></div>
+        <div class="key-row"><kbd>⌘N</kbd><span>New conversation</span></div>
+        <div class="key-row"><kbd>⌘1</kbd><span>Chat</span></div>
+        <div class="key-row"><kbd>⌘2</kbd><span>Sources</span></div>
+        <div class="key-row"><kbd>⌘3</kbd><span>Indexed</span></div>
+        <div class="key-row"><kbd>⌘4</kbd><span>Settings</span></div>
+        <div class="key-row"><kbd>⏎</kbd><span>Ask (from the composer)</span></div>
+        <div class="key-row"><kbd>esc</kbd><span>Close an overlay, or stop the answer</span></div>
+        <div class="key-row"><kbd>?</kbd><span>This sheet</span></div>
+        <p class="palette-hint">esc close</p>
       </div>
     </div>
 

@@ -10,12 +10,12 @@ const SUGGESTIONS = [
 
 type Hit = {
   path: string;
-  source: string;
-  ordinal: number;
+  source?: string;
+  ordinal?: number;
   text: string;
-  score: number;
-  cosine: number;
-  lanes: string;
+  score?: number;
+  cosine?: number;
+  lanes?: string;
   line?: number;
   metadata?: Record<string, string>;
 };
@@ -414,6 +414,10 @@ function renderStatus(): void {
   const totalDocs = status.sources.reduce((sum, entry) => sum + entry.documents, 0);
   const totalChunks = status.sources.reduce((sum, entry) => sum + entry.chunks, 0);
   const localPaths = status.local_paths ?? [];
+  const maxDocs = Math.max(...status.sources.map((entry) => entry.documents), 1);
+  const maxChunks = Math.max(...status.sources.map((entry) => entry.chunks), 1);
+  const numberCell = (value: number, max: number) =>
+    `<span class="stat-bar-cell">${value}<span class="stat-bar" style="--bar:${Math.round((value / max) * 100)}%"></span></span>`;
   table.innerHTML = `
     <div class="stats-row stats-head">
       <span>Source</span><span>Documents</span><span>Chunks</span><span>Last indexed</span>
@@ -426,8 +430,8 @@ function renderStatus(): void {
                 .map(
                   (child) => `<div class="stats-row stats-sub">
           <span class="stats-source" title="${escapeHtml(child.path)}">↳ ${escapeHtml(child.path)}</span>
-          <span>${child.documents}</span>
-          <span>${child.chunks}</span>
+          ${numberCell(child.documents, maxDocs)}
+          ${numberCell(child.chunks, maxChunks)}
           <span>${escapeHtml((child.indexed_at || "").slice(0, 16))}</span>
         </div>`,
                 )
@@ -435,8 +439,8 @@ function renderStatus(): void {
             : "";
         return `<div class="stats-row">
           <span class="stats-source">${escapeHtml(entry.source)}</span>
-          <span>${entry.documents}</span>
-          <span>${entry.chunks}</span>
+          ${numberCell(entry.documents, maxDocs)}
+          ${numberCell(entry.chunks, maxChunks)}
           <span>${escapeHtml((entry.indexed_at || "").slice(0, 16))}</span>
         </div>${children}`;
       })
@@ -466,12 +470,15 @@ function citeCard(hit: Hit, rank: number): string {
         `<span class="meta-chip">${escapeHtml(key)}: ${escapeHtml(String(value))}</span>`,
     )
     .join("");
+  // Older rows (written by early terminal chats) predate the full citation
+  // shape: render what exists instead of throwing on a missing score.
+  const score = typeof hit.cosine === "number" ? hit.cosine.toFixed(2) : "";
   return `<article class="cite" data-rank="${rank}">
     <span class="cite-rank">[${rank}]</span>
     <div class="cite-body">
       <div class="cite-top">
         ${pathTag}
-        <span class="cite-score">${hit.cosine.toFixed(2)} · ${escapeHtml(hit.lanes)}</span>
+        <span class="cite-score">${score}${hit.lanes ? `${score ? " " : ""}<em>${escapeHtml(hit.lanes)}</em>` : ""}</span>
       </div>
       ${chips ? `<div class="meta-chips">${chips}</div>` : ""}
       <p class="cite-snippet">${escapeHtml(snippet(hit.text, 240))}</p>
@@ -508,12 +515,24 @@ document.addEventListener("click", (event) => {
 
 let streaming = false;
 let activeAbort: AbortController | null = null;
+let entryCount = 0;
+
+function nextEntryNo(): string {
+  entryCount += 1;
+  return String(entryCount).padStart(3, "0");
+}
 
 function appendUserMessage(query: string): void {
   document.getElementById("chat-empty")?.remove();
   const message = document.createElement("div");
   message.className = "msg msg-user";
-  message.textContent = query;
+  const no = document.createElement("span");
+  no.className = "entry-no";
+  no.textContent = nextEntryNo();
+  const text = document.createElement("div");
+  text.className = "user-text";
+  text.textContent = query;
+  message.append(no, text);
   $("chat-log").append(message);
 }
 
@@ -526,7 +545,14 @@ function appendAssistantShell(): {
 } {
   const message = document.createElement("div");
   message.className = "msg msg-assistant";
-  message.innerHTML = `<div class="answer-status"></div><div class="answer streaming"></div><div class="answer-actions"></div><div class="cites"></div>`;
+  const no = document.createElement("span");
+  no.className = "entry-no";
+  no.textContent = nextEntryNo();
+  message.prepend(no);
+  message.insertAdjacentHTML(
+    "beforeend",
+    `<div class="answer-status"></div><div class="answer streaming"></div><div class="answer-actions"></div><div class="cites"></div>`,
+  );
   $("chat-log").append(message);
   message.scrollIntoView({ block: "end" });
   return {
@@ -804,6 +830,7 @@ document.addEventListener("click", (event) => {
 });
 
 function resetChatLog(): void {
+  entryCount = 0;
   $("chat-log").innerHTML = chatLogTemplate;
   bindSuggestionChips();
 }
@@ -813,6 +840,7 @@ function renderChat(messages: ChatMessage[]): void {
     resetChatLog();
     return;
   }
+  entryCount = 0;
   $("chat-log").innerHTML = "";
   let question = "";
   for (const message of messages) {
@@ -2947,6 +2975,239 @@ async function boot(): Promise<void> {
     $("rail-meta").textContent = "server offline — start it with: ragdesk serve";
   }
 }
+
+// --- command palette + shortcuts ------------------------------------------------
+
+type PaletteItem = {
+  kind: string;
+  title: string;
+  sub?: string;
+  run: () => void | Promise<void>;
+};
+
+const TABS = ["chat", "sources", "indexed", "settings"] as const;
+let paletteResults: PaletteItem[] = [];
+let paletteSelected = 0;
+let paletteDocs: PaletteItem[] = [];
+let paletteToken = 0;
+let paletteTimer = 0;
+
+function subsequence(query: string, text: string): boolean {
+  let position = 0;
+  for (const char of text) {
+    if (char === query[position]) position += 1;
+    if (position >= query.length) return true;
+  }
+  return false;
+}
+
+function paletteMatches(query: string, item: PaletteItem): boolean {
+  if (!query) return true;
+  const haystack = `${item.kind} ${item.title} ${item.sub ?? ""}`.toLowerCase();
+  return haystack.includes(query) || subsequence(query, haystack);
+}
+
+function basePaletteItems(): PaletteItem[] {
+  const items: PaletteItem[] = [
+    { kind: "action", title: "New conversation", sub: "⌘N", run: () => newChat() },
+    {
+      kind: "action",
+      title: "Toggle light / dark theme",
+      run: () =>
+        applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"),
+    },
+    {
+      kind: "action",
+      title: "Keyboard shortcuts",
+      sub: "?",
+      run: () => {
+        $("shortcuts").hidden = false;
+      },
+    },
+  ];
+  TABS.forEach((tab, index) => {
+    items.push({
+      kind: "go",
+      title: `Open ${tab[0].toUpperCase()}${tab.slice(1)}`,
+      sub: `⌘${index + 1}`,
+      run: () => activateTab(tab),
+    });
+  });
+  for (const chat of chatCache) {
+    items.push({
+      kind: "conversation",
+      title: chat.title,
+      sub: relativeWhen(chat.updated_at),
+      run: () => void openChat(chat.id),
+    });
+  }
+  for (const source of status?.sources ?? []) {
+    items.push({
+      kind: "source",
+      title: source.source,
+      sub: `${source.documents} documents`,
+      run: () => activateTab("indexed"),
+    });
+  }
+  return items;
+}
+
+function renderPalette(): void {
+  const list = $("palette-list");
+  if (!paletteResults.length) {
+    list.innerHTML = `<p class="palette-empty">nothing matches — try a file name, a source, or an action</p>`;
+    return;
+  }
+  list.innerHTML = paletteResults
+    .slice(0, 40)
+    .map(
+      (item, index) =>
+        `<div class="palette-item${index === paletteSelected ? " is-selected" : ""}" data-index="${index}">
+          <span class="palette-kind">${escapeHtml(item.kind)}</span>
+          <span class="palette-title">${escapeHtml(item.title)}</span>
+          ${item.sub ? `<span class="palette-sub">${escapeHtml(item.sub)}</span>` : ""}
+        </div>`,
+    )
+    .join("");
+  list.querySelector(".is-selected")?.scrollIntoView({ block: "nearest" });
+}
+
+function refreshPalette(): void {
+  const query = $<HTMLInputElement>("palette-input").value.trim().toLowerCase();
+  paletteResults = [...basePaletteItems(), ...paletteDocs].filter((item) =>
+    paletteMatches(query, item),
+  );
+  paletteSelected = 0;
+  renderPalette();
+}
+
+function movePalette(step: number): void {
+  if (!paletteResults.length) return;
+  paletteSelected = (paletteSelected + step + paletteResults.length) % paletteResults.length;
+  renderPalette();
+}
+
+async function runPalette(index: number): Promise<void> {
+  const item = paletteResults[index];
+  closePalette();
+  if (item) await item.run();
+}
+
+function openPalette(): void {
+  $("palette").hidden = false;
+  const input = $<HTMLInputElement>("palette-input");
+  input.value = "";
+  paletteDocs = [];
+  refreshPalette();
+  input.focus();
+}
+
+function closePalette(): void {
+  $("palette").hidden = true;
+  paletteToken += 1;
+  window.clearTimeout(paletteTimer);
+}
+
+async function searchPaletteDocs(query: string): Promise<void> {
+  const token = ++paletteToken;
+  try {
+    const response = await post<{ hits: Hit[] }>("/api/search", { query, top_k: 8 });
+    if (token !== paletteToken) return;
+    paletteDocs = (response.hits ?? []).map((hit) => ({
+      kind: "document",
+      title: hit.path.split("/").pop() ?? hit.path,
+      sub: hit.path,
+      run: () => void openLocal(hit.path),
+    }));
+  } catch {
+    if (token !== paletteToken) return;
+    paletteDocs = [];
+  }
+  if ($<HTMLInputElement>("palette-input").value.trim().toLowerCase() === query) {
+    refreshPalette();
+  }
+}
+
+$("palette-open").addEventListener("click", () => openPalette());
+
+$("palette-input").addEventListener("input", () => {
+  refreshPalette();
+  window.clearTimeout(paletteTimer);
+  const query = $<HTMLInputElement>("palette-input").value.trim().toLowerCase();
+  if (query.length < 3) {
+    paletteDocs = [];
+    return;
+  }
+  paletteTimer = window.setTimeout(() => void searchPaletteDocs(query), 220);
+});
+
+$("palette-input").addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    movePalette(1);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    movePalette(-1);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    void runPalette(paletteSelected);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    closePalette();
+  }
+});
+
+$("palette-list").addEventListener("click", (event) => {
+  const row = (event.target as HTMLElement).closest<HTMLElement>("[data-index]");
+  if (row) void runPalette(Number(row.dataset.index ?? 0));
+});
+
+$("palette").addEventListener("click", (event) => {
+  if (event.target === $("palette")) closePalette();
+});
+
+$("shortcuts").addEventListener("click", (event) => {
+  if (event.target === $("shortcuts")) $("shortcuts").hidden = true;
+});
+
+document.addEventListener("keydown", (event) => {
+  const meta = event.metaKey || event.ctrlKey;
+  const key = event.key.toLowerCase();
+  if (meta && key === "k") {
+    event.preventDefault();
+    if ($("palette").hidden) openPalette();
+    else closePalette();
+    return;
+  }
+  if (meta && key === "n") {
+    event.preventDefault();
+    newChat();
+    return;
+  }
+  if (meta && ["1", "2", "3", "4"].includes(key)) {
+    event.preventDefault();
+    activateTab(TABS[Number(key) - 1]);
+    return;
+  }
+  if (event.key === "Escape") {
+    if (!$("palette").hidden) {
+      closePalette();
+      return;
+    }
+    if (!$("shortcuts").hidden) {
+      $("shortcuts").hidden = true;
+      return;
+    }
+    if (streaming) activeAbort?.abort();
+    return;
+  }
+  const target = event.target as HTMLElement | null;
+  const typing = target ? ["INPUT", "TEXTAREA"].includes(target.tagName) : false;
+  if (event.key === "?" && !typing) {
+    event.preventDefault();
+    $("shortcuts").hidden = false;
+  }
+});
 
 void boot();
 

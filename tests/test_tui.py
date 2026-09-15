@@ -44,6 +44,15 @@ def test_chat_once_records_and_cites(tmp_path: Path):
         detail = store.chat(chat_id)
     assert [message["role"] for message in detail["messages"]] == ["user", "assistant"]
     assert any("auth.md" in line for line in out)  # the citation footer
+    # one citation shape for every writer: the GUI renders what the TUI stores
+    assert set(detail["messages"][1]["citations"][0]) >= {
+        "path",
+        "line",
+        "score",
+        "cosine",
+        "lanes",
+        "metadata",
+    }
 
 
 class _NdjsonHandler(BaseHTTPRequestHandler):

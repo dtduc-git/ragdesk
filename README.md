@@ -158,6 +158,8 @@ with — the index refuses mismatched embeddings.
 | Works | Not yet |
 |---|---|
 | Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme — **built from source** (no DMG release yet) | Packaged DMG + notarization (Apple Developer ID) when the project ships binaries |
+| Command palette (⌘K): jump to a conversation, switch tabs, search your sources and open a file — plus ⌘1-4 tabs, ? for the shortcut sheet | |
+| The catalog-drawer look: ruled ledger transcript with entry numbers, violet library ink for actions, amber for live/cited things, light + dark | |
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) | Connector auto-sync (local paths only for now) |
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Metadata: a `--- key: value ---` front-matter header is parsed, stored per document and filterable — no YAML dependency; `authority:`/`status:` tags give a small rank nudge (canonical up, draft down) | |

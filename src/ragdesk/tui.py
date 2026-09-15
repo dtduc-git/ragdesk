@@ -20,7 +20,7 @@ from typing import Any, TextIO
 
 from ragdesk.answer import REFUSAL, answer_stream, wants_diagram
 from ragdesk.embed import Embedder
-from ragdesk.search import parse_filters, retrieve
+from ragdesk.search import hit_to_dict, parse_filters, retrieve
 from ragdesk.store import Store
 
 BANNER = "ragdesk chat — /new, /history, /sources, folder:… filters, /quit to leave"
@@ -75,10 +75,7 @@ def chat_once(
         chat_id,
         "assistant",
         text,
-        [
-            {"path": hit.path, "line": hit.line, "text": hit.text, "lanes": hit.lanes}
-            for hit in hits
-        ],
+        [hit_to_dict(hit) for hit in hits],
     )
     if stream:
         out("")

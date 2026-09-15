@@ -79,7 +79,7 @@ from ragdesk.notion import whoami as notion_whoami
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable, post_stream
 from ragdesk.presets import PRESETS
 from ragdesk.rerank import get_reranker
-from ragdesk.search import Hit, parse_filters, retrieve
+from ragdesk.search import Hit, hit_to_dict, parse_filters, retrieve
 from ragdesk.store import Store, matches_any
 from ragdesk.symbols import find_symbol, parse_symbol_question, symbol_answer
 from ragdesk.topics import topic_map
@@ -138,20 +138,6 @@ MIME_TYPES = {
     ".woff2": "font/woff2",
     ".txt": "text/plain; charset=utf-8",
 }
-
-
-def hit_to_dict(hit: Hit) -> dict[str, Any]:
-    return {
-        "path": hit.path,
-        "source": hit.source,
-        "ordinal": hit.ordinal,
-        "text": hit.text,
-        "score": hit.score,
-        "cosine": hit.cosine,
-        "lanes": hit.lanes,
-        "line": hit.line,
-        "metadata": (hit.metadata or {}) if hasattr(hit, "metadata") else {},
-    }
 
 
 class AppState:

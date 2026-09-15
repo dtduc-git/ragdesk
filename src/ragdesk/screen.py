@@ -19,7 +19,7 @@ from textual.widgets import Footer, Header, Input, Static
 from ragdesk import __version__
 from ragdesk.answer import REFUSAL, answer_stream, wants_diagram
 from ragdesk.embed import Embedder
-from ragdesk.search import parse_filters, retrieve
+from ragdesk.search import hit_to_dict, parse_filters, retrieve
 from ragdesk.store import Store
 
 HELP = "/new starts a conversation · /sources shows the index · /help · /quit exits"
@@ -181,10 +181,7 @@ class ChatScreen(App):
                     self.chat_id,
                     "assistant",
                     text,
-                    [
-                        {"path": hit.path, "line": hit.line, "text": hit.text}
-                        for hit in hits
-                    ],
+                    [hit_to_dict(hit) for hit in hits],
                 )
         except Exception as exc:  # noqa: BLE001 - a failed answer must show up
             self.call_from_thread(self.write_line, f"error: {exc}", "error")

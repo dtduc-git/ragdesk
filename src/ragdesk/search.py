@@ -92,6 +92,21 @@ class Hit:
         return self.parent_text or self.text
 
 
+def hit_to_dict(hit: Hit) -> dict:
+    """The one citation shape every writer stores (GUI and terminal share a db)."""
+    return {
+        "path": hit.path,
+        "source": hit.source,
+        "ordinal": hit.ordinal,
+        "text": hit.text,
+        "score": hit.score,
+        "cosine": hit.cosine,
+        "lanes": hit.lanes,
+        "line": hit.line,
+        "metadata": hit.metadata or {},
+    }
+
+
 def recency_factor(mtime: float, *, now: float | None = None) -> float:
     """Fresh documents get a small bonus; older ones settle back to 1.0."""
     if mtime <= 0:
