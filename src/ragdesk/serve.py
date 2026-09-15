@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import sys
 import threading
 import time
 import urllib.parse
@@ -221,6 +222,7 @@ class Handler(BaseHTTPRequestHandler):
                             self.state.llm_spec or None,
                             preset=preset,
                             host=self.state.llm_host,
+                            preference=str(settings.load().get("llm_preference") or ""),
                         ),
                         "llm_setup": {
                             **llm_setup_options(
@@ -240,6 +242,16 @@ class Handler(BaseHTTPRequestHandler):
                             "last_run": settings.load()["auto_index_last"],
                         },
                         "hyde": bool(settings.load()["hyde"]),
+                        "llm_setting": {
+                            "preference": str(settings.load().get("llm_preference") or ""),
+                            "openai_host": str(settings.load().get("openai_host") or ""),
+                            "openai_model": str(settings.load().get("openai_model") or ""),
+                            "openai_key_set": bool(
+                                credentials.get("openai").get("api_key")
+                            ),
+                        },
+                        "onboarded": bool(settings.load()["onboarded"]),
+                        "system": system_info(),
                         "activity": dict(self.state.activity),
                         "memory": {
                             "models_loaded": self.state.llm is not None
@@ -461,6 +473,24 @@ class Handler(BaseHTTPRequestHandler):
             updates["auto_index_hours"] = max(0, min(hours, 168))
         if "hyde" in body:
             updates["hyde"] = bool(body["hyde"])
+        if "onboarded" in body:
+            updates["onboarded"] = bool(body["onboarded"])
+        if "llm_preference" in body:
+            preference = str(body["llm_preference"])
+            if preference not in ("", "mlx", "ollama", "openai"):
+                self._send(400, {"error": "llm_preference must be '', 'mlx', 'ollama' or 'openai'"})
+                return
+            updates["llm_preference"] = preference
+        if "openai_host" in body:
+            host = str(body["openai_host"]).strip()
+            if host and not host.startswith(("http://", "https://")):
+                self._send(400, {"error": "openai_host must start with http:// or https://"})
+                return
+            updates["openai_host"] = host.rstrip("/")
+        if "openai_model" in body:
+            updates["openai_model"] = str(body["openai_model"]).strip()
+        if "openai_api_key" in body:
+            credentials.set_provider("openai", {"api_key": str(body["openai_api_key"]).strip()})
         if "idle_unload_minutes" in body:
             try:
                 minutes = int(body["idle_unload_minutes"])
@@ -1425,6 +1455,23 @@ def make_server(
     return ThreadingHTTPServer((host, port), handler)
 
 
+def system_info() -> dict[str, Any]:
+    """Machine facts the wizard uses to suggest a preset (never leaves the box)."""
+    try:
+        ram_gb = int(
+            (os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")) / (1024**3)
+        )
+    except (ValueError, OSError, AttributeError):
+        ram_gb = 0
+    if ram_gb and ram_gb < 12:
+        suggested = "light"
+    elif ram_gb and ram_gb < 24:
+        suggested = "balanced"
+    else:
+        suggested = "quality"
+    return {"ram_gb": ram_gb, "platform": sys.platform, "suggested_preset": suggested}
+
+
 def parse_memory_list(raw: str) -> list[str]:
     """Pull the JSON array out of an LLM reply; tolerant of prose around it."""
     start, end = raw.find("["), raw.rfind("]")
@@ -1452,6 +1499,7 @@ def ensure_llm(state: AppState) -> Any:
             state.llm_spec or None,
             preset=state.preset or "light",
             host=state.llm_host,
+            preference=str(settings.load().get("llm_preference") or ""),
         )
     return state.llm
 

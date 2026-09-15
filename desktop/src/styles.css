@@ -1,3 +1,8 @@
+/* The hidden attribute always wins (class display rules would otherwise show it). */
+[hidden] {
+  display: none !important;
+}
+
 /* ragdesk — card-catalog design: pale card stock, ink, one stamp-green accent. */
 
 :root {
@@ -1244,4 +1249,131 @@ details.alt[open] summary {
   .answer.streaming::after {
     animation: none;
   }
+}
+
+
+/* --- setup wizard ----------------------------------------------------------- */
+
+.wizard {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(29 40 48 / 38%);
+}
+
+.wizard-card {
+  width: min(660px, 100%);
+  max-height: min(86vh, 780px);
+  overflow-y: auto;
+  padding: 28px 32px 24px;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--ink);
+  border-radius: 3px;
+  box-shadow: 0 22px 44px rgb(29 40 48 / 26%);
+}
+
+.wizard-steps {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.wizard-steps li {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+  border: 1px solid var(--rule);
+  border-radius: 50%;
+}
+
+.wizard-steps li.is-current {
+  color: var(--card);
+  background: var(--stamp);
+  border-color: var(--stamp);
+}
+
+.wizard-steps li.is-done {
+  color: var(--stamp);
+  border-color: var(--stamp);
+}
+
+.wizard-card h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-serif);
+  font-size: 24px;
+}
+
+.wizard-lede {
+  margin: 0 0 18px;
+  color: var(--ink-soft);
+}
+
+.wizard-hint {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.wizard-list {
+  margin: 12px 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.wizard-list code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.wizard-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.wizard-option p {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.wizard-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+
+.wizard-spacer {
+  flex: 1;
+}
+
+.backend-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.backend-picker .seg {
+  align-self: flex-start;
 }

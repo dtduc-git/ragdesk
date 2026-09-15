@@ -13,6 +13,10 @@ DEFAULTS: dict = {
     "idle_unload_minutes": 15,
     "preset": "",
     "hyde": False,
+    "llm_preference": "",
+    "openai_host": "",
+    "openai_model": "",
+    "onboarded": False,
 }
 
 

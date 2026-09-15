@@ -10,6 +10,7 @@ from ragdesk.llm import (
     LLMUnavailable,
     MlxLLM,
     OllamaLLM,
+    OpenAICompatLLM,
     llm_status,
     ollama_has_model,
     resolve_llm,
@@ -136,3 +137,120 @@ def test_llm_status_reports_none_with_hint(no_mlx, monkeypatch):
     status = llm_status("auto", preset="light")
     assert status["kind"] == "none"
     assert "ollama pull" in status["note"]
+
+
+def test_openai_backend_generate_and_stream(monkeypatch):
+    import json as json_module
+
+    calls: dict = {}
+
+    class FakeStream:
+        def __init__(self, lines):
+            self.lines = lines
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            return iter(self.lines)
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def read(self):
+            return self.payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        calls["url"] = request.full_url
+        calls["auth"] = request.headers.get("Authorization")
+        body = json_module.loads(request.data)
+        calls["body"] = body
+        if body.get("stream"):
+            return FakeStream(
+                [
+                    b'data: {"choices":[{"delta":{"content":"Hel"}}]}\n',
+                    b'data: {"choices":[{"delta":{"content":"lo"}}]}\n',
+                    b"data: [DONE]\n",
+                ]
+            )
+        return FakeResponse(
+            json_module.dumps({"choices": [{"message": {"content": "an answer"}}]}).encode()
+        )
+
+    monkeypatch.setattr("ragdesk.llm.urllib.request.urlopen", fake_urlopen)
+    llm = OpenAICompatLLM("qwen2.5-7b-instruct", "http://127.0.0.1:1234/v1", "sk-test")
+    assert llm.generate("hi", {"num_predict": 10}) == "an answer"
+    assert calls["url"] == "http://127.0.0.1:1234/v1/chat/completions"
+    assert calls["auth"] == "Bearer sk-test"
+    assert calls["body"]["max_tokens"] == 10
+    assert "".join(llm.generate_stream("hi", {})) == "Hello"
+
+
+def test_openai_unreachable_raises_llm_unavailable(monkeypatch):
+    def boom(request, timeout=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("ragdesk.llm.urllib.request.urlopen", boom)
+    backend = OpenAICompatLLM("m", "http://127.0.0.1:9/v1")
+    with pytest.raises(LLMUnavailable) as excinfo:
+        backend.generate("hi", {})
+    assert "127.0.0.1:9" in str(excinfo.value)
+
+
+def test_preference_and_openai_config(monkeypatch, tmp_path):
+    from ragdesk import credentials, settings
+
+    monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(llm_module, "ollama_has_model", lambda tag, host: True)
+    settings.save(
+        {
+            "openai_host": "http://127.0.0.1:1234/v1",
+            "openai_model": "local-model",
+            "llm_preference": "openai",
+        }
+    )
+    credentials.set_provider("openai", {"api_key": "sk-test"})
+
+    backend = resolve_llm(None, preset="light")  # preference beats the ladder order
+    assert isinstance(backend, OpenAICompatLLM)
+    assert backend.model == "local-model"
+    assert backend.api_key == "sk-test"
+
+    settings.save({"llm_preference": ""})  # auto: Ollama with the model wins again
+    assert isinstance(resolve_llm(None, preset="light"), OllamaLLM)
+
+    explicit = resolve_llm("openai:gpt-x", preset="light")
+    assert explicit.model == "gpt-x"
+
+
+def test_openai_explicit_without_config_explains(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config2"))
+    with pytest.raises(LLMUnavailable) as excinfo:
+        resolve_llm("openai:whatever", preset="light")
+    assert "Settings" in str(excinfo.value)
+
+
+def test_llm_status_reports_openai(monkeypatch, tmp_path):
+    from ragdesk import settings
+
+    monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config3"))
+    settings.save(
+        {
+            "openai_host": "http://127.0.0.1:1234/v1",
+            "openai_model": "local-model",
+            "llm_preference": "openai",
+        }
+    )
+    status = llm_status(None, preset="light")
+    assert status["kind"] == "openai"
+    assert "1234" in status["note"]

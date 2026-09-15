@@ -120,6 +120,25 @@
                 <p>Reuses your Ollama model when it is already pulled; otherwise runs MLX in-process.</p>
               </header>
               <div id="llm-setup"></div>
+              <div class="backend-picker">
+                <p class="caption">Answer engine</p>
+                <div class="seg" id="backend-seg" role="group" aria-label="Answer engine">
+                  <button class="seg-item" type="button" data-value="">Auto</button>
+                  <button class="seg-item" type="button" data-value="mlx">Local MLX</button>
+                  <button class="seg-item" type="button" data-value="ollama">Ollama</button>
+                  <button class="seg-item" type="button" data-value="openai">OpenAI-compatible</button>
+                </div>
+                <form data-form="openai-config" class="stack" id="openai-form" hidden>
+                  <input name="openai_host" placeholder="http://127.0.0.1:1234/v1" />
+                  <input name="openai_model" placeholder="model name (e.g. qwen2.5-7b-instruct)" />
+                  <input name="openai_api_key" type="password" placeholder="API key (optional for local servers)" />
+                  <button class="btn" type="submit">Save endpoint</button>
+                </form>
+                <p class="caption" id="backend-note"></p>
+              </div>
+              <div class="button-row">
+                <button class="btn btn-quiet" type="button" id="run-wizard">Run setup wizard</button>
+              </div>
             </section>
 
             <section class="setting-card">
@@ -211,6 +230,21 @@
           </div>
         </section>
       </main>
+    </div>
+
+    <div class="wizard" id="wizard" hidden>
+      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+        <ol class="wizard-steps" id="wizard-steps"></ol>
+        <h2 id="wizard-title">Welcome to ragdesk</h2>
+        <p class="wizard-lede" id="wizard-lede"></p>
+        <div class="wizard-body" id="wizard-body"></div>
+        <div class="wizard-actions">
+          <button class="btn btn-quiet" type="button" id="wizard-back">Back</button>
+          <span class="wizard-spacer"></span>
+          <button class="btn btn-quiet" type="button" id="wizard-skip">Skip setup</button>
+          <button class="btn btn-primary" type="button" id="wizard-next">Continue</button>
+        </div>
+      </div>
     </div>
 
     <div class="toast" id="toast" role="status" hidden></div>

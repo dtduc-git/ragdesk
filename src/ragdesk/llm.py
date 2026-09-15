@@ -113,6 +113,78 @@ class OllamaLLM:
                 yield piece
 
 
+class OpenAICompatLLM:
+    """Any OpenAI-compatible /chat/completions endpoint: LM Studio, llama.cpp,
+    vLLM, Ollama's own /v1 shim, or the real OpenAI."""
+
+    kind = "openai"
+
+    def __init__(self, model: str, host: str, api_key: str = "") -> None:
+        self.model = model
+        self.host = host.rstrip("/")
+        self.api_key = api_key
+
+    def _request(self, payload: dict) -> urllib.request.Request:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return urllib.request.Request(
+            f"{self.host}/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers=headers,
+        )
+
+    def generate(self, prompt: str, options: dict[str, Any]) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": float(options.get("temperature", 0.2)),
+            "max_tokens": int(options.get("num_predict", 400)),
+            "stream": False,
+        }
+        try:
+            with urllib.request.urlopen(self._request(payload), timeout=300) as response:
+                data = json.loads(response.read())
+        except (urllib.error.URLError, OSError) as exc:
+            raise LLMUnavailable(
+                f"cannot reach the OpenAI-compatible endpoint at {self.host} ({exc}); "
+                "check the host in Settings"
+            ) from exc
+        try:
+            return str(data["choices"][0]["message"]["content"] or "")
+        except (KeyError, IndexError, TypeError) as exc:
+            raise LLMUnavailable(f"unexpected reply from {self.host}: {data}") from exc
+
+    def generate_stream(self, prompt: str, options: dict[str, Any]) -> Iterator[str]:
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": float(options.get("temperature", 0.2)),
+            "max_tokens": int(options.get("num_predict", 400)),
+            "stream": True,
+        }
+        try:
+            with urllib.request.urlopen(self._request(payload), timeout=300) as response:
+                for raw in response:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    chunk = line[5:].strip()
+                    if chunk == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(chunk)
+                        piece = event["choices"][0]["delta"].get("content") or ""
+                    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                        continue
+                    if piece:
+                        yield str(piece)
+        except (urllib.error.URLError, OSError) as exc:
+            raise LLMUnavailable(
+                f"cannot reach the OpenAI-compatible endpoint at {self.host} ({exc})"
+            ) from exc
+
+
 class MlxLLM:
     """Runs an MLX model in-process; nothing else to install or keep running."""
 
@@ -179,31 +251,43 @@ class MlxLLM:
                 yield piece
 
 
-def resolve_llm(spec: str | None = None, *, preset: str = "light", host: str = "") -> Any:
+def openai_config() -> dict[str, str]:
+    """Endpoint settings the wizard or Settings tab saved (key stays in credentials)."""
+    from ragdesk import credentials, settings  # noqa: PLC0415 - avoid a cycle
+
+    values = settings.load()
+    return {
+        "host": str(values.get("openai_host") or ""),
+        "model": str(values.get("openai_model") or ""),
+        "api_key": str(credentials.get("openai").get("api_key") or ""),
+    }
+
+
+def resolve_llm(
+    spec: str | None = None,
+    *,
+    preset: str = "light",
+    host: str = "",
+    preference: str = "",
+) -> Any:
     """Pick a backend without downloading anything twice.
 
     ``auto`` ladder: a running Ollama that already has the preset model wins
-    (zero download — never re-fetch 2.5GB the user already has); otherwise MLX
-    in-process, whose weights share the Hugging Face cache with the embedder.
+    (zero download — never re-fetch 2.5GB the user already has); then a
+    configured OpenAI-compatible endpoint; otherwise MLX in-process, whose
+    weights share the Hugging Face cache with the embedder.
     """
     selected = PRESETS.get(preset, PRESETS["light"])
     tag = selected["llm"]
     repo = selected.get("llm_mlx", "")
     ollama_host = host or DEFAULT_HOST
     spec = (spec or os.environ.get("RAGDESK_LLM") or DEFAULT_SPEC).strip() or DEFAULT_SPEC
+    if not preference:
+        from ragdesk import settings  # noqa: PLC0415 - avoid a cycle
 
-    if spec == DEFAULT_SPEC:
-        if ollama_has_model(tag, ollama_host):
-            return OllamaLLM(tag, ollama_host)
-        if repo and mlx_available():
-            return MlxLLM(repo)
-        raise LLMUnavailable(
-            "no LLM backend: start Ollama and pull the model "
-            f"(ollama serve; ollama pull {tag}), or install the MLX extra on "
-            "Apple Silicon (uv tool install 'ragdesk[mlx]')"
-        )
-
+        preference = str(settings.load().get("llm_preference") or "")
     kind, _, rest = spec.partition(":")
+
     if kind == "ollama":
         return OllamaLLM(rest or tag, ollama_host)
     if kind == "mlx":
@@ -211,19 +295,55 @@ def resolve_llm(spec: str | None = None, *, preset: str = "light", host: str = "
         if not chosen:
             raise LLMUnavailable(f"no MLX model for preset {preset!r}; use mlx:<hf-repo>")
         return MlxLLM(chosen)
+    if kind == "openai":
+        config = openai_config()
+        model = rest or config["model"]
+        if not model or not config["host"]:
+            raise LLMUnavailable(
+                "no OpenAI-compatible endpoint configured: set host + model in Settings"
+            )
+        return OpenAICompatLLM(model, config["host"], config["api_key"])
+    if spec != DEFAULT_SPEC:
+        raise LLMUnavailable(
+            f"unknown llm spec: {spec!r} "
+            "(use auto, ollama[:model], mlx[:hf-repo] or openai[:model])"
+        )
+
+    # spec == auto: an explicit preference from the wizard/Settings wins first.
+    config = openai_config()
+    if preference == "openai" and config["host"] and config["model"]:
+        return OpenAICompatLLM(config["model"], config["host"], config["api_key"])
+    if preference == "mlx" and repo and mlx_available():
+        return MlxLLM(repo)
+    if preference == "ollama" and ollama_has_model(tag, ollama_host):
+        return OllamaLLM(tag, ollama_host)
+
+    if ollama_has_model(tag, ollama_host):
+        return OllamaLLM(tag, ollama_host)
+    if config["host"] and config["model"]:
+        return OpenAICompatLLM(config["model"], config["host"], config["api_key"])
+    if repo and mlx_available():
+        return MlxLLM(repo)
     raise LLMUnavailable(
-        f"unknown llm spec: {spec!r} (use auto, ollama[:model] or mlx[:hf-repo])"
+        "no LLM backend: start Ollama and pull the model "
+        f"(ollama serve; ollama pull {tag}), install the MLX extra on Apple Silicon "
+        "(uv tool install 'ragdesk[mlx]'), or point Settings at an OpenAI-compatible "
+        "endpoint (LM Studio, llama.cpp)"
     )
 
 
-def llm_status(spec: str | None = None, *, preset: str = "light", host: str = "") -> dict:
+def llm_status(
+    spec: str | None = None, *, preset: str = "light", host: str = "", preference: str = ""
+) -> dict:
     """Cheap snapshot for ``/api/status`` — never loads weights."""
     try:
-        llm = resolve_llm(spec, preset=preset, host=host)
+        llm = resolve_llm(spec, preset=preset, host=host, preference=preference)
     except LLMUnavailable as exc:
         return {"kind": "none", "model": "", "note": str(exc)}
     if llm.kind == "mlx":
         note = "in-process; weights from the Hugging Face cache"
+    elif llm.kind == "openai":
+        note = f"OpenAI-compatible endpoint at {llm.host}"
     else:
         note = f"reused running Ollama at {llm.host}"
     return {"kind": llm.kind, "model": llm.model, "note": note}

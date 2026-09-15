@@ -46,6 +46,14 @@ type Status = {
   };
   presets: Array<{ name: string; note: string; rerank: string; llm: string }>;
   llm: { kind: string; model: string; note: string };
+  llm_setting: {
+    preference: string;
+    openai_host: string;
+    openai_model: string;
+    openai_key_set: boolean;
+  };
+  onboarded: boolean;
+  system: { ram_gb: number; platform: string; suggested_preset: string };
   llm_setup: {
     ollama_model: string;
     ollama_reachable: boolean;
@@ -168,6 +176,11 @@ document.querySelectorAll<HTMLElement>(".seg").forEach((group) => {
     if (group.id === "idle-unload-seg") void saveSetting({ idle_unload_minutes: Number(value) });
     if (group.id === "hyde-seg") void saveSetting({ hyde: Number(value) === 1 });
     if (group.id === "preset-seg") void saveSetting({ preset: value });
+    if (group.id === "backend-seg") {
+      void saveSetting({ llm_preference: value });
+      const form = $<HTMLFormElement>("openai-form");
+      form.hidden = value !== "openai";
+    }
   });
 });
 
@@ -311,6 +324,7 @@ function renderActivity(status: Status): void {
 
 function renderStatus(): void {
   if (!status) return;
+  if (wizardOpen) renderWizard();
   $("stat-docs").textContent = String(status.documents);
   $("stat-chunks").textContent = String(status.chunks);
   $("rail-meta").textContent = `${status.preset} preset · ${llmLabel(status)}`;
@@ -341,6 +355,11 @@ function renderStatus(): void {
   $("memory-state").textContent = status.memory.models_loaded
     ? "in RAM — unloads after the idle stretch"
     : "released — the next question reloads them";
+  markSeg("backend-seg", status.llm_setting.preference);
+  $<HTMLFormElement>("openai-form").hidden = status.llm_setting.preference !== "openai";
+  $("backend-note").textContent = status.llm_setting.openai_host
+    ? `endpoint ${status.llm_setting.openai_host} · model ${status.llm_setting.openai_model}${status.llm_setting.openai_key_set ? " · key saved" : ""}`
+    : "Auto keeps the local model; OpenAI-compatible covers LM Studio, llama.cpp, vLLM or OpenAI itself.";
   markSeg("hyde-seg", status.hyde ? 1 : 0);
   $("hyde-note").textContent = status.hyde
     ? `on — drafts with ${status.llm.kind === "none" ? "the local model (none found yet)" : status.llm.model}; adds 2-4s per question`
@@ -1346,6 +1365,25 @@ $("source-grid").addEventListener("submit", async (event) => {
       void startDevice("github");
       return;
     }
+    if (kind === "openai-config") {
+      const host = String(payload.openai_host ?? "");
+      const model = String(payload.openai_model ?? "");
+      const key = String(payload.openai_api_key ?? "");
+      if (!host || !model) {
+        setResult("openai", "host and model are required");
+        return;
+      }
+      await post("/api/settings", {
+        openai_host: host,
+        openai_model: model,
+        llm_preference: "openai",
+        ...(key ? { openai_api_key: key } : {}),
+      });
+      (form as HTMLFormElement).reset();
+      toast("OpenAI-compatible endpoint saved");
+      await loadStatus();
+      return;
+    }
     if (kind === "msgraph-client-id") {
       if (!payload.client_id) {
         setResult("msgraph", "paste the Azure client ID first");
@@ -1620,6 +1658,230 @@ $("memory-extract").addEventListener("click", async () => {
   }
 });
 
+// --- setup wizard -------------------------------------------------------------
+
+type WizardStep = {
+  title: string;
+  lede: string;
+  render: () => string;
+  bind?: () => void;
+  nextLabel?: string;
+};
+
+let wizardStep = 0;
+let wizardOpen = false;
+
+function wizardOpenForm(open: boolean): void {
+  wizardOpen = open;
+  $("wizard").hidden = !open;
+  if (open) renderWizard();
+}
+
+function renderWizard(): void {
+  if (!status) return;
+  const steps = wizardSteps();
+  const step = steps[Math.min(wizardStep, steps.length - 1)];
+  $("wizard-title").textContent = step.title;
+  $("wizard-lede").textContent = step.lede;
+  $("wizard-body").innerHTML = step.render();
+  $("wizard-steps").innerHTML = steps
+    .map(
+      (_entry, index) =>
+        `<li class="${index === wizardStep ? "is-current" : index < wizardStep ? "is-done" : ""}">${index + 1}</li>`,
+    )
+    .join("");
+  $("wizard-back").hidden = wizardStep === 0;
+  $<HTMLButtonElement>("wizard-next").textContent =
+    step.nextLabel ?? (wizardStep === steps.length - 1 ? "Finish" : "Continue");
+  step.bind?.();
+}
+
+function wizardFolders(): string {
+  const list = selectedPaths.length
+    ? selectedPaths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("")
+    : `<li class="muted">No folders chosen yet — you can add them later in Sources.</li>`;
+  return `
+    <p class="wizard-hint">Pick the folders ragdesk should keep indexed. Everything is read-only.</p>
+    <div class="button-row">
+      <button class="btn" type="button" id="wizard-pick-folder">Choose folder…</button>
+      <button class="btn btn-quiet" type="button" id="wizard-pick-files">Choose files…</button>
+    </div>
+    <ul class="wizard-list">${list}</ul>`;
+}
+
+function wizardModel(): string {
+  const options = status?.llm_setup;
+  const rows: string[] = [];
+  if (options?.mlx_available && options.mlx_repo) {
+    rows.push(
+      `<div class="wizard-option">
+        <div><strong>Local model (MLX)</strong><p>Runs in-process on Apple Silicon. ${options.mlx_cached ? "Already downloaded." : "One-time download."}</p></div>
+        <button class="btn ${options.mlx_cached ? "" : "btn-primary"}" type="button" data-action="llm-setup-mlx">${options.mlx_cached ? "Ready" : "Download"}</button>
+      </div>`,
+    );
+  }
+  if (options?.ollama_reachable) {
+    rows.push(
+      `<div class="wizard-option">
+        <div><strong>Ollama</strong><p>${options.ollama_has_model ? `${escapeHtml(options.ollama_model)} is already pulled.` : `Pull ${escapeHtml(options.ollama_model)} through your Ollama.`}</p></div>
+        <button class="btn ${options.ollama_has_model ? "" : "btn-primary"}" type="button" data-action="llm-setup-ollama">${options.ollama_has_model ? "Ready" : "Pull model"}</button>
+      </div>`,
+    );
+  }
+  rows.push(
+    `<div class="wizard-option">
+      <div><strong>OpenAI-compatible endpoint</strong><p>LM Studio, llama.cpp, vLLM or OpenAI. Configure it in Settings when you need it.</p></div>
+      <button class="btn btn-quiet" type="button" id="wizard-openai">Set up later</button>
+    </div>`,
+  );
+  const job = status?.llm_setup.job;
+  const running = job?.running
+    ? `<div class="progress"><div class="progress-bar" style="width:${Math.round((job.progress ?? 0) * 100)}%"></div></div>
+       <p class="caption">${escapeHtml(job.detail || "working…")} · ${Math.round((job.progress ?? 0) * 100)}%</p>`
+    : "";
+  return `
+    <p class="wizard-hint">Chat needs a model. Indexing and search already work without one.</p>
+    ${rows.join("")}
+    ${running}
+    <p class="caption" id="wizard-model-state">active: ${escapeHtml(llmLabel(status as Status))}</p>`;
+}
+
+function wizardPreset(): string {
+  const suggested = status?.system.suggested_preset ?? "light";
+  return `
+    <p class="wizard-hint">This machine has ${status?.system.ram_gb || "?"} GB of RAM — <strong>${suggested}</strong> fits it best.</p>
+    <div class="seg" id="wizard-preset-seg" role="group" aria-label="Machine preset">
+      <button class="seg-item ${suggested === "light" ? "is-active" : ""}" type="button" data-value="light">Light</button>
+      <button class="seg-item ${suggested === "balanced" ? "is-active" : ""}" type="button" data-value="balanced">Balanced</button>
+      <button class="seg-item ${suggested === "quality" ? "is-active" : ""}" type="button" data-value="quality">Quality</button>
+    </div>
+    <p class="caption" id="wizard-preset-note">${escapeHtml(
+      (status?.presets ?? []).find((entry) => entry.name === suggested)?.note ?? "",
+    )}</p>`;
+}
+
+function wizardIndex(): string {
+  return `
+    <p class="wizard-hint">Ready. Index now and the first answers are a minute or two away.</p>
+    <ul class="wizard-list">
+      <li>${selectedPaths.length} folder${selectedPaths.length === 1 ? "" : "s"} chosen</li>
+      <li>preset <strong>${escapeHtml(status?.preset ?? "light")}</strong> · engine <strong>${escapeHtml(llmLabel(status as Status))}</strong></li>
+    </ul>
+    <div class="button-row">
+      <button class="btn btn-primary" type="button" id="wizard-index">Index now</button>
+      <button class="btn btn-quiet" type="button" id="wizard-finish">Finish</button>
+    </div>
+    <p class="caption" id="wizard-index-state"></p>`;
+}
+
+function wizardSteps(): WizardStep[] {
+  return [
+    {
+      title: "Welcome to ragdesk",
+      lede: "Your own knowledge base, running entirely on this machine.",
+      render: () => `
+        <ul class="wizard-list">
+          <li>Index folders, PDFs, Office files, screenshots and code.</li>
+          <li>Ask questions, get answers with citations — nothing leaves this machine.</li>
+          <li>Works offline once your model is downloaded.</li>
+        </ul>`,
+      nextLabel: "Get started",
+    },
+    {
+      title: "Choose what to index",
+      lede: "Folders are read-only and can be changed any time.",
+      render: wizardFolders,
+      bind: () => {
+        $("wizard-pick-folder").addEventListener("click", () => void pickPaths("folder"));
+        $("wizard-pick-files").addEventListener("click", () => void pickPaths("files"));
+      },
+    },
+    {
+      title: "Pick an answer engine",
+      lede: "ragdesk reuses what you already have, or downloads a model for you.",
+      render: wizardModel,
+      bind: () => {
+        $("wizard-openai").addEventListener("click", () => {
+          wizardOpenForm(false);
+          activateTab("settings");
+          markSeg("backend-seg", "openai");
+          $<HTMLFormElement>("openai-form").hidden = false;
+          $("openai-form").scrollIntoView({ block: "center" });
+        });
+      },
+    },
+    {
+      title: "Size it to this machine",
+      lede: "Bigger presets use a larger model and a reranker. Nothing is re-indexed.",
+      render: wizardPreset,
+      bind: () => {
+        document.querySelectorAll<HTMLElement>("#wizard-preset-seg .seg-item").forEach((item) => {
+          item.addEventListener("click", () => {
+            markSeg("wizard-preset-seg", item.dataset.value ?? "");
+            void saveSetting({ preset: item.dataset.value ?? "light" });
+          });
+        });
+      },
+    },
+    {
+      title: "Index and go",
+      lede: "You can re-run this wizard from Settings whenever you like.",
+      render: wizardIndex,
+      bind: () => {
+        $("wizard-finish").addEventListener("click", () => void finishWizard());
+        $("wizard-index").addEventListener("click", async () => {
+          if (selectedPaths.length === 0) {
+            $("wizard-index-state").textContent = "No folders chosen — add them in Sources.";
+            return;
+          }
+          $("wizard-index-state").textContent = "Indexing…";
+          try {
+            await post("/api/index", { paths: selectedPaths });
+            selectedPaths = [];
+            renderSources();
+            await loadStatus();
+            $("wizard-index-state").textContent = "Indexed. Ask something in Chat.";
+          } catch (error) {
+            $("wizard-index-state").textContent =
+              error instanceof Error ? error.message : String(error);
+          }
+        });
+      },
+      nextLabel: "Finish",
+    },
+  ];
+}
+
+async function finishWizard(): Promise<void> {
+  wizardOpenForm(false);
+  try {
+    await post("/api/settings", { onboarded: true });
+    await loadStatus();
+    await loadChats();
+  } catch {
+    /* onboarding is a nicety; never block the app on it */
+  }
+}
+
+$("run-wizard").addEventListener("click", () => {
+  wizardStep = 0;
+  wizardOpenForm(true);
+});
+$("wizard-skip").addEventListener("click", () => void finishWizard());
+$("wizard-back").addEventListener("click", () => {
+  wizardStep = Math.max(0, wizardStep - 1);
+  renderWizard();
+});
+$<HTMLButtonElement>("wizard-next").addEventListener("click", async () => {
+  const steps = wizardSteps();
+  if (wizardStep >= steps.length - 1) {
+    await finishWizard();
+    return;
+  }
+  wizardStep += 1;
+  renderWizard();
+});
+
 // --- boot ---------------------------------------------------------------------
 
 async function boot(): Promise<void> {
@@ -1636,6 +1898,10 @@ async function boot(): Promise<void> {
     renderStatus();
     await loadConnections();
     void loadMemories();
+    if (!status.onboarded) {
+      wizardStep = 0;
+      wizardOpenForm(true);
+    }
   } else {
     $("rail-meta").textContent = "server offline — start it with: ragdesk serve";
   }
