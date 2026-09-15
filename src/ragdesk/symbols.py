@@ -68,6 +68,36 @@ def _snippet(line: str) -> str:
     return flat[: MAX_TEXT - 1] + "…" if len(flat) > MAX_TEXT else flat
 
 
+def _true_line(
+    path: str, estimate: int, snippet: str, cache: dict[str, list[str]]
+) -> int:
+    """Map the chunk-relative estimate onto the real file line (local docs only).
+
+    The chunk text rejoins paragraphs, so the estimate can be a few lines low in
+    files with runs of blank lines; the file itself is the source of truth.
+    """
+    lines = cache.get(path)
+    if lines is None:
+        try:
+            lines = Path(path).read_text(errors="replace").split("\n")
+        except OSError:
+            lines = []
+        cache[path] = lines
+    if not lines:
+        return estimate
+    target = snippet.rstrip("…")
+    index = estimate - 1
+    window = 40
+    candidates = sorted(
+        range(max(0, index - window), min(len(lines), index + window)),
+        key=lambda position: abs(position - index),
+    )
+    for position in candidates:
+        if " ".join(lines[position].split()).startswith(target):
+            return position + 1
+    return estimate
+
+
 def find_symbol(store: Store, name: str, limit: int = MAX_SITES) -> dict:
     """Definitions, call sites and mentioning files for ``name`` in code files."""
     result: dict = {
@@ -82,6 +112,7 @@ def find_symbol(store: Store, name: str, limit: int = MAX_SITES) -> dict:
     call_re = re.compile(rf"\b{re.escape(name)}\s*\(")
     seen: set[tuple[str, int]] = set()
     mention_files: dict[str, int] = {}
+    file_lines: dict[str, list[str]] = {}
 
     rows = store.conn.execute(
         "SELECT c.id, c.doc_id, c.ordinal, c.text, c.line_start, d.path, d.source "
@@ -93,6 +124,7 @@ def find_symbol(store: Store, name: str, limit: int = MAX_SITES) -> dict:
             continue
         result["scanned"] += 1
         text = str(row["text"])
+        source = str(row["source"])
         for offset, line in enumerate(text.split("\n")):
             if name not in line:
                 continue
@@ -107,6 +139,11 @@ def find_symbol(store: Store, name: str, limit: int = MAX_SITES) -> dict:
             else:
                 mention_files[path] = mention_files.get(path, 0) + 1
                 continue
+            snippet = _snippet(line)
+            if source == "local":
+                line_number = _true_line(path, line_number, snippet, file_lines)
+            if (path, line_number) in seen:
+                continue
             seen.add((path, line_number))
             if len(result[kind]) >= limit:
                 continue
@@ -114,12 +151,12 @@ def find_symbol(store: Store, name: str, limit: int = MAX_SITES) -> dict:
                 {
                     "path": path,
                     "line": line_number,
-                    "text": _snippet(line),
+                    "text": snippet,
                     "hit": Hit(
                         chunk_id=int(row["id"]),
                         doc_id=int(row["doc_id"]),
                         path=path,
-                        source=str(row["source"]),
+                        source=source,
                         ordinal=int(row["ordinal"]),
                         text=text,
                         score=1.0,
