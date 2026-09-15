@@ -3,11 +3,18 @@
 ``chat_once`` does one exchange (retrieve → stream → record) and is unit
 testable; ``run_chat`` is the REPL around it. Conversations live in the same
 SQLite file as the desktop app, so history is shared between both.
+
+With ``--server URL`` the REPL talks to a *running* ragdesk server instead of
+opening the database itself: the models are already loaded there, so a second
+process costs no extra RAM and both front-ends share one index.
 """
 
 from __future__ import annotations
 
+import json
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from typing import Any, TextIO
 
@@ -21,6 +28,7 @@ HELP = (
     "/new starts a conversation · /history lists them · "
     "/sources shows the per-source counts · /quit exits"
 )
+REMOTE_BANNER = "ragdesk chat (attached) — /new, /quit to leave"
 
 
 def chat_once(
@@ -132,4 +140,93 @@ def run_chat(
             stream=tty,
             style=style,
         )
+    return 0
+
+
+def ask_remote(
+    base_url: str,
+    question: str,
+    *,
+    chat_id: int = 0,
+    out: Callable[[str], None] = print,
+    stream: bool = True,
+    timeout: float = 600.0,
+) -> tuple[int, str, list]:
+    """One exchange against a running server; returns (chat_id, text, hits)."""
+    payload = json.dumps({"query": question, "chat_id": chat_id}).encode()
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/api/ask/stream",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    text = ""
+    hits: list = []
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            for raw in response:
+                line = raw.decode().strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("error"):
+                    raise RuntimeError(str(event["error"]))
+                if event.get("delta"):
+                    text += str(event["delta"])
+                    if stream:
+                        sys.stdout.write(str(event["delta"]))
+                        sys.stdout.flush()
+                if event.get("done"):
+                    chat_id = int(event.get("chat_id") or chat_id)
+                    hits = list(event.get("hits") or [])
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"cannot reach the server at {base_url}: {exc}") from exc
+    if not stream:
+        out(text)
+    return chat_id, text, hits
+
+
+def run_remote_chat(
+    base_url: str,
+    *,
+    chat_id: int = 0,
+    input_stream: TextIO | None = None,
+    out: Callable[[str], None] = print,
+    interactive: bool | None = None,
+) -> int:
+    """REPL that talks to a running server instead of opening the database."""
+    source = input_stream or sys.stdin
+    tty = source.isatty() if interactive is None else interactive
+    style = {"cite": "\033[2m", "reset": "\033[0m"} if tty else {}
+    if tty:
+        out(REMOTE_BANNER)
+    for raw in source:
+        question = raw.strip()
+        if not question:
+            continue
+        if question in ("/quit", "/exit"):
+            break
+        if question == "/help":
+            out(HELP)
+            continue
+        if question == "/new":
+            chat_id = 0
+            out("new conversation")
+            continue
+        try:
+            chat_id, text, hits = ask_remote(
+                base_url, question, chat_id=chat_id, out=out, stream=tty
+            )
+        except (RuntimeError, urllib.error.URLError) as exc:
+            out(f"error: {exc}")
+            continue
+        if tty:
+            out("")
+        for rank, hit in enumerate(hits, start=1):
+            where = hit.get("path", "")
+            if hit.get("line") and int(hit["line"]) > 1:
+                where = f"{where}:{hit['line']}"
+            out(style.get("cite", "") + f"  [{rank}] {where}" + style.get("reset", ""))
     return 0

@@ -58,6 +58,12 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   child's output goes to `~/.ragdesk/serve.log`; env overrides: `RAGDESK_BIN`,
   `RAGDESK_DB`, `RAGDESK_LLM_MODEL`, `RAGDESK_PROJECT`. Browser mode:
   `ragdesk serve --ui desktop/dist`.
+- Terminal surfaces (`tui.py`, `screen.py`): `ragdesk chat` is the line REPL
+  (streaming + citations, history shared with the GUI); `ragdesk chat --server
+  URL` attaches to a running server over its local API — no db, no embedder,
+  no model load, the server owns all three; `ragdesk tui` is the full-screen
+  Textual app behind the optional `tui` extra (`uv run --extra tui pytest
+  tests/test_screen.py`; the test skips itself without the extra).
 - Auto-index: `serve` runs a 60s timer; when `auto_index_hours` (Settings tab,
   default 1, 0 = off) has elapsed since `auto_index_last`, it re-indexes the
   recorded local roots via `run_auto_index` (connectors stay manual until

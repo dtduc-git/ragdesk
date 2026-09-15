@@ -122,6 +122,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_chat = sub.add_parser("chat", help="terminal chat over the same index (TUI)")
     p_chat.add_argument("--chat-id", type=int, default=0, help="resume a conversation")
     p_chat.add_argument("--top-k", type=int, default=6)
+    p_chat.add_argument(
+        "--server",
+        default="",
+        help="attach to a running server (e.g. http://127.0.0.1:8765) instead of opening the db",
+    )
 
     p_eval = sub.add_parser("eval", help="retrieval eval on a golden set")
     p_eval.add_argument("--golden", required=True, type=Path)
@@ -230,6 +235,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_email.add_argument("--folder", default=DEFAULT_FOLDER)
     p_email.add_argument("--limit", type=int, default=DEFAULT_LIMIT, help="newest N messages")
     p_email.add_argument("--json", action="store_true", help="machine-readable output")
+
+    sub.add_parser("tui", help="full-screen terminal chat (needs the 'tui' extra)")
 
     p_completions = sub.add_parser(
         "completions", help="print a shell completion script (bash/zsh/fish)"
@@ -345,6 +352,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "man":
         print(man_page(parser), end="")
         return 0
+    if args.command == "chat" and args.server:
+        # Attach mode: no db, no embedder, no model — the server owns all three.
+        from ragdesk.tui import run_remote_chat
+
+        return run_remote_chat(args.server, chat_id=args.chat_id)
+    if args.command == "tui":
+        # The full-screen app draws its own status; keep startup errors terse.
+        try:
+            import textual  # noqa: F401, PLC0415 - optional extra probe
+        except ImportError:
+            print(
+                "error: the full-screen TUI needs the 'tui' extra:\n"
+                "  uv tool install --reinstall 'ragdesk[tui]'  (or pip install 'ragdesk[tui]')",
+                file=sys.stderr,
+            )
+            return 2
     try:
         # The saved preset wins over the built-in default; an explicit flag wins over both.
         saved_preset = app_settings.load().get("preset") or DEFAULT_PRESET
@@ -362,6 +385,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "mcp":
         return McpServer(db=args.db, embedder=embedder, reranker=reranker).serve()
+
+    if args.command == "tui":
+        from ragdesk.screen import run_screen
+
+        try:
+            tui_llm = resolve_llm(None, preset=settings["preset"])
+        except (LLMUnavailable, OllamaUnavailable) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        return run_screen(
+            db=args.db, embedder=embedder, llm=tui_llm, reranker=reranker
+        )
 
     if args.command == "serve":
         state = AppState(

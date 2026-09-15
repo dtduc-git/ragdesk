@@ -48,6 +48,9 @@ mlx = [
 vision = [
     "pyobjc-framework-Vision>=10.0; sys_platform == 'darwin'",
 ]
+tui = [
+    "textual>=0.80",
+]
 
 [build-system]
 requires = ["hatchling"]

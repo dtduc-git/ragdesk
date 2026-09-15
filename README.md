@@ -70,10 +70,14 @@ ragdesk stats
 ragdesk chat                    # REPL: streaming answers + citations
 ragdesk chat --chat-id 12       # resume a conversation (shared with the GUI)
 echo "what is RRF fusion?" | ragdesk chat   # script-friendly one-shot
+ragdesk chat --server http://127.0.0.1:8765  # attach to the running app
+ragdesk tui                     # full-screen (needs: pip install 'ragdesk[tui]')
 ```
 
 `/new`, `/history`, `/sources` and the `folder:` / `key:value` filters work in
-the REPL; answers stream, citations print as `path:line`.
+the REPL; answers stream, citations print as `path:line`. Attach mode talks to
+a running server over its local API, so a second process costs no extra RAM
+and both front-ends share one index and one set of loaded models.
 
 ## Use ragdesk from Claude Code, Claude Desktop or Codex (MCP)
 
