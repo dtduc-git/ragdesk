@@ -459,3 +459,35 @@ def test_answer_length_setting_shapes_the_prompt(tmp_path: Path, monkeypatch):
     settings.save({"answer_length": "long"})
     assert answer_module.answer_options()["num_predict"] == 700
     assert "Answer thoroughly" in answer_module.length_hint()
+
+
+def test_cli_json_output(tmp_path: Path, capsys, monkeypatch):
+    import json as json_module
+
+    from ragdesk import cli
+
+    # never let the repo's .env leak into os.environ for later tests
+    monkeypatch.setattr("ragdesk.cli.load_env_file", lambda: None)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "note.md").write_text("rrf fusion combines ranked lanes")
+    db = tmp_path / "cli.db"
+
+    def run(*argv: str) -> dict:
+        assert cli.main(["--db", str(db), "--embedder", "hash:128", *argv]) == 0
+        return json_module.loads(capsys.readouterr().out)
+
+    indexed = run("index", str(docs), "--json")
+    assert indexed["indexed"] == 1 and indexed["chunks"] >= 1
+
+    hits = run("search", "rrf fusion", "--json")
+    assert hits["hits"] and hits["hits"][0]["path"].endswith("note.md")
+    assert "lanes" in hits["hits"][0]
+
+    stats = run("stats", "--json")
+    assert stats["documents"] == 1 and stats["sources"]
+
+    # human mode still prints the readable line
+    cli.main(["--db", str(db), "--embedder", "hash:128", "index", str(docs)])
+    assert "unchanged=1" in capsys.readouterr().out

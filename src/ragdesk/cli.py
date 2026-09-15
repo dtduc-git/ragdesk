@@ -13,7 +13,7 @@ from typing import Any
 
 from ragdesk import __version__
 from ragdesk import settings as app_settings
-from ragdesk.answer import answer, answer_stream
+from ragdesk.answer import REFUSAL, answer, answer_stream
 from ragdesk.confluence import ConfluenceError, sync_confluence
 from ragdesk.embed import get_embedder
 from ragdesk.envfile import load_env_file
@@ -48,6 +48,11 @@ from ragdesk.web import WebError, crawl_site
 DEFAULT_DB = str(Path.home() / ".ragdesk" / "index.db")
 
 
+def emit_json(payload: dict) -> None:
+    """Stable, script-friendly output for `--json` commands."""
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ragdesk",
@@ -75,10 +80,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_index = sub.add_parser("index", help="index local files/directories")
     p_index.add_argument("paths", nargs="+", type=Path)
+    p_index.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_search = sub.add_parser("search", help="hybrid retrieval (no LLM)")
     p_search.add_argument("query")
     p_search.add_argument("--top-k", type=int, default=8)
+    p_search.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_ask = sub.add_parser("ask", help="cited answer via a local LLM")
     p_ask.add_argument("query")
@@ -98,6 +105,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_ask.add_argument("--top-k", type=int, default=6)
     p_ask.add_argument("--stream", action="store_true", help="print tokens as they arrive")
     p_ask.add_argument("--llm-host", default=DEFAULT_HOST, help="Ollama host override")
+    p_ask.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_chat = sub.add_parser("chat", help="terminal chat over the same index (TUI)")
     p_chat.add_argument("--chat-id", type=int, default=0, help="resume a conversation")
@@ -126,7 +134,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also answer each query with the local LLM and score grounding",
     )
 
-    sub.add_parser("stats", help="index statistics")
+    p_stats = sub.add_parser("stats", help="index statistics")
+    p_stats.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_gh = sub.add_parser("github", help="index a GitHub repository (read-only tarball sync)")
     p_gh.add_argument("repo", help="owner/name")
@@ -135,6 +144,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gh.add_argument(
         "--token", default=None, help="GitHub token (default: GITHUB_TOKEN env or gh auth token)"
     )
+    p_gh.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_cf = sub.add_parser("confluence", help="index a Confluence space (read-only)")
     p_cf.add_argument("space", help="space key, e.g. DOCS")
@@ -144,6 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cf.add_argument(
         "--api-path", default="/wiki/rest/api/content/search", help="REST path (Server/DC differs)"
     )
+    p_cf.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_gd = sub.add_parser("gdrive", help="index Google Drive (read-only, BYO OAuth client)")
     p_gd.add_argument("--folder-id", default="", help="index one folder (default: all files)")
@@ -152,6 +163,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gd.add_argument(
         "--no-browser", action="store_true", help="do not run the interactive OAuth flow"
     )
+    p_gd.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_gl = sub.add_parser("gitlab", help="index a GitLab repository (read-only archive sync)")
     p_gl.add_argument("project", help="group/name")
@@ -161,11 +173,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--token", default=None, help="default: GITLAB_TOKEN env or saved connection"
     )
     p_gl.add_argument("--base-url", default="https://gitlab.com", help="self-hosted GitLab URL")
+    p_gl.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_ms = sub.add_parser("msgraph", help="index OneDrive/SharePoint files (read-only)")
     p_ms.add_argument("--folder-id", default="", help="OneDrive folder id (default: all files)")
     p_ms.add_argument("--site", default="", help="SharePoint site as hostname:/sites/name")
     p_ms.add_argument("--client-id", default=None, help="Azure application (client) id")
+    p_ms.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_notion = sub.add_parser(
         "notion", help="index Notion pages shared with an integration (read-only)"
@@ -173,11 +187,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_notion.add_argument(
         "--token", default=None, help="default: NOTION_TOKEN env or saved connection"
     )
+    p_notion.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_web = sub.add_parser("web", help="crawl a docs site and index it (read-only)")
     p_web.add_argument("url", help="start URL, e.g. https://docs.example.com/")
     p_web.add_argument("--max-pages", type=int, default=50)
     p_web.add_argument("--depth", type=int, default=2)
+    p_web.add_argument("--json", action="store_true", help="machine-readable output")
 
     sub.add_parser("mcp", help="run the MCP server over stdio (for Claude Code / Cursor)")
 
@@ -197,6 +213,47 @@ def _build_parser() -> argparse.ArgumentParser:
         help="exit when the parent process dies (the desktop app passes this)",
     )
     return parser
+
+
+def emit_stats(stats, as_json: bool, **extra) -> None:
+    """One shape for every indexing command, human or machine."""
+    payload = {
+        "scanned": stats.files_scanned,
+        "indexed": stats.indexed,
+        "unchanged": stats.unchanged,
+        "skipped": stats.skipped,
+        "chunks": stats.chunks,
+        **extra,
+    }
+    if as_json:
+        emit_json(payload)
+        return
+    print(
+        f"scanned={stats.files_scanned} indexed={stats.indexed} "
+        f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
+    )
+
+
+def emit_hits(hits, as_json: bool) -> None:
+    if not as_json:
+        _print_hits(hits)
+        return
+    emit_json(
+        {
+            "hits": [
+                {
+                    "path": hit.path,
+                    "line": hit.line,
+                    "ordinal": hit.ordinal,
+                    "score": round(hit.score, 4),
+                    "cosine": round(hit.cosine, 3),
+                    "lanes": hit.lanes,
+                    "text": hit.text,
+                }
+                for hit in hits
+            ]
+        }
+    )
 
 
 def _print_hits(hits) -> None:
@@ -310,6 +367,16 @@ def main(argv: list[str] | None = None) -> int:
             stats = store.stats()
             embedder_name = store.get_meta("embedder.name")
             embedder_dim = store.get_meta("embedder.dim")
+            if getattr(args, "json", False):
+                emit_json(
+                    {
+                        "documents": stats["documents"],
+                        "chunks": stats["chunks"],
+                        "embedder": {"name": embedder_name, "dim": embedder_dim},
+                        "sources": store.sources(),
+                    }
+                )
+                return 0
             print(f"documents: {stats['documents']}")
             print(f"chunks   : {stats['chunks']}")
             print(f"embedder : {embedder_name} (dim {embedder_dim})")
@@ -317,10 +384,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "index":
             stats = index_paths(store, embedder, args.paths)
-            print(
-                f"scanned={stats.files_scanned} indexed={stats.indexed} "
-                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
-            )
+            emit_stats(stats, getattr(args, 'json', False))
             return 0
 
         if args.command == "github":
@@ -356,10 +420,7 @@ def main(argv: list[str] | None = None) -> int:
             except ConfluenceError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            print(
-                f"scanned={stats.files_scanned} indexed={stats.indexed} "
-                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
-            )
+            emit_stats(stats, getattr(args, 'json', False))
             return 0
 
         if args.command == "gdrive":
@@ -375,10 +436,7 @@ def main(argv: list[str] | None = None) -> int:
             except GdriveError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            print(
-                f"scanned={stats.files_scanned} indexed={stats.indexed} "
-                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
-            )
+            emit_stats(stats, getattr(args, 'json', False))
             return 0
 
         if args.command == "gitlab":
@@ -395,10 +453,7 @@ def main(argv: list[str] | None = None) -> int:
             except GitLabError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            print(
-                f"scanned={stats.files_scanned} indexed={stats.indexed} "
-                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
-            )
+            emit_stats(stats, getattr(args, 'json', False))
             return 0
 
         if args.command == "msgraph":
@@ -430,10 +485,7 @@ def main(argv: list[str] | None = None) -> int:
             except MsGraphError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            print(
-                f"scanned={stats.files_scanned} indexed={stats.indexed} "
-                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
-            )
+            emit_stats(stats, getattr(args, 'json', False))
             return 0
 
         if args.command == "notion":
@@ -442,10 +494,7 @@ def main(argv: list[str] | None = None) -> int:
             except NotionError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            print(
-                f"scanned={stats.files_scanned} indexed={stats.indexed} "
-                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
-            )
+            emit_stats(stats, getattr(args, 'json', False))
             return 0
 
         if args.command == "web":
@@ -460,10 +509,7 @@ def main(argv: list[str] | None = None) -> int:
             except WebError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            print(
-                f"scanned={stats.files_scanned} indexed={stats.indexed} "
-                f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
-            )
+            emit_stats(stats, getattr(args, 'json', False))
             return 0
 
         if args.command == "search":
@@ -476,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
                 reranker=reranker,
                 filters=filters,
             )
-            _print_hits(hits)
+            emit_hits(hits, getattr(args, "json", False))
             return 0
 
         if args.command == "ask":
@@ -493,6 +539,19 @@ def main(argv: list[str] | None = None) -> int:
             spec = args.llm or (f"ollama:{args.model}" if args.model else None)
             try:
                 llm = resolve_llm(spec, preset=settings["preset"], host=args.llm_host)
+                if getattr(args, "json", False):
+                    text = answer(args.query, hits, llm, min_cosine=args.min_cosine)
+                    emit_json(
+                        {
+                            "answer": text,
+                            "refused": text == REFUSAL,
+                            "hits": [
+                                {"path": hit.path, "line": hit.line, "lanes": hit.lanes}
+                                for hit in hits
+                            ],
+                        }
+                    )
+                    return 0
                 if args.stream:
                     for piece in answer_stream(
                         args.query,
