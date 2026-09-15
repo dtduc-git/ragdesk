@@ -302,6 +302,17 @@ function startSetupPolling(): void {
 
 let activityPoll: number | undefined;
 
+function startActivityPolling(): void {
+  if (activityPoll) return;
+  activityPoll = window.setInterval(async () => {
+    await loadStatus();
+    if (!status?.activity.running) {
+      window.clearInterval(activityPoll);
+      activityPoll = undefined;
+    }
+  }, 2000);
+}
+
 function renderActivity(status: Status): void {
   const line = $("rail-activity");
   const activity = status.activity;
@@ -322,9 +333,7 @@ function renderActivity(status: Status): void {
   } else if (cardKind === "index") {
     setResult("local", `indexing — ${activity.detail} · ${elapsed}s`);
   }
-  if (!activityPoll) {
-    activityPoll = window.setInterval(() => void loadStatus(), 1500);
-  }
+  startActivityPolling();
 }
 
 function renderStatus(): void {
@@ -953,6 +962,7 @@ async function pickPaths(kind: "folder" | "files"): Promise<void> {
       if (!selectedPaths.includes(path)) selectedPaths.push(path);
     }
     renderSources();
+    if (wizardOpen) renderWizard();
   } catch {
     toast("Folder picking works in the desktop app; paste a path instead.");
   }
@@ -1481,6 +1491,12 @@ $("source-grid").addEventListener("submit", async (event) => {
 
 document.addEventListener("click", async (event) => {
   const element = event.target as HTMLElement;
+  const use = element.closest<HTMLElement>("[data-use]");
+  if (use) {
+    await saveSetting({ llm_preference: use.dataset.use ?? "" });
+    toast(`Answer engine: ${use.dataset.use}`);
+    return;
+  }
   const related = element.closest<HTMLElement>("[data-related]");
   const backlinks = element.closest<HTMLElement>("[data-backlinks]");
   if (related || backlinks) {
@@ -1965,19 +1981,30 @@ function wizardFolders(): string {
 function wizardModel(): string {
   const options = status?.llm_setup;
   const rows: string[] = [];
-  if (options?.mlx_available && options.mlx_repo) {
+  const activeKind = status?.llm.kind ?? "none";
+  const mlxAction = options?.mlx_cached
+    ? activeKind === "mlx"
+      ? `<span class="meta-chip">active</span>`
+      : `<button class="btn" type="button" data-use="mlx">Use MLX</button>`
+    : `<button class="btn btn-primary" type="button" data-action="llm-setup-mlx">Download</button>`;
+  if (options?.mlx_available && options?.mlx_repo) {
     rows.push(
       `<div class="wizard-option">
-        <div><strong>Local model (MLX)</strong><p>Runs in-process on Apple Silicon. ${options.mlx_cached ? "Already downloaded." : "One-time download."}</p></div>
-        <button class="btn ${options.mlx_cached ? "" : "btn-primary"}" type="button" data-action="llm-setup-mlx">${options.mlx_cached ? "Ready" : "Download"}</button>
+        <div><strong>Local model (MLX)</strong><p>${options?.mlx_cached ? "Runs in-process on Apple Silicon — already downloaded." : "Runs in-process on Apple Silicon. One-time download."}</p></div>
+        ${mlxAction}
       </div>`,
     );
   }
   if (options?.ollama_reachable) {
+    const ollamaAction = options?.ollama_has_model
+      ? activeKind === "ollama"
+        ? `<span class="meta-chip">active</span>`
+        : `<button class="btn" type="button" data-use="ollama">Use Ollama</button>`
+      : `<button class="btn btn-primary" type="button" data-action="llm-setup-ollama">Pull model</button>`;
     rows.push(
       `<div class="wizard-option">
-        <div><strong>Ollama</strong><p>${options.ollama_has_model ? `${escapeHtml(options.ollama_model)} is already pulled.` : `Pull ${escapeHtml(options.ollama_model)} through your Ollama.`}</p></div>
-        <button class="btn ${options.ollama_has_model ? "" : "btn-primary"}" type="button" data-action="llm-setup-ollama">${options.ollama_has_model ? "Ready" : "Pull model"}</button>
+        <div><strong>Ollama</strong><p>${options?.ollama_has_model ? `${escapeHtml(options?.ollama_model ?? "")} is already pulled.` : `Pull ${escapeHtml(options?.ollama_model ?? "")} through your Ollama.`}</p></div>
+        ${ollamaAction}
       </div>`,
     );
   }
@@ -2001,29 +2028,42 @@ function wizardModel(): string {
 
 function wizardPreset(): string {
   const suggested = status?.system.suggested_preset ?? "light";
+  const current = status?.preset ?? "light";
+  const note = (status?.presets ?? []).find((entry) => entry.name === current)?.note ?? "";
   return `
-    <p class="wizard-hint">This machine has ${status?.system.ram_gb || "?"} GB of RAM — <strong>${suggested}</strong> fits it best.</p>
+    <p class="wizard-hint">This machine has ${status?.system.ram_gb || "?"} GB of RAM — <strong>${suggested}</strong> fits it best. You are on <strong>${escapeHtml(current)}</strong>.</p>
     <div class="seg" id="wizard-preset-seg" role="group" aria-label="Machine preset">
-      <button class="seg-item ${suggested === "light" ? "is-active" : ""}" type="button" data-value="light">Light</button>
-      <button class="seg-item ${suggested === "balanced" ? "is-active" : ""}" type="button" data-value="balanced">Balanced</button>
-      <button class="seg-item ${suggested === "quality" ? "is-active" : ""}" type="button" data-value="quality">Quality</button>
+      <button class="seg-item ${current === "light" ? "is-active" : ""}" type="button" data-value="light">Light</button>
+      <button class="seg-item ${current === "balanced" ? "is-active" : ""}" type="button" data-value="balanced">Balanced</button>
+      <button class="seg-item ${current === "quality" ? "is-active" : ""}" type="button" data-value="quality">Quality</button>
     </div>
-    <p class="caption" id="wizard-preset-note">${escapeHtml(
-      (status?.presets ?? []).find((entry) => entry.name === suggested)?.note ?? "",
-    )}</p>`;
+    <p class="caption" id="wizard-preset-note">${escapeHtml(note)}</p>`;
 }
 
 function wizardIndex(): string {
+  const activity = status?.activity;
+  const running = activity?.running ?? false;
+  const progress = running
+    ? `<div class="progress"><div class="progress-bar" style="width:${
+        activity?.total ? Math.round(((activity?.done ?? 0) / activity.total) * 100) : 15
+      }%"></div></div>
+       <p class="caption">${escapeHtml(activity?.detail ?? "working…")}${
+         activity?.done ? ` (${activity.done}${activity.total ? "/" + activity.total : ""})` : ""
+       }</p>`
+    : "";
   return `
-    <p class="wizard-hint">Ready. Index now and the first answers are a minute or two away.</p>
+    <p class="wizard-hint">Ready. Index now and the first answers are a minute or two away — you can keep using Chat while it runs.</p>
     <ul class="wizard-list">
       <li>${selectedPaths.length} folder${selectedPaths.length === 1 ? "" : "s"} chosen</li>
       <li>preset <strong>${escapeHtml(status?.preset ?? "light")}</strong> · engine <strong>${escapeHtml(llmLabel(status as Status))}</strong></li>
+      <li id="wizard-index-counts">${status?.documents ?? 0} documents indexed so far</li>
     </ul>
     <div class="button-row">
-      <button class="btn btn-primary" type="button" id="wizard-index">Index now</button>
-      <button class="btn btn-quiet" type="button" id="wizard-finish">Finish</button>
+      <button class="btn btn-primary" type="button" id="wizard-index" ${running ? "disabled" : ""}>${
+        running ? "Indexing…" : "Index now"
+      }</button>
     </div>
+    ${progress}
     <p class="caption" id="wizard-index-state"></p>`;
 }
 
@@ -2084,16 +2124,24 @@ function wizardSteps(): WizardStep[] {
         $("wizard-finish").addEventListener("click", () => void finishWizard());
         $("wizard-index").addEventListener("click", async () => {
           if (selectedPaths.length === 0) {
-            $("wizard-index-state").textContent = "No folders chosen — add them in Sources.";
+            $("wizard-index-state").textContent =
+              "No folders chosen — go back and pick one, or add them later in Sources.";
             return;
           }
-          $("wizard-index-state").textContent = "Indexing…";
+          $("wizard-index-state").textContent = "Indexing — watching progress above…";
+          startActivityPolling();
           try {
-            await post("/api/index", { paths: selectedPaths });
+            const result = await post<Record<string, number>>("/api/index", {
+              paths: selectedPaths,
+            });
             selectedPaths = [];
             renderSources();
             await loadStatus();
-            $("wizard-index-state").textContent = "Indexed. Ask something in Chat.";
+            const skipped = Number(result.skipped ?? 0);
+            $("wizard-index-state").textContent =
+              `Indexed ${result.indexed ?? 0} files (${result.chunks ?? 0} chunks)` +
+              (skipped ? ` — ${skipped} skipped (unsupported or no text)` : "") +
+              ". Ask something in Chat.";
           } catch (error) {
             $("wizard-index-state").textContent =
               error instanceof Error ? error.message : String(error);

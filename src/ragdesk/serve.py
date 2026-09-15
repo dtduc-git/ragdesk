@@ -1200,13 +1200,15 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             emit({"status": "searching your sources…"})
-            with self.state.lock, Store(self.state.db) as store:
+            # Reads never take the writer lock: a long index must not block a
+            # question (SQLite busy_timeout covers the rare write collision).
+            with Store(self.state.db) as store:
                 history = store.recent_turns(chat_id) if chat_id else []
             smart = self._smart_retrieval(query, history)
             if smart:
                 emit({"status": "preparing the search (rewrite + draft)…"})
             search_query = str(smart.get("standalone") or query)
-            with self.state.lock, Store(self.state.db) as store:
+            with Store(self.state.db) as store:
                 query_vec = self.state.embedder.embed_query(search_query)
                 hits = retrieve(
                     store,
@@ -1313,7 +1315,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         top_k = int(body.get("top_k", 8))
         hyde_text = self._hyde_text(query)
-        with self.state.lock, Store(self.state.db) as store:
+        with Store(self.state.db) as store:
             hits = retrieve(
                 store,
                 self.state.embedder,
@@ -1445,11 +1447,11 @@ class Handler(BaseHTTPRequestHandler):
         chat_id = int(body.get("chat_id") or 0)
         top_k = int(body.get("top_k", 6))
         min_cosine = float(body.get("min_cosine", 0.0))
-        with self.state.lock, Store(self.state.db) as store:
+        with Store(self.state.db) as store:
             history = store.recent_turns(chat_id) if chat_id else []
         smart = self._smart_retrieval(query, history)
         search_query = str(smart.get("standalone") or query)
-        with self.state.lock, Store(self.state.db) as store:
+        with Store(self.state.db) as store:
             query_vec = self.state.embedder.embed_query(search_query)
             hits = retrieve(
                 store,
