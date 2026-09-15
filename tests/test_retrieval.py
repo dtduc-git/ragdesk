@@ -343,3 +343,27 @@ def test_ground_answer_detail_marks_sentences():
     assert detail["sentences_detail"][0]["grounded"] is True
     assert detail["sentences_detail"][1]["grounded"] is False
     assert detail["sentences_detail"][0]["citations"] == [1]
+
+
+def test_fold_text_strips_vietnamese_diacritics():
+    from ragdesk.store import fold_text
+
+    assert fold_text("Thuế Thu Nhập Cá Nhân") == "thue thu nhap ca nhan"
+    assert fold_text("ĐÀ NẴNG") == "da nang"
+    assert fold_text("Kubernetes") == "kubernetes"
+
+
+def test_accent_insensitive_bm25(tmp_path: Path):
+    with make_store(
+        tmp_path,
+        {
+            "/notes/thue.md": "Thuế thu nhập cá nhân khấu trừ tại nguồn cho năm 2025",
+            "/notes/other.md": "something entirely different about kubernetes",
+        },
+    ) as store:
+        folded = store.bm25_search("thue thu nhap", 5)
+        assert folded and folded[0]["path"].endswith("thue.md")
+        accented = store.bm25_search("thuế thu nhập", 5)
+        assert accented and accented[0]["path"].endswith("thue.md")
+        # the stored text stays unfolded for citations
+        assert "Thuế" in str(folded[0]["text"])

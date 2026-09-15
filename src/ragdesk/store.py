@@ -7,6 +7,7 @@ import json
 import math
 import re
 import sqlite3
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -39,9 +40,7 @@ CREATE TABLE IF NOT EXISTS parents (
     text TEXT NOT NULL,
     PRIMARY KEY (doc_id, ordinal)
 );
-CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-    text, content='chunks', content_rowid='id'
-);
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text);
 CREATE INDEX IF NOT EXISTS chunks_doc_idx ON chunks(doc_id);
 CREATE TABLE IF NOT EXISTS chats (
     id INTEGER PRIMARY KEY,
@@ -77,6 +76,14 @@ CREATE TABLE IF NOT EXISTS memories (
 """
 
 TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+_COMBINING = "\u0300-\u036f"
+
+
+def fold_text(text: str) -> str:
+    """Lowercase and strip diacritics so "thue" matches "thuế" (VN search)."""
+    # "đ" is a letter of its own, not a decomposed accent, so map it explicitly.
+    lowered = text.lower().replace("đ", "d")
+    return re.sub(f"[{_COMBINING}]", "", unicodedata.normalize("NFD", lowered))
 
 
 class EmbedderMismatch(RuntimeError):
@@ -116,8 +123,26 @@ class Store:
             for name, spec in columns.items():
                 if name not in existing:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
+        self._rebuild_fts_if_external()
         self._backfill_parents()
         self.conn.commit()
+
+    def _rebuild_fts_if_external(self) -> None:
+        """Legacy DBs index raw text through an external-content FTS table;
+        replace it with the folded standalone copy and rebuild once."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'chunks_fts'"
+        ).fetchone()
+        if row is None or "content='chunks'" not in str(row["sql"]):
+            return
+        self.conn.execute("DROP TABLE chunks_fts")
+        self.conn.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(text)")
+        rows = self.conn.execute("SELECT id, text FROM chunks").fetchall()
+        for chunk in rows:
+            self.conn.execute(
+                "INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)",
+                (chunk["id"], fold_text(str(chunk["text"]))),
+            )
 
     def _backfill_parents(self, max_chars: int = 4000) -> int:
         """Group existing chunks into parents — no re-embedding needed."""
@@ -203,8 +228,8 @@ class Store:
         ).fetchall()
         for row in rows:
             self.conn.execute(
-                "INSERT INTO chunks_fts (chunks_fts, rowid, text) VALUES ('delete', ?, ?)",
-                (row["id"], row["text"]),
+                "DELETE FROM chunks_fts WHERE rowid = ?",
+                (row["id"],),
             )
         self.conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
         self.conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
@@ -266,7 +291,7 @@ class Store:
                 )
                 self.conn.execute(
                     "INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)",
-                    (chunk.lastrowid, text),
+                    (chunk.lastrowid, fold_text(text)),
                 )
 
     def documents(self) -> list[dict[str, Any]]:
@@ -586,7 +611,7 @@ class Store:
     def bm25_search(
         self, query: str, limit: int, filters: Any = None
     ) -> list[dict[str, Any]]:
-        tokens = TOKEN_RE.findall(query.lower())
+        tokens = TOKEN_RE.findall(fold_text(query))
         if not tokens:
             return []
         match = " OR ".join(f'"{token}"' for token in tokens)
