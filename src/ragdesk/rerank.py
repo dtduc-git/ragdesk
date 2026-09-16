@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ragdesk.embed import tokenize
+from ragdesk.embed import configured_threads, session_options, tokenize
 from ragdesk.search import Hit
 
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-base"
@@ -129,7 +129,9 @@ class OnnxReranker:
 
         self._tokenizer = tokenizer
         self._session = ort.InferenceSession(
-            model_path, providers=["CPUExecutionProvider"]
+            model_path,
+            providers=["CPUExecutionProvider"],
+            sess_options=session_options(configured_threads()),
         )
         self._input_names = [item.name for item in self._session.get_inputs()]
 

@@ -262,6 +262,7 @@ class Handler(BaseHTTPRequestHandler):
                         },
                         "hyde": bool(settings.load()["hyde"]),
                         "answer_length": str(settings.load()["answer_length"]),
+                        "embed_threads": int(settings.load().get("embed_threads") or 0),
                         "llm_setting": {
                             "preference": str(settings.load().get("llm_preference") or ""),
                             "openai_host": str(settings.load().get("openai_host") or ""),
@@ -589,6 +590,19 @@ class Handler(BaseHTTPRequestHandler):
             updates["auto_index_hours"] = max(0, min(hours, 168))
         if "hyde" in body:
             updates["hyde"] = bool(body["hyde"])
+        if "embed_threads" in body:
+            try:
+                threads = int(body["embed_threads"])
+            except (TypeError, ValueError):
+                self._send(400, {"error": "embed_threads must be a number (0 = all cores)"})
+                return
+            threads = max(0, min(threads, 64))
+            updates["embed_threads"] = threads
+            # the pool size is fixed when the session is built: drop it so the
+            # next question or index run picks the new value up
+            unload = getattr(self.state.embedder, "unload", None)
+            if callable(unload):
+                unload()
         if "answer_length" in body:
             length = str(body["answer_length"])
             if length not in ("short", "medium", "long"):

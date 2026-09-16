@@ -217,6 +217,18 @@
 
             <section class="setting-card">
               <header class="setting-head">
+                <h3>Quiet indexing</h3>
+                <p>Indexing uses every core by default. Quiet mode caps the embedding threads: slower, but the machine stays cool and usable while it runs.</p>
+              </header>
+              <div class="seg" id="quiet-seg" role="group" aria-label="Quiet indexing">
+                <button class="seg-item" type="button" data-value="0">Full speed</button>
+                <button class="seg-item" type="button" data-value="1">Quiet — 4 threads</button>
+              </div>
+              <p class="caption" id="quiet-note"></p>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
                 <h3>Retrieval eval</h3>
                 <p>Score search quality against a golden set: JSONL of queries and the paths that answer them.</p>
               </header>

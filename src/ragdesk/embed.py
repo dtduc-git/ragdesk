@@ -41,6 +41,43 @@ def tokenize(text: str) -> list[str]:
     return tokens
 
 
+_THREAD_OVERRIDE: int | None = None
+
+
+def set_thread_override(threads: int | None) -> None:
+    """Process-wide override (``--embed-threads``), beats the saved setting."""
+    global _THREAD_OVERRIDE  # noqa: PLW0603 - a one-shot CLI knob
+    _THREAD_OVERRIDE = threads
+
+
+def configured_threads() -> int:
+    """ONNX thread cap: 0 = onnxruntime's default (every core).
+
+    Quiet indexing caps the intra-op pool so a long index run leaves the
+    machine usable; the setting is read when a session is built, so the app
+    unloads the embedder when the toggle changes.
+    """
+    if _THREAD_OVERRIDE is not None:
+        return _THREAD_OVERRIDE
+    from ragdesk import settings as app_settings  # noqa: PLC0415 - optional knob
+
+    try:
+        return max(0, int(app_settings.load().get("embed_threads") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def session_options(threads: int = 0):
+    """ONNX Runtime session options; only touch the pools when capping."""
+    import onnxruntime as ort  # noqa: PLC0415 - optional extra
+
+    options = ort.SessionOptions()
+    if threads > 0:
+        options.intra_op_num_threads = threads
+        options.inter_op_num_threads = 1
+    return options
+
+
 class Embedder(Protocol):
     name: str
     dim: int
@@ -161,7 +198,11 @@ class OnnxEmbedder:
             pass
 
         self._tokenizer = tokenizer
-        self._session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        self._session = ort.InferenceSession(
+            model_path,
+            providers=["CPUExecutionProvider"],
+            sess_options=session_options(configured_threads()),
+        )
         self._output_index = self._find_sentence_embedding()
 
     @property

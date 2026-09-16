@@ -138,6 +138,23 @@ def test_topics_endpoint(base_url: str):
         assert cluster["paths"]
 
 
+def test_settings_accepts_embed_threads(base_url: str):
+    from ragdesk import settings
+
+    status, payload = request(f"{base_url}/api/settings", {"embed_threads": 4})
+    assert status == 200
+    assert settings.load()["embed_threads"] == 4
+    _, status_payload = request(f"{base_url}/api/status")
+    assert status_payload["embed_threads"] == 4
+
+    request(f"{base_url}/api/settings", {"embed_threads": 0})
+    assert settings.load()["embed_threads"] == 0
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/settings", {"embed_threads": "lots"})
+    assert excinfo.value.code == 400
+
+
 def test_health_endpoint_reports_the_index_state(base_url: str):
     status, payload = request(f"{base_url}/api/health")
     assert status == 200

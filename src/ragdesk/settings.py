@@ -21,6 +21,7 @@ DEFAULTS: dict = {
     "answer_length": "medium",
     "chunk_chars": 1000,
     "chunk_overlap": 150,
+    "embed_threads": 0,
     "never_index": [],
 }
 

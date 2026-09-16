@@ -71,6 +71,13 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Personal, local-first RAG over your own sources.",
     )
     parser.add_argument("--version", action="version", version=f"ragdesk {__version__}")
+    parser.add_argument(
+        "--embed-threads",
+        type=int,
+        default=None,
+        metavar="N",
+        help="cap ONNX embedding threads for this run (0 = all cores; quiet indexing is 4)",
+    )
     parser.add_argument("--db", default=DEFAULT_DB, help=f"index database (default: {DEFAULT_DB})")
     parser.add_argument(
         "--preset",
@@ -357,6 +364,10 @@ def main(argv: list[str] | None = None) -> int:
         from ragdesk.tui import run_remote_chat
 
         return run_remote_chat(args.server, chat_id=args.chat_id)
+    if args.embed_threads is not None:
+        from ragdesk import embed as embed_module
+
+        embed_module.set_thread_override(max(0, args.embed_threads))
     if args.command == "tui":
         # The full-screen app draws its own status; keep startup errors terse.
         try:

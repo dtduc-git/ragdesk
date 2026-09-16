@@ -415,6 +415,40 @@ def test_eval_with_lexical_reranker(tmp_path: Path):
         assert metrics["recall@5"] >= 0.8, per_query
 
 
+def test_embed_threads_setting_and_override(monkeypatch):
+    from ragdesk import embed
+
+    embed.set_thread_override(None)
+    monkeypatch.setattr("ragdesk.settings.load", lambda path=None: {"embed_threads": 4})
+    assert embed.configured_threads() == 4
+    monkeypatch.setattr("ragdesk.settings.load", lambda path=None: {"embed_threads": "nonsense"})
+    assert embed.configured_threads() == 0
+    embed.set_thread_override(2)  # the CLI flag beats the setting
+    monkeypatch.setattr("ragdesk.settings.load", lambda path=None: {"embed_threads": 4})
+    assert embed.configured_threads() == 2
+    embed.set_thread_override(None)
+
+
+def test_session_options_only_touch_threads_when_capped(monkeypatch):
+    import sys
+    import types
+
+    from ragdesk import embed
+
+    class FakeOptions:
+        pass
+
+    fake = types.ModuleType("onnxruntime")
+    fake.SessionOptions = FakeOptions  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake)
+
+    default = embed.session_options(0)
+    assert not hasattr(default, "intra_op_num_threads")
+    quiet = embed.session_options(4)
+    assert quiet.intra_op_num_threads == 4
+    assert quiet.inter_op_num_threads == 1
+
+
 def test_get_embedder_specs():
     assert get_embedder("hash:128").dim == 128
     assert get_embedder("hash").dim == 4096

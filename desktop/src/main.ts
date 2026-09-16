@@ -40,6 +40,7 @@ type Status = {
   hyde: boolean;
   notes_available: boolean;
   answer_length: string;
+  embed_threads: number;
   activity: {
     running: boolean;
     kind: string;
@@ -184,6 +185,7 @@ document.querySelectorAll<HTMLElement>(".seg").forEach((group) => {
     if (group.id === "auto-index-seg") void saveSetting({ auto_index_hours: Number(value) });
     if (group.id === "idle-unload-seg") void saveSetting({ idle_unload_minutes: Number(value) });
     if (group.id === "hyde-seg") void saveSetting({ hyde: Number(value) === 1 });
+    if (group.id === "quiet-seg") void saveSetting({ embed_threads: Number(value) === 1 ? 4 : 0 });
     if (group.id === "answer-length-seg") void saveSetting({ answer_length: value });
     if (group.id === "preset-seg") void saveSetting({ preset: value });
     if (group.id === "backend-seg") {
@@ -387,6 +389,10 @@ function renderStatus(): void {
     : "Auto keeps the local model; OpenAI-compatible covers LM Studio, llama.cpp, vLLM or OpenAI itself.";
   markSeg("answer-length-seg", status.answer_length);
   markSeg("hyde-seg", status.hyde ? 1 : 0);
+  markSeg("quiet-seg", status.embed_threads ? 1 : 0);
+  $("quiet-note").textContent = status.embed_threads
+    ? `capped at ${status.embed_threads} threads — measured on this repo: 1.4× slower to index, ~35% of the CPU`
+    : "every core — measured: 651 chunks in 97s at ~580% CPU; quiet mode takes 136s at ~390%";
   $("hyde-note").textContent = status.hyde
     ? `on — drafts with ${status.llm.kind === "none" ? "the local model (none found yet)" : status.llm.model}; adds 2-4s per question`
     : "off — measured on our golden set: recall@5 0.89 → 1.00 with it on, at +2-4s per question";

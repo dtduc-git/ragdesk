@@ -143,6 +143,15 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   2408 chunks, absolute paths) bench none+onnx and the 24-query corpus copy
   both identical before/after (0.917/0.752/0.694 and 0.542/0.557/0.549);
   `tests/test_retrieval.py` proves the reorder canonical > plain > draft.
+- Quiet indexing: `embed.session_options(threads)` builds every ONNX session
+  (embedder *and* reranker) with `intra_op_num_threads`/`inter_op_num_threads=1`
+  when capped; `settings.embed_threads` (0 = all cores) is read at session build
+  and `embed.set_thread_override` lets `--embed-threads N` win for one process.
+  `POST /api/settings {embed_threads}` unloads the embedder so the toggle takes
+  effect immediately. Measured on the 651-chunk repo subset, cold index:
+  all cores 97s @ ~580% CPU, 4 threads 136s @ ~390%, 2 threads 256s @ ~200% —
+  `OMP_NUM_THREADS` does **not** work with the Python wheel, the code change is
+  the only way to cap it.
 - Embedding cache (`store.embed_cache`, key = sha1 of embedder name + dim + exact
   chunk text): `index._embed_with_cache` embeds only what is new, so a one-line
   edit costs one embedding instead of a whole document's worth and a duplicated
