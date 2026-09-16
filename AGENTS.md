@@ -79,6 +79,12 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   no model load, the server owns all three; `ragdesk tui` is the full-screen
   Textual app behind the optional `tui` extra (`uv run --extra tui pytest
   tests/test_screen.py`; the test skips itself without the extra).
+- Watcher + auto-index: `watch_loop` re-indexes the recorded local roots every
+  `settings.watch_seconds` (default 60, 0 = off, UI card "Watch for changes")
+  and `auto_index_loop` re-checks everything every `auto_index_hours` as the
+  safety net; both take the mtime fast path, so a quiet pass is one stat per
+  file. `POST /api/settings {watch_seconds}` clamps to 0-3600 and `/api/status`
+  exposes it.
 - Auto-index: `serve` runs a 60s timer; when `auto_index_hours` (Settings tab,
   default 1, 0 = off) has elapsed since `auto_index_last`, it re-indexes the
   recorded local roots via `run_auto_index` (connectors stay manual until

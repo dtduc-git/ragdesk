@@ -240,7 +240,8 @@ The same UI also runs in a browser for development:
 | Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme — **built from source** (no DMG release yet) | Packaged DMG + notarization (Apple Developer ID) when the project ships binaries |
 | Command palette (⌘K): jump to a conversation, switch tabs, search your sources and open a file — plus ⌘1-4 tabs, ? for the shortcut sheet | |
 | The catalog-drawer look: ruled ledger transcript with entry numbers, violet library ink for actions, amber for live/cited things, light + dark | |
-| Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) | Connector auto-sync (local paths only for now) |
+| Watch for changes: new and edited files in your folders are indexed automatically (Settings, default every minute; Off / 30s / 1m / 5m / 15m) | Connector auto-sync (local paths only for now) |
+| Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) — the safety net behind the watcher | |
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Quiet indexing (Settings, off by default): caps the ONNX embedding threads — measured on this repo, 651 chunks index in 97s at ~580% CPU, or 136s at ~390% with 4 threads; `--embed-threads N` goes lower (2 threads: 256s at ~200%) | |
 | Metadata: a `--- key: value ---` front-matter header is parsed, stored per document and filterable — no YAML dependency; `authority:`/`status:` tags give a small rank nudge (canonical up, draft down) | |

@@ -187,8 +187,23 @@
 
             <section class="setting-card">
               <header class="setting-head">
+                <h3>Watch for changes</h3>
+                <p>New and edited files in the folders you chose are picked up automatically. Unchanged files cost a stat, nothing more.</p>
+              </header>
+              <div class="seg" id="watch-seg" role="group" aria-label="Watch interval">
+                <button class="seg-item" type="button" data-value="0">Off</button>
+                <button class="seg-item" type="button" data-value="30">30s</button>
+                <button class="seg-item" type="button" data-value="60">1 min</button>
+                <button class="seg-item" type="button" data-value="300">5 min</button>
+                <button class="seg-item" type="button" data-value="900">15 min</button>
+              </div>
+              <p class="caption" id="watch-note"></p>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
                 <h3>Auto re-index</h3>
-                <p>Keeps the folders you chose fresh. Unchanged files are skipped.</p>
+                <p>The hourly safety net: re-checks every chosen folder on a timer, so nothing stays stale if the watcher missed it.</p>
               </header>
               <div class="seg" id="auto-index-seg" role="group" aria-label="Auto re-index interval">
                 <button class="seg-item" type="button" data-value="0">Off</button>

@@ -36,6 +36,7 @@ type Status = {
   sources: SourceStat[];
   local_paths: PathStat[];
   auto_index: { hours: number; last_run: string };
+  watch_seconds: number;
   memory: { models_loaded: boolean; idle_unload_minutes: number };
   hyde: boolean;
   notes_available: boolean;
@@ -183,6 +184,7 @@ document.querySelectorAll<HTMLElement>(".seg").forEach((group) => {
     if (!item) return;
     const value = item.dataset.value ?? "";
     if (group.id === "auto-index-seg") void saveSetting({ auto_index_hours: Number(value) });
+    if (group.id === "watch-seg") void saveSetting({ watch_seconds: Number(value) });
     if (group.id === "idle-unload-seg") void saveSetting({ idle_unload_minutes: Number(value) });
     if (group.id === "hyde-seg") void saveSetting({ hyde: Number(value) === 1 });
     if (group.id === "quiet-seg") void saveSetting({ embed_threads: Number(value) === 1 ? 4 : 0 });
@@ -373,6 +375,13 @@ function renderStatus(): void {
 
   const table = $("indexed-table");
   renderLlmSetup(status);
+  markSeg("watch-seg", status.watch_seconds);
+  const watched = (status.local_paths ?? []).filter((entry) => entry.documents > 0);
+  $("watch-note").textContent = status.watch_seconds
+    ? `checking ${watched.length || "your"} folder${watched.length === 1 ? "" : "s"} every ${
+        status.watch_seconds < 60 ? `${status.watch_seconds}s` : `${Math.round(status.watch_seconds / 60)} min`
+      } — changes and new files appear on their own`
+    : "off — new or edited files wait for the next Auto re-index pass";
   markSeg("auto-index-seg", status.auto_index.hours);
   $("auto-index-last").textContent = status.auto_index.last_run
     ? `last run ${status.auto_index.last_run} UTC`

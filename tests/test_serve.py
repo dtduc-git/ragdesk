@@ -138,6 +138,28 @@ def test_topics_endpoint(base_url: str):
         assert cluster["paths"]
 
 
+def test_settings_accepts_watch_seconds(base_url: str):
+    from ragdesk import settings
+
+    _, payload = request(f"{base_url}/api/status")
+    assert payload["watch_seconds"] == 60  # default: watch every minute
+
+    status, _ = request(f"{base_url}/api/settings", {"watch_seconds": 300})
+    assert status == 200
+    assert settings.load()["watch_seconds"] == 300
+    _, payload = request(f"{base_url}/api/status")
+    assert payload["watch_seconds"] == 300
+
+    request(f"{base_url}/api/settings", {"watch_seconds": 0})  # 0 = off
+    assert settings.load()["watch_seconds"] == 0
+    request(f"{base_url}/api/settings", {"watch_seconds": 99999})  # clamped
+    assert settings.load()["watch_seconds"] == 3600
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/settings", {"watch_seconds": "soon"})
+    assert excinfo.value.code == 400
+
+
 def test_settings_accepts_embed_threads(base_url: str):
     from ragdesk import settings
 

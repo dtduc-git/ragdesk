@@ -260,6 +260,7 @@ class Handler(BaseHTTPRequestHandler):
                             "hours": settings.load()["auto_index_hours"],
                             "last_run": settings.load()["auto_index_last"],
                         },
+                        "watch_seconds": int(settings.load().get("watch_seconds") or 0),
                         "hyde": bool(settings.load()["hyde"]),
                         "answer_length": str(settings.load()["answer_length"]),
                         "embed_threads": int(settings.load().get("embed_threads") or 0),
@@ -588,6 +589,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, {"error": "auto_index_hours must be a number"})
                 return
             updates["auto_index_hours"] = max(0, min(hours, 168))
+        if "watch_seconds" in body:
+            try:
+                seconds = int(body["watch_seconds"])
+            except (TypeError, ValueError):
+                self._send(400, {"error": "watch_seconds must be a number (0 = off)"})
+                return
+            updates["watch_seconds"] = max(0, min(seconds, 3600))
         if "hyde" in body:
             updates["hyde"] = bool(body["hyde"])
         if "embed_threads" in body:
