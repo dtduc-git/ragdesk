@@ -82,7 +82,8 @@ from ragdesk.notion import whoami as notion_whoami
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable, post_stream
 from ragdesk.presets import PRESETS
 from ragdesk.rerank import get_reranker
-from ragdesk.s3 import S3Error, aws_available, sync_s3
+from ragdesk.s3 import DEFAULT_REGION as S3_DEFAULT_REGION
+from ragdesk.s3 import S3Error, probe, resolve_credentials, sync_s3
 from ragdesk.search import Hit, hit_to_dict, parse_filters, retrieve
 from ragdesk.store import Store, matches_any
 from ragdesk.symbols import find_symbol, parse_symbol_question, symbol_answer
@@ -282,7 +283,14 @@ class Handler(BaseHTTPRequestHandler):
                         },
                         "onboarded": bool(settings.load()["onboarded"]),
                         "notes_available": notes_available(),
-                        "s3_available": aws_available(),
+                        "s3": {
+                            "configured": bool(credentials.get("s3").get("access_key")),
+                            "bucket": str(credentials.get("s3").get("bucket", "")),
+                            "region": str(
+                                credentials.get("s3").get("region") or S3_DEFAULT_REGION
+                            ),
+                            "endpoint": str(credentials.get("s3").get("endpoint", "")),
+                        },
                         "system": system_info(),
                         "activity": dict(self.state.activity),
                         "memory": {
@@ -538,6 +546,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_confluence(body)
             elif self.path == "/api/sync/gdrive":
                 self._handle_sync_gdrive(body)
+            elif self.path == "/api/connections/s3":
+                self._handle_connect_s3(body)
             elif self.path == "/api/sync/s3":
                 self._handle_sync_s3(body)
             elif self.path == "/api/sync/web":
@@ -1032,6 +1042,7 @@ class Handler(BaseHTTPRequestHandler):
             "gitlab",
             "msgraph",
             "email",
+            "s3",
         ):
             self._send(404, {"error": f"unknown provider: {provider}"})
             return
@@ -1380,8 +1391,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"deleted": delete_sync_job(job_id), "jobs": sync_jobs()})
 
-    def _handle_sync_s3(self, body: dict[str, Any]) -> None:
+    def _handle_connect_s3(self, body: dict[str, Any]) -> None:
+        """Validate the key against the bucket, then remember it (0600)."""
         bucket = str(body.get("bucket", "")).strip()
+        access_key = str(body.get("access_key", "")).strip()
+        secret_key = str(body.get("secret_key", "")).strip()
+        if not bucket or not access_key or not secret_key:
+            self._send(400, {"error": "bucket, access_key and secret_key are required"})
+            return
+        values = {
+            "access_key": access_key,
+            "secret_key": secret_key,
+            "session_token": str(body.get("session_token", "")).strip(),
+            "region": str(body.get("region", "")).strip() or S3_DEFAULT_REGION,
+            "endpoint": str(body.get("endpoint", "")).strip().rstrip("/"),
+            "bucket": bucket,
+        }
+        with self.state.lock:
+            probe(resolve_credentials(values), bucket)
+        credentials.set_provider("s3", values)
+        self._send(200, {"connected": True, "bucket": bucket, "region": values["region"]})
+
+    def _handle_sync_s3(self, body: dict[str, Any]) -> None:
+        bucket = str(body.get("bucket", "")).strip() or str(
+            credentials.get("s3").get("bucket", "")
+        )
         if not bucket:
             self._send(400, {"error": "bucket required (e.g. my-data-bucket)"})
             return
@@ -1391,7 +1425,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.state.embedder,
                 bucket=bucket,
                 prefix=str(body.get("prefix", "")),
-                profile=str(body.get("profile", "")),
                 limit=int(body.get("limit") or 500),
             )
         self._send(

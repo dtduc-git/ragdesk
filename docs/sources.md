@@ -198,3 +198,28 @@ JavaScript rendering.
 | Microsoft: consent screen says *need admin approval* | Your tenant blocks user consent; an admin must approve the app (or use a personal account). |
 | Something shows *"local server is not reachable"* | The Python server restarted; the app relaunches it within ~3 s, retry. If it repeats, check `~/.ragdesk/serve.log`. |
 | `not HTML (...)` during crawl | The link points at a binary/JS-only asset; those are skipped by design. |
+
+## S3 buckets (AWS, Cloudflare R2, Backblaze B2, MinIO)
+
+Read-only access to an object store. Nothing to install: paste the key into
+the **S3** card under Sources and ragdesk stores it locally (mode `0600`) —
+or leave the key empty to read a public bucket.
+
+1. **Get an access key** from your provider:
+   - **AWS**: IAM → Users → your user → Security credentials → *Create access
+     key*. Give that user `s3:ListBucket` on the bucket and `s3:GetObject` on
+     its objects (`s3:GetObject` on `arn:aws:s3:::bucket/*` is enough).
+   - **Cloudflare R2**: R2 → *Manage API tokens* → create a token with
+     *Object Read*; copy the Access Key ID and Secret.
+   - **Backblaze B2 / MinIO / Wasabi**: same idea — an application key plus
+     the service's S3 endpoint URL.
+2. Fill the card: bucket name, Access Key ID, Secret Access Key, region
+   (`us-east-1` is fine for R2), and the **custom endpoint** for anything that
+   is not AWS (e.g. `https://<account>.r2.cloudflarestorage.com`).
+3. *Connect bucket* validates by listing before saving; *Sync bucket* then
+   indexes the prefix (PDF, Office, images with OCR, text — same extractors as
+   local files). Tick **Keep in sync** to refresh it with the hourly pass.
+
+Errors say what they mean: `access denied` (key or bucket permission),
+`no such bucket` (name typo), `bad request … custom endpoint` (wrong region or
+a service that needs the endpoint set).

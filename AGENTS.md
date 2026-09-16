@@ -250,13 +250,21 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   `connectors` list; a failing job is reported in it, never fatal.
   `GET /api/sync-jobs`, `POST /api/sync-jobs`, `/api/sync-jobs/delete`;
   `/api/status.sync_jobs` feeds the Settings card.
-- S3 (`s3.py`): the connector shells out to the **aws CLI** (`s3 ls
-  --recursive`, `s3 cp … -`) instead of adding boto3 — the machine already has
-  profiles/SSO, and ragdesk never stores a key (same posture as reusing `gh`).
-  Objects go through the shared `is_indexable` + `extract_bytes`, so PDFs,
-  Office, images (OCR) and text behave exactly like local files; paths are
-  `s3://bucket/key`, source `s3:<bucket>`, metadata carries bucket/prefix.
-  Missing CLI → a clear S3Error; `/api/status.s3_available` drives the card.
+- S3 (`s3.py`): hand-rolled **SigV4 over stdlib** (`hashlib`/`hmac`/`urllib` +
+  `xml.etree`) instead of boto3 or the aws CLI — a non-technical user should
+  paste one key into the app (or read a public bucket with no key at all), not
+  install a second tool. Key details: the canonical URI is the path **as sent**
+  (S3 does not normalize it — matching botocore's `S3SigV4Auth`, cross-checked
+  2026-09-16 on query strings, encoded keys with spaces, Unicode, `+` and
+  custom endpoints), `x-amz-content-sha256` is the empty-payload hash, and
+  **S3 XML carries a default namespace** so tags are stripped before parsing
+  (finding `Contents` without that step silently returns zero objects — the
+  first live run against a public bucket caught it). Credentials resolve
+  explicit → `AWS_*` env → saved connection; custom endpoints are path-style.
+  `/api/connections/s3` validates by listing before saving, `/api/sync/s3`
+  indexes, `/api/status.s3` drives the card, `ragdesk s3 BUCKET` mirrors it.
+  Verified live against the public `noaa-ghcn-pds` bucket: anonymous list,
+  fetch, extract and search with no key stored.
 - Email attachments (`email_source.attachments`): up to 10 per message, each
   decoded and pushed through `extract_bytes` (so OCR and sheet row-refs work);
   indexed as their own documents at `<base>::<message-key>::NN-<name>` with

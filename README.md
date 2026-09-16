@@ -246,7 +246,7 @@ The same UI also runs in a browser for development:
 | The catalog-drawer look: ruled ledger transcript with entry numbers, violet library ink for actions, amber for live/cited things, light + dark | |
 | Watch for changes: new and edited files in your folders are indexed automatically (Settings, default every minute; Off / 30s / 1m / 5m / 15m) | Connector auto-sync is hourly only (no per-connector interval yet) |
 | Connector auto-sync: tick "Keep in sync" on any connector's sync form and it re-runs with the auto re-index timer (GitHub, GitLab, Confluence, Drive, OneDrive, Notion, IMAP, web crawl, S3) | |
-| S3: index a bucket prefix through the **aws CLI** you already have — your profiles, SSO and env vars, no key ever stored; PDF/Office/image/OCR handled like local files | Writing to S3 (read-only, by design) |
+| S3: paste an access key in the app once (or just point at a public bucket — no key, no extra tool), then sync a bucket prefix; AWS keys come from IAM, and **S3-compatible services** (Cloudflare R2, Backblaze B2, MinIO, Wasabi) work via a custom endpoint; PDF/Office/image/OCR handled like local files | Writing to S3 (read-only, by design) |
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) — the safety net behind the watcher | |
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Quiet indexing (Settings, off by default): caps the ONNX embedding threads — measured on this repo, 651 chunks index in 97s at ~580% CPU, or 136s at ~390% with 4 threads; `--embed-threads N` goes lower (2 threads: 256s at ~200%) | |

@@ -41,7 +41,7 @@ type Status = {
   memory: { models_loaded: boolean; idle_unload_minutes: number };
   hyde: boolean;
   notes_available: boolean;
-  s3_available: boolean;
+  s3: { configured: boolean; bucket: string; region: string; endpoint: string };
   sync_jobs: Array<{ id: string; provider: string; params: Record<string, string> }>;
   answer_length: string;
   embed_threads: number;
@@ -1541,23 +1541,40 @@ document.getElementById("sync-job-list")?.addEventListener("click", async (event
   }
 });
 
-function s3Card(available: boolean): string {
-  const note = available
-    ? "Read-only via the aws CLI — it uses your existing profiles (SSO, ~/.aws); ragdesk never stores a key."
-    : "The aws CLI is not on PATH — install it (brew install awscli) and log in, then reload.";
-  return `<div class="source-card">
-    <h3>S3 bucket</h3>
-    <p class="source-note">${note}</p>
-    <form data-form="s3-sync" class="stack">
-      <input name="bucket" placeholder="my-data-bucket" required />
+function s3Card(conn: Status["s3"]): string {
+  const connect = `<form data-form="s3-connect" class="stack">
+      <input name="bucket" placeholder="bucket name" required />
       <div class="field-row">
-        <input name="prefix" placeholder="prefix (docs/)" />
-        <input name="profile" placeholder="aws profile (optional)" />
+        <input name="access_key" placeholder="access key ID" required />
+        <input name="secret_key" type="password" placeholder="secret access key" required />
       </div>
-      <button class="btn btn-primary" type="submit" ${available ? "" : "disabled"}>Sync bucket</button>
-          ${keepToggle()}
+      <div class="field-row">
+        <input name="region" placeholder="region (us-east-1)" />
+        <input name="endpoint" placeholder="custom endpoint (R2 / B2 / MinIO)" />
+      </div>
+      <input name="session_token" placeholder="session token (temporary keys only)" />
+      <button class="btn btn-primary" type="submit">Connect bucket</button>
     </form>
+    <p class="caption">Keys come from your provider (AWS: IAM → access keys; R2: Manage API tokens). They stay on this machine (0600) and go nowhere but your bucket.</p>`;
+  const sync = `<form data-form="s3-sync" class="stack">
+      <div class="field-row">
+        <input name="bucket" placeholder="bucket" value="${escapeHtml(conn.bucket)}" required />
+        <input name="prefix" placeholder="prefix (docs/)" />
+      </div>
+      <button class="btn btn-primary" type="submit">Sync bucket</button>
+      ${keepToggle()}
+    </form>`;
+  return `<div class="source-card${conn.configured ? " is-connected" : ""}">
+    <h3>S3${conn.configured ? ' <span class="conn-badge">connected</span>' : ""}</h3>
+    <p class="source-note">${
+      conn.configured
+        ? `${escapeHtml(conn.bucket || "bucket")} · ${escapeHtml(conn.region)}${conn.endpoint ? ` · ${escapeHtml(conn.endpoint)}` : ""}`
+        : "Read-only access to a bucket, or any S3-compatible service (R2, B2, MinIO)."
+    }</p>
+    ${conn.configured ? "" : connect}
+    ${sync}
     <p class="source-result" data-result="s3"></p>
+    ${conn.configured ? `<div class="button-row"><button class="btn btn-quiet" type="button" data-action="disconnect-s3">Disconnect</button></div>` : ""}
   </div>`;
 }
 
@@ -1676,7 +1693,7 @@ function renderSources(): void {
     notionCard(notion) +
     emailCard(email) +
     vaultCard(status?.vaults ?? []) +
-    s3Card(status?.s3_available ?? false) +
+    s3Card(status?.s3 ?? { configured: false, bucket: "", region: "", endpoint: "" }) +
     notesCard(status?.notes_available ?? false) +
     webCard();
   for (const [kind, message] of Object.entries(sourceResults)) {
@@ -1796,6 +1813,20 @@ $("source-grid").addEventListener("submit", async (event) => {
       });
       setResult("email", summarize(response));
       await maybeKeepJob(kind, payload);
+      await loadStatus();
+      return;
+    }
+    if (kind === "s3-connect") {
+      setResult("s3", "checking the key against the bucket…");
+      const response = await post<{ bucket: string; region: string }>("/api/connections/s3", {
+        bucket: String(payload.bucket ?? ""),
+        access_key: String(payload.access_key ?? ""),
+        secret_key: String(payload.secret_key ?? ""),
+        session_token: String(payload.session_token ?? ""),
+        region: String(payload.region ?? ""),
+        endpoint: String(payload.endpoint ?? ""),
+      });
+      setResult("s3", `connected — ${response.bucket} (${response.region})`);
       await loadStatus();
       return;
     }

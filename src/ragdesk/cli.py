@@ -231,10 +231,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_notion.add_argument("--json", action="store_true", help="machine-readable output")
 
-    p_s3 = sub.add_parser("s3", help="index an S3 bucket prefix via the aws CLI (read-only)")
+    p_s3 = sub.add_parser("s3", help="index an S3 (or S3-compatible) bucket prefix, read-only")
     p_s3.add_argument("bucket")
     p_s3.add_argument("--prefix", default="", help="key prefix, e.g. docs/")
-    p_s3.add_argument("--profile", default="", help="aws profile (default: your environment)")
+    p_s3.add_argument("--region", default="", help="AWS region (default: us-east-1)")
+    p_s3.add_argument(
+        "--endpoint",
+        default="",
+        help="S3-compatible endpoint URL (R2, B2, MinIO); keys from the saved connection",
+    )
     p_s3.add_argument("--limit", type=int, default=500, help="max objects per run")
     p_s3.add_argument("--json", action="store_true", help="machine-readable output")
 
@@ -678,8 +683,11 @@ def main(argv: list[str] | None = None) -> int:
                     embedder,
                     bucket=args.bucket,
                     prefix=args.prefix,
-                    profile=args.profile,
                     limit=args.limit,
+                    credentials_map={
+                        "region": args.region,
+                        "endpoint": args.endpoint,
+                    },
                 )
             except S3Error as exc:
                 print(f"error: {exc}", file=sys.stderr)
