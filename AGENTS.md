@@ -210,6 +210,27 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   answer + `lanes="symbol"` hits, so symbol questions never reach the LLM and
   never touch the RRF lanes (graph stays at the navigation layer). The ask
   response carries `symbol` and the UI shows a "call graph" badge.
+- Judge (`evaluate.judge_answer` + `JUDGE_PROMPT`): an opt-in LLM grader next
+  to the overlap proxy — one call per answer asking for
+  `{"supported", "total", "unsupported"}`; `parse_judge_reply` tolerates prose
+  around the JSON and any unparseable reply stays `judged: False` (out of the
+  aggregate, reported as coverage). `eval --judge` implies `--answers` and
+  prints `judge faithfulness` + how many answers were judged.
+- Portable bundle (`serve.run_export` / `run_import`): a zip with
+  `manifest.json` + a SQLite-consistent `index.db` snapshot under
+  `<db dir>/bundles/`; import validates the manifest, refuses a major-version
+  gap or a different embedder (fail-closed: a silent mismatch would poison
+  every future query), takes a safety snapshot, then uses the SQLite backup API
+  to overwrite the live database in place. CLI `ragdesk export` / `import`,
+  API `/api/export`, `/api/bundles`, `/api/import`, UI card in Settings.
+  Credentials are never included in a bundle.
+- Scope chip (UI): "Only this folder" on a citation sets a pending scope; the
+  next questions are sent as `folder:"<dir>"` (quoted filter values — see
+  `_FILTER_RE` in search.py), which is why paths with spaces work.
+- Topic map picture (`scripts/topic_map.py`): numpy PCA over `_doc_vectors()`
+  (script, not the stdlib core), colours from `topics.cluster_documents`,
+  capped at `PER_CLUSTER` dots so a 200-copy pile cannot squash the map;
+  writes a self-contained HTML with hover tooltips.
 - Topic map (`topics.py`): `cluster_documents` is greedy leader clustering over
   `store._doc_vectors()` (the same average chunk vectors related-documents uses;
   pure Python, `MAX_DOCS` 2000 before it needs numpy) at cosine ≥ 0.75;

@@ -231,6 +231,49 @@ def test_never_index_endpoint_saves_and_prunes(base_url: str, tmp_path: Path):
     assert payload["skipped"] == 1  # the pattern keeps it out from now on
 
 
+def test_export_and_import_bundle(base_url: str, tmp_path: Path):
+    import json
+    import zipfile
+
+    status, payload = request(f"{base_url}/api/export", {})
+    assert status == 200
+    bundle = Path(payload["path"])
+    assert bundle.is_file() and payload["documents"] == 3
+    with zipfile.ZipFile(bundle) as archive:
+        assert set(archive.namelist()) == {"index.db", "manifest.json"}
+        manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["embedder"]["name"] == "hash-4096"
+
+    listing_status, listing = request(f"{base_url}/api/bundles")
+    assert listing_status == 200
+    assert [row["name"] for row in listing["bundles"]] == [bundle.name]
+
+    # importing the same bundle is a no-op that still keeps a safety snapshot
+    status, payload = request(f"{base_url}/api/import", {"path": str(bundle)})
+    assert status == 200
+    assert Path(payload["safety_backup"]).is_file()
+    _, status_payload = request(f"{base_url}/api/status")
+    assert status_payload["documents"] == 3
+
+    # a bundle from another embedder is refused before it can poison the index
+    other = tmp_path / "foreign.zip"
+    with zipfile.ZipFile(other, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps({"ragdesk": "0.1.0", "embedder": {"name": "onnx:x"}}),
+        )
+        archive.writestr("index.db", b"not really a database")
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/import", {"path": str(other)})
+    assert excinfo.value.code == 400
+    body = json.loads(excinfo.value.read().decode())
+    assert "onnx:x" in body["error"]
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/import", {"path": str(tmp_path / "nope.zip")})
+    assert excinfo.value.code == 400
+
+
 def test_backup_and_restore_endpoints(base_url: str, tmp_path: Path):
     status, payload = request(f"{base_url}/api/backup", {})
     assert status == 200

@@ -13,9 +13,11 @@ import os
 import shutil
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
+import zipfile
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -300,6 +302,12 @@ class Handler(BaseHTTPRequestHandler):
             with Store(self.state.db) as store:
                 self._send(200, self._health_payload(store))
             return
+        if self.path == "/api/bundles":
+            self._send(
+                200,
+                {"dir": str(bundles_dir(self.state.db)), "bundles": list_bundles(self.state.db)},
+            )
+            return
         if self.path == "/api/backups":
             self._send(
                 200,
@@ -535,6 +543,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_save_page(body)
             elif self.path == "/api/never-index":
                 self._handle_never_index(body)
+            elif self.path == "/api/export":
+                self._send(200, run_export(self.state.db))
+            elif self.path == "/api/import":
+                self._handle_import(body)
             elif self.path == "/api/backup":
                 self._send(200, run_backup(self.state.db))
             elif self.path == "/api/restore":
@@ -1452,6 +1464,21 @@ class Handler(BaseHTTPRequestHandler):
             removed = store.delete_documents_matching(patterns) if patterns else []
         self._send(200, {"patterns": patterns, "removed": removed})
 
+    def _handle_import(self, body: dict[str, Any]) -> None:
+        path = str(body.get("path", "")).strip()
+        if not path:
+            self._send(400, {"error": "path required (a ragdesk bundle zip)"})
+            return
+        with self.state.lock:
+            try:
+                result = run_import(
+                    self.state.db, path, embedder_name=str(self.state.embedder.name)
+                )
+            except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError) as exc:
+                self._send(400, {"error": str(exc)})
+                return
+        self._send(200, result)
+
     def _handle_restore(self, body: dict[str, Any]) -> None:
         path = str(body.get("path", "")).strip()
         if not path:
@@ -2130,6 +2157,122 @@ def restore_backup(db: str, source: str) -> dict[str, Any]:
     finally:
         source_conn.close()
     return {"restored": str(path), "safety_backup": safety["path"]}
+
+
+# --- portable bundles -----------------------------------------------------------
+
+BUNDLE_MANIFEST = "manifest.json"
+BUNDLE_DB = "index.db"
+
+
+def bundles_dir(db: str) -> Path:
+    return Path(db).expanduser().resolve().parent / "bundles"
+
+
+def run_export(db: str) -> dict[str, Any]:
+    """Zip a consistent snapshot of the index plus a manifest, for another machine."""
+    target_dir = bundles_dir(db)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = target_dir / f"ragdesk-{stamp}.zip"
+    suffix = 1
+    while target.exists():
+        suffix += 1
+        target = target_dir / f"ragdesk-{stamp}-{suffix}.zip"
+    manifest: dict[str, Any] = {"ragdesk": __version__}
+    with Store(db) as store:
+        stats = store.stats()
+        manifest.update(
+            {
+                "created_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                "documents": stats["documents"],
+                "chunks": stats["chunks"],
+                "embedder": {
+                    "name": store.get_meta("embedder.name"),
+                    "dim": store.get_meta("embedder.dim"),
+                },
+            }
+        )
+        with tempfile.TemporaryDirectory(prefix="ragdesk-export-") as tmp:
+            snapshot = Path(tmp) / BUNDLE_DB
+            dest = sqlite3.connect(snapshot)
+            try:
+                store.conn.backup(dest)
+            finally:
+                dest.close()
+            with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(snapshot, BUNDLE_DB)
+                archive.writestr(BUNDLE_MANIFEST, json.dumps(manifest, indent=2))
+    return {
+        "path": str(target),
+        "bytes": target.stat().st_size,
+        **{key: manifest[key] for key in ("documents", "chunks", "created_at")},
+    }
+
+
+def list_bundles(db: str) -> list[dict[str, Any]]:
+    target_dir = bundles_dir(db)
+    if not target_dir.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for path in sorted(target_dir.glob("ragdesk-*.zip"), reverse=True):
+        stat = path.stat()
+        out.append(
+            {
+                "path": str(path),
+                "name": path.name,
+                "bytes": stat.st_size,
+                "at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            }
+        )
+    return out
+
+
+def run_import(db: str, bundle: str, *, embedder_name: str = "") -> dict[str, Any]:
+    """Replace the live index with a bundle's database (safety snapshot first).
+
+    Fail-closed on a major-version gap or an embedder that does not match the
+    one this install is configured with: a silent mismatch would poison every
+    future query.
+    """
+    path = Path(bundle).expanduser()
+    if not path.is_file():
+        raise ValueError(f"bundle not found: {bundle}")
+    try:
+        archive = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"not a zip file: {bundle}") from exc
+    with archive:
+        names = set(archive.namelist())
+        if BUNDLE_MANIFEST not in names or BUNDLE_DB not in names:
+            raise ValueError("not a ragdesk bundle (no manifest/index)")
+        manifest = json.loads(archive.read(BUNDLE_MANIFEST))
+        build = str(manifest.get("ragdesk") or "")
+        if build.split(".")[0] != __version__.split(".")[0]:
+            raise ValueError(
+                f"bundle was written by ragdesk {build}; this install is {__version__}"
+            )
+        bundled = str((manifest.get("embedder") or {}).get("name") or "")
+        if embedder_name and bundled and embedder_name != bundled:
+            raise ValueError(
+                f"bundle was indexed with {bundled}; this install uses {embedder_name} — "
+                "switch the embedder first"
+            )
+        safety = run_backup(db)
+        with tempfile.TemporaryDirectory(prefix="ragdesk-import-") as tmp:
+            archive.extract(BUNDLE_DB, tmp)
+            source = sqlite3.connect(Path(tmp) / BUNDLE_DB)
+            try:
+                with Store(db) as store:
+                    source.backup(store.conn)
+            finally:
+                source.close()
+    return {
+        "restored": str(path),
+        "safety_backup": safety["path"],
+        "documents": manifest.get("documents"),
+        "chunks": manifest.get("chunks"),
+    }
 
 
 def make_server(

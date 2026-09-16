@@ -811,6 +811,23 @@ kbd {
   outline: none;
 }
 
+.scope-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 4px 6px 4px 10px;
+  font-size: var(--text-sm);
+  color: var(--stamp);
+  background: color-mix(in srgb, var(--stamp) 8%, transparent);
+  border-left: 3px solid var(--stamp);
+  border-radius: var(--r-xs);
+}
+
+.scope-chip strong {
+  font-weight: 600;
+}
+
 .composer-actions {
   display: flex;
   gap: 8px;

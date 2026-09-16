@@ -5,6 +5,10 @@ Exposes the local index to MCP clients (Claude Code, Cursor, …) as tools:
 - ``ragdesk_search`` — hybrid retrieval over the local index
 - ``ragdesk_document`` — full text of one indexed document
 - ``ragdesk_sources`` — indexed sources with document/chunk counts
+- ``ragdesk_symbol`` — definitions and call sites for a code symbol
+- ``ragdesk_topics`` — the corpus grouped into labelled topic clusters
+- ``ragdesk_save`` — save one web page into the index (writes to the local
+  index only; sources are never written to)
 
 Run with ``ragdesk mcp`` (optional global flags: ``--db``, ``--embedder``,
 ``--rerank``). Messages are newline-delimited JSON-RPC 2.0 on stdin/stdout.
@@ -54,6 +58,35 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"path": {"type": "string"}},
             "required": ["path"],
+        },
+    },
+    {
+        "name": "ragdesk_symbol",
+        "description": (
+            "Where a code symbol is defined and who calls it, scanned from the "
+            "indexed code files. Use for 'who calls X' / 'where is X defined'."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "symbol name"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "ragdesk_topics",
+        "description": "Group the indexed documents into labelled topic clusters.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "ragdesk_save",
+        "description": (
+            "Fetch one web page and save it into the local index so future "
+            "searches can cite it. Writes to the index, never to your sources."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
         },
     },
     {
@@ -142,6 +175,49 @@ class McpServer:
             if text is None:
                 return self._tool_error(f"not indexed: {path}")
             return self._tool_text(text)
+
+        if name == "ragdesk_symbol":
+            symbol = str(arguments.get("name", "")).strip()
+            if not symbol:
+                return self._tool_error("name is required")
+            from ragdesk.symbols import find_symbol, symbol_answer  # noqa: PLC0415
+
+            with Store(self.db) as store:
+                result = find_symbol(store, symbol)
+            text, _hits = symbol_answer(symbol, result)
+            return self._tool_text(text or f"no definitions or call sites for {symbol}")
+
+        if name == "ragdesk_topics":
+            from ragdesk.topics import topic_map  # noqa: PLC0415
+
+            with Store(self.db) as store:
+                topics = topic_map(store)
+            if not topics:
+                return self._tool_text("nothing indexed yet")
+            lines = [
+                f"{topic['label'] or '(mixed)'} — {topic['documents']} documents "
+                f"(e.g. {topic['paths'][0]})"
+                for topic in topics
+            ]
+            return self._tool_text("\n".join(lines))
+
+        if name == "ragdesk_save":
+            url = str(arguments.get("url", "")).strip()
+            if not url:
+                return self._tool_error("url is required")
+            from ragdesk.web import WebError, save_page  # noqa: PLC0415
+
+            with Store(self.db) as store:
+                store.ensure_embedder(self.embedder.name, self.embedder.dim)
+                try:
+                    stats = save_page(store, self.embedder, url)
+                except WebError as exc:
+                    return self._tool_error(str(exc))
+            if stats.indexed:
+                return self._tool_text(f"saved {url} ({stats.chunks} chunks)")
+            if stats.unchanged:
+                return self._tool_text(f"already saved and unchanged: {url}")
+            return self._tool_error(f"fetched but no readable text: {url}")
 
         if name == "ragdesk_sources":
             with Store(self.db) as store:

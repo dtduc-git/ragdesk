@@ -194,7 +194,10 @@ args = ["mcp"]
 
 Tools exposed: `ragdesk_search` (hybrid retrieval with paths and scores),
 `ragdesk_document` (full text of one indexed file), `ragdesk_sources`
-(document/chunk counts per source). Pass the same `--embedder` you indexed with
+(document/chunk counts per source), `ragdesk_symbol` (where a code symbol is
+defined and who calls it), `ragdesk_topics` (the corpus as labelled clusters)
+and `ragdesk_save` (fetch one page into the index — the only tool that writes,
+and it never touches your sources). Pass the same `--embedder` you indexed with
 — the index refuses mismatched embeddings.
 
 ## Desktop app (Tauri 2)
@@ -272,7 +275,10 @@ The same UI also runs in a browser for development:
 | Never index: glob patterns (`*secret*`, `*.pem`) are never read, and saving a pattern removes already-indexed matches | |
 | Index backup: one-click snapshot (SQLite backup API, safe while in use) + restore with a safety copy; keeps the last 5 | |
 | Completions + man page: `ragdesk completions bash\|zsh\|fish` and `ragdesk man`, generated from the CLI itself | |
-| Eval: per-category metrics + category gates, plus `--answers` faithfulness scoring and `--rewrite` follow-up scoring | |
+| Scope a question to a folder: "Only this folder" on any citation keeps the next questions inside it (quoted filters, so paths with spaces work) | |
+| Portable bundle: export the whole index as a zip with a manifest, import it on another machine (embedder mismatch refused, safety snapshot kept) | |
+| Topic map picture: `scripts/topic_map.py` projects the corpus to 2D (PCA) and writes a self-contained HTML — clusters coloured, hover for paths | |
+| Eval: per-category metrics + category gates, `--answers` faithfulness (overlap proxy), `--judge` (asks the local model to grade each answer sentence by sentence) and `--rewrite` follow-up scoring | |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
 | RAM presets (`light` / `balanced` / `quality`) — switchable in Settings, applied live; per-flag overrides still work | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |

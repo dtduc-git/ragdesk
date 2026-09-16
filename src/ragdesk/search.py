@@ -31,7 +31,8 @@ META_PENALTY = 0.90
 CANONICAL_VALUES = {"canonical", "authoritative", "official", "high", "true", "yes", "1"}
 DRAFT_VALUES = {"draft", "deprecated", "archived", "superseded", "obsolete", "wip"}
 
-_FILTER_RE = re.compile(r"(?<![\w-])([a-z][a-z0-9_-]*):(\S+)")
+# `folder:Technical` and, for paths with spaces, `folder:"/Users/me/My Docs"`
+_FILTER_RE = re.compile(r'(?<![\w-])([a-z][a-z0-9_-]*):(?:"([^"]+)"|(\S+))')
 _RESERVED_KEYS = {"http", "https", "file", "ragdesk", "ollama", "github", "web"}
 
 
@@ -53,7 +54,8 @@ def parse_filters(query: str) -> tuple[str, Filters]:
 
     def take(match: re.Match[str]) -> str:
         nonlocal folder, source
-        key, value = match.group(1), match.group(2)
+        key = match.group(1)
+        value = match.group(2) or match.group(3)
         if key in _RESERVED_KEYS:
             return match.group(0)  # a URL or a word with a colon, not a filter
         if key == "folder":

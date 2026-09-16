@@ -29,6 +29,20 @@ from ragdesk.search import Hit, parse_filters, retrieve
 from ragdesk.store import Store
 
 Sentence = Callable[[str], list[str]]
+JudgeFor = Callable[[str, list[str]], dict]
+
+JUDGE_PROMPT = """You check whether an answer is faithful to the sources it cites.
+Read the sources, then read the answer. For every sentence of the answer decide
+whether the sources support it. Reply with ONLY this JSON object:
+{{"supported": <number of supported sentences>, "total": <total sentences>,
+ "unsupported": ["<the sentence>", "..."]}}
+
+Sources:
+{context}
+
+Answer:
+{answer}
+JSON:"""
 _CITATION_RE = re.compile(r"\[(\d+)\]")
 HydeFor = Callable[[str], str]
 RewriteFor = Callable[[str, list[tuple[str, str]]], str]
@@ -185,6 +199,59 @@ def ground_answer(answer: str, citations: list[str]) -> dict[str, Any]:
         "grounded_ratio": grounded / len(sentences) if sentences else 0.0,
         "sentences": len(sentences),
     }
+
+
+def parse_judge_reply(raw: str) -> dict[str, Any]:
+    """Tolerant parse of the judge's JSON; unparseable replies are 'not judged'."""
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return {"judged": False}
+    try:
+        payload = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return {"judged": False}
+    if not isinstance(payload, dict):
+        return {"judged": False}
+    try:
+        supported = int(payload.get("supported") or 0)
+        total = int(payload.get("total") or 0)
+    except (TypeError, ValueError):
+        return {"judged": False}
+    if total <= 0:
+        return {"judged": False}
+    supported = max(0, min(supported, total))
+    unsupported = [
+        str(item)[:300]
+        for item in (payload.get("unsupported") or [])
+        if str(item).strip()
+    ]
+    return {
+        "judged": True,
+        "supported": supported,
+        "total": total,
+        "ratio": supported / total,
+        "unsupported": unsupported,
+    }
+
+
+def judge_answer(answer: str, citations: list[str], llm: Any) -> dict[str, Any]:
+    """Ask a local model to grade faithfulness sentence by sentence.
+
+    Opt-in next to :func:`ground_answer` (the deterministic overlap proxy):
+    the judge reads for meaning, the proxy counts tokens. Unparseable replies
+    come back ``judged: False`` and stay out of the aggregate.
+    """
+    if not answer.strip() or not citations:
+        return {"judged": False}
+    prompt = JUDGE_PROMPT.format(
+        context="\n\n".join(text[:2000] for text in citations[:6]),
+        answer=answer[:4000],
+    )
+    try:
+        raw = str(llm.generate(prompt, {"num_predict": 400, "temperature": 0.0}))
+    except Exception:  # noqa: BLE001 - the judge is an enhancement, never a requirement
+        return {"judged": False}
+    return parse_judge_reply(raw)
 
 
 def ground_answer_detail(answer: str, citations: list[str]) -> dict[str, Any]:

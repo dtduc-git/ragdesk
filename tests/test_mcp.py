@@ -34,7 +34,14 @@ def test_notifications_are_silent(server: McpServer):
 def test_tools_list(server: McpServer):
     response = server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = [tool["name"] for tool in response["result"]["tools"]]
-    assert names == ["ragdesk_search", "ragdesk_document", "ragdesk_sources"]
+    assert set(names) == {
+        "ragdesk_search",
+        "ragdesk_document",
+        "ragdesk_sources",
+        "ragdesk_symbol",
+        "ragdesk_topics",
+        "ragdesk_save",
+    }
 
 
 def test_search_tool(server: McpServer):
@@ -111,3 +118,48 @@ def test_unknown_method_and_tool(server: McpServer):
         }
     )
     assert response["result"]["isError"] is True
+
+
+def test_symbol_and_topics_tools(server: McpServer):
+    response = server.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {"name": "ragdesk_symbol", "arguments": {"name": "hybrid_search"}},
+        }
+    )
+    text = response["result"]["content"][0]["text"]
+    assert "no definitions or call sites" in text  # the fixture corpus has no code
+
+    response = server.handle(
+        {"jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": {"name": "ragdesk_topics"}}
+    )
+    assert not response["result"].get("isError")
+
+
+def test_save_tool_is_the_one_writer(server: McpServer, monkeypatch):
+    from ragdesk.index import IndexStats
+
+    page = "<html><title>Saved</title><body><p>a saved page</p></body></html>"
+    monkeypatch.setattr("ragdesk.web._fetch", lambda url, timeout=30.0: page)
+    response = server.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {"name": "ragdesk_save", "arguments": {"url": "https://example.com/post"}},
+        }
+    )
+    assert "saved https://example.com/post" in response["result"]["content"][0]["text"]
+
+    missing = server.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {"name": "ragdesk_save", "arguments": {}},
+        }
+    )
+    assert missing["result"]["isError"] is True
+    _ = IndexStats

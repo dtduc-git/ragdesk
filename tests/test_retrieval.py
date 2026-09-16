@@ -55,6 +55,17 @@ def test_parse_filters_takes_folder_and_source():
     assert not filters
 
 
+def test_parse_filters_accepts_quoted_values():
+    query, filters = parse_filters('folder:"/Users/me/My Docs" quarterly report')
+    assert query == "quarterly report"
+    assert filters.path_like == "/Users/me/My Docs"
+
+    query, filters = parse_filters('source:local tag:"release notes" what changed')
+    assert query == "what changed"
+    assert filters.source == "local"
+    assert filters.meta == {"tag": "release notes"}
+
+
 def test_hit_context_prefers_parent():
     assert hit("a.md", parent="big parent section").context == "big parent section"
     assert hit("a.md").context == "child text"

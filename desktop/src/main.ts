@@ -502,6 +502,7 @@ function citeCard(hit: Hit, rank: number): string {
       <div class="cite-tools">
         <button class="action" type="button" data-related="${escapeHtml(hit.path)}">Related</button>
         <button class="action" type="button" data-backlinks="${escapeHtml(hit.path)}">Backlinks</button>
+        <button class="action" type="button" data-scope="${escapeHtml(folderOf(hit.path))}" title="Ask only inside this folder">Only this folder</button>
       </div>
       <div class="cite-nav" hidden></div>
     </div>
@@ -527,6 +528,33 @@ document.addEventListener("click", (event) => {
   const path = target.closest<HTMLElement>("[data-open-path]")?.dataset.openPath;
   if (path) void openLocal(path);
 });
+
+// --- scope --------------------------------------------------------------------
+
+let scopeFolder = "";
+
+function folderOf(path: string): string {
+  const cut = path.replace(/\\/g, "/").split("/");
+  cut.pop();
+  return cut.join("/") || "/";
+}
+
+function renderScopeChip(): void {
+  $("scope-chip").hidden = !scopeFolder;
+  $("scope-name").textContent = scopeFolder ? scopeFolder.split("/").pop() ?? scopeFolder : "";
+}
+
+function setScope(folder: string): void {
+  scopeFolder = folder;
+  renderScopeChip();
+  toast(
+    folder
+      ? `Scoped to ${folder} — the next questions search only there`
+      : "Scope cleared — searching everything again",
+  );
+}
+
+$("scope-clear").addEventListener("click", () => setScope(""));
 
 // --- chat ---------------------------------------------------------------------
 
@@ -581,11 +609,12 @@ function appendAssistantShell(): {
   };
 }
 
-async function ask(query: string): Promise<void> {
+async function ask(rawQuery: string): Promise<void> {
   if (streaming || !status) {
     if (!status) toast("The local indexer is not reachable.");
     return;
   }
+  const query = scopeFolder ? `folder:"${scopeFolder}" ${rawQuery}` : rawQuery;
   streaming = true;
   $<HTMLButtonElement>("chat-send").disabled = true;
   $("chat-stop").hidden = false;
@@ -1821,6 +1850,11 @@ document.addEventListener("click", async (event) => {
     toast(`Answer engine: ${use.dataset.use}`);
     return;
   }
+  const scope = element.closest<HTMLElement>("[data-scope]");
+  if (scope?.dataset.scope) {
+    setScope(scope.dataset.scope);
+    return;
+  }
   const related = element.closest<HTMLElement>("[data-related]");
   const backlinks = element.closest<HTMLElement>("[data-backlinks]");
   if (related || backlinks) {
@@ -2564,6 +2598,61 @@ async function loadTopics(): Promise<void> {
   }
 }
 
+type Bundle = { path: string; name: string; bytes: number; at: string };
+
+async function loadBundles(): Promise<void> {
+  const box = $("bundle-list");
+  if (!box) return;
+  try {
+    const { bundles } = await get<{ bundles: Bundle[] }>("/api/bundles");
+    box.innerHTML = bundles.length
+      ? bundles
+          .map(
+            (bundle) => `<div class="memory-item">
+              <span class="bookmark-url" title="${escapeHtml(bundle.path)}">${escapeHtml(bundle.name)} · ${formatBytes(bundle.bytes)}</span>
+              <span class="bookmark-tools">
+                <button class="action" type="button" data-import="${escapeHtml(bundle.path)}">Import</button>
+              </span>
+            </div>`,
+          )
+          .join("")
+      : `<p class="caption">no bundles yet</p>`;
+  } catch {
+    box.innerHTML = "";
+  }
+}
+
+$("bundle-export")?.addEventListener("click", async () => {
+  $("bundle-status").textContent = "writing the bundle…";
+  try {
+    const result = await post<{ path: string; bytes: number; documents: number }>(
+      "/api/export",
+      {},
+    );
+    $("bundle-status").textContent = `exported ${result.documents} documents — ${result.path}`;
+    await loadBundles();
+  } catch (error) {
+    $("bundle-status").textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+$("bundle-list")?.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>("[data-import]");
+  if (!button?.dataset.import) return;
+  const name = button.dataset.import.split("/").pop();
+  if (!window.confirm(`Replace this index with ${name}? A safety snapshot of the current index is kept.`)) return;
+  $("bundle-status").textContent = "importing…";
+  try {
+    const result = await post<{ documents: number; safety_backup: string }>("/api/import", {
+      path: button.dataset.import,
+    });
+    $("bundle-status").textContent = `imported ${result.documents} documents — reloading`;
+    window.location.reload();
+  } catch (error) {
+    $("bundle-status").textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
 function renderAnswerActions(
   message: HTMLElement,
   actions: HTMLElement,
@@ -3105,6 +3194,7 @@ async function boot(): Promise<void> {
     void loadCorrections();
     void loadNeverIndex();
     void loadBackups();
+    void loadBundles();
     void loadMcp();
     if (!status.onboarded) {
       wizardStep = 0;

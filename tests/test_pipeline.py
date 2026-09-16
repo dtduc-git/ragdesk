@@ -503,6 +503,45 @@ def test_answer_stream_maps_pieces():
     assert list(answer_stream("q", [hit], llm)) == ["Hel", "lo"]
 
 
+def test_parse_judge_reply_tolerates_prose_and_clamps():
+    from ragdesk.evaluate import parse_judge_reply
+
+    parsed = parse_judge_reply('Sure! {"supported": 2, "total": 3, "unsupported": ["x [9]"]}')
+    assert parsed["judged"] is True
+    assert parsed["supported"] == 2 and parsed["total"] == 3
+    assert abs(parsed["ratio"] - 2 / 3) < 1e-9
+    assert parsed["unsupported"] == ["x [9]"]
+
+    assert parse_judge_reply("no json here")["judged"] is False
+    assert parse_judge_reply('{"supported": 5, "total": 0}')["judged"] is False
+    clamped = parse_judge_reply('{"supported": 9, "total": 3}')
+    assert clamped["supported"] == 3
+
+
+def test_judge_answer_uses_the_local_model():
+    from ragdesk.evaluate import judge_answer
+
+    reply = '{"supported": 1, "total": 2, "unsupported": ["the moon is cheese"]}'
+    llm = FakeLLM(replies=[reply])
+    answer_text = "Tokens expire after 60 minutes [1]. The moon is cheese."
+    verdict = judge_answer(answer_text, ["tokens expire"], llm)
+    assert verdict["judged"] is True and verdict["ratio"] == 0.5
+    assert llm.calls == 1
+
+    assert judge_answer("", ["ctx"], llm)["judged"] is False
+    assert judge_answer("an answer", [], llm)["judged"] is False
+
+
+def test_judge_answer_survives_a_broken_model():
+    from ragdesk.evaluate import judge_answer
+
+    class Exploding:
+        def generate(self, prompt: str, options: dict) -> str:
+            raise RuntimeError("model died")
+
+    assert judge_answer("answer", ["ctx"], Exploding())["judged"] is False
+
+
 def test_hit_to_dict_is_the_one_citation_shape():
     payload = hit_to_dict(make_hit("a.md", "context"))
     assert set(payload) == {

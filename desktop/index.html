@@ -73,6 +73,10 @@
             </div>
           </div>
           <form class="composer" id="chat-form">
+            <div class="scope-chip" id="scope-chip" hidden>
+              <span>scoped to <strong id="scope-name"></strong></span>
+              <button class="chip-x" type="button" id="scope-clear" aria-label="Clear the scope">×</button>
+            </div>
             <textarea
               id="chat-input"
               rows="2"
@@ -344,6 +348,18 @@
               <div class="button-row">
                 <button class="btn btn-quiet" type="button" id="mcp-install">Install the ragdesk command</button>
               </div>
+            </section>
+
+            <section class="setting-card">
+              <header class="setting-head">
+                <h3>Portable bundle</h3>
+                <p>Move the whole index to another machine, or keep a copy outside the app. Credentials are never included.</p>
+              </header>
+              <div class="button-row">
+                <button class="btn" type="button" id="bundle-export">Export a bundle</button>
+              </div>
+              <div class="memory-list" id="bundle-list"></div>
+              <p class="caption" id="bundle-status"></p>
             </section>
 
             <section class="setting-card">

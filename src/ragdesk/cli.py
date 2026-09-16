@@ -27,7 +27,14 @@ from ragdesk.email_source import (
 from ragdesk.email_source import resolve_imap_credentials as email_credentials
 from ragdesk.embed import get_embedder
 from ragdesk.envfile import load_env_file
-from ragdesk.evaluate import category_metrics, evaluate, format_report, ground_answer, load_golden
+from ragdesk.evaluate import (
+    category_metrics,
+    evaluate,
+    format_report,
+    ground_answer,
+    judge_answer,
+    load_golden,
+)
 from ragdesk.gdrive import GdriveError, sync_gdrive
 from ragdesk.github import GitHubError, sync_github
 from ragdesk.gitlab import GitLabError, sync_gitlab
@@ -158,6 +165,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also answer each query with the local LLM and score grounding",
     )
     p_eval.add_argument(
+        "--judge",
+        action="store_true",
+        help="grade each answer's faithfulness with the local model (implies --answers)",
+    )
+    p_eval.add_argument(
         "--rewrite",
         action="store_true",
         help="score follow-up rows (a history field) both raw and rewritten by the local model",
@@ -223,6 +235,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_web.add_argument("--max-pages", type=int, default=50)
     p_web.add_argument("--depth", type=int, default=2)
     p_web.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p_export = sub.add_parser(
+        "export", help="zip the index (with a manifest) so another machine can import it"
+    )
+    p_export.add_argument("--json", action="store_true", help="machine-readable output")
+    p_import = sub.add_parser(
+        "import", help="replace this index with a bundle's (a safety snapshot is kept)"
+    )
+    p_import.add_argument("bundle", type=Path, help="the ragdesk-*.zip bundle to import")
+    p_import.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_refusals = sub.add_parser(
         "refusals", help="questions your sources could not answer (gap report)"
@@ -656,6 +678,36 @@ def main(argv: list[str] | None = None) -> int:
             emit_stats(stats, getattr(args, 'json', False))
             return 0
 
+        if args.command == "export":
+            from ragdesk.serve import run_export
+
+            result = run_export(str(store.path))
+            if getattr(args, "json", False):
+                emit_json(result)
+            else:
+                print(
+                    f"bundle: {result['path']} ({result['bytes'] / 1048576:.1f} MB, "
+                    f"{result['documents']} documents)"
+                )
+            return 0
+
+        if args.command == "import":
+            from ragdesk.serve import run_import
+
+            try:
+                result = run_import(str(store.path), str(args.bundle), embedder_name=embedder.name)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            if getattr(args, "json", False):
+                emit_json(result)
+            else:
+                print(
+                    f"imported {result['documents']} documents — safety snapshot: "
+                    f"{result['safety_backup']}"
+                )
+            return 0
+
         if args.command == "refusals":
             rows = store.refused_questions(limit=args.limit)
             if getattr(args, "json", False):
@@ -852,20 +904,25 @@ def main(argv: list[str] | None = None) -> int:
             report: dict[str, Any] = {"metrics": metrics, "queries": per_query}
             if baseline is not None:
                 report["baseline"] = baseline
-            if args.answers:
+            if args.answers or args.judge:
                 answer_llm = resolve_llm(None, preset=settings["preset"])
                 grounded: list[dict[str, Any]] = []
+                judged: list[dict[str, Any]] = []
                 for row in per_query:
                     hits = retrieve(
                         store, embedder, row["query"], top_k=args.top_k, reranker=reranker
                     )
                     text = answer(row["query"], hits, answer_llm)
-                    verdict = ground_answer(
-                        text, [hit.context for hit in hits]
-                    )
+                    contexts = [hit.context for hit in hits]
+                    verdict = ground_answer(text, contexts)
                     row["grounded_ratio"] = verdict["grounded_ratio"]
                     row["citation_valid"] = verdict["citation_valid"]
                     grounded.append(verdict)
+                    if args.judge:
+                        jury = judge_answer(text, contexts, answer_llm)
+                        row["judge"] = jury
+                        if jury.get("judged"):
+                            judged.append(jury)
                 metrics["grounded_ratio"] = (
                     sum(item["grounded_ratio"] for item in grounded) / (len(grounded) or 1)
                 )
@@ -873,6 +930,13 @@ def main(argv: list[str] | None = None) -> int:
                     sum(1.0 for item in grounded if item["citation_valid"])
                     / (len(grounded) or 1)
                 )
+                if args.judge:
+                    metrics["judge_ratio"] = (
+                        sum(item["ratio"] for item in judged) / len(judged)
+                        if judged
+                        else 0.0
+                    )
+                    metrics["judge_coverage"] = len(judged) / (len(per_query) or 1)
             if args.json:
                 print(json.dumps(report, indent=2))
             else:
@@ -881,9 +945,14 @@ def main(argv: list[str] | None = None) -> int:
                     print(format_report(baseline, []))
                     print("with rewrite:")
                 print(format_report(metrics, per_query))
-                if args.answers:
-                    print(f"grounded: {metrics['grounded_ratio']:.3f}")
+                if args.answers or args.judge:
+                    print(f"grounded (overlap proxy): {metrics['grounded_ratio']:.3f}")
                     print(f"citations valid: {metrics['citation_valid']:.3f}")
+                if args.judge:
+                    print(
+                        f"judge faithfulness: {metrics['judge_ratio']:.3f} "
+                        f"(judged {metrics['judge_coverage']:.0%} of answers)"
+                    )
             if args.min_recall is not None and metrics["recall@5"] < args.min_recall:
                 print(
                     f"eval gate failed: recall@5 {metrics['recall@5']:.3f} < {args.min_recall:.3f}",
