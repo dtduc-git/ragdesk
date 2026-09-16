@@ -28,6 +28,7 @@ SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__",
     ".ragdesk", "dist", "build", "target", ".terraform",
     ".mypy_cache", ".ruff_cache", ".pytest_cache",
+    ".obsidian", ".trash",  # an Obsidian vault's config and deleted notes
 }
 MAX_FILE_BYTES = 1_000_000
 MAX_DOCUMENT_BYTES = 25_000_000  # PDFs and office files are legitimately large
@@ -109,6 +110,25 @@ def is_indexable(path: Path, size: int) -> bool:
     if size > MAX_FILE_BYTES:
         return False
     return is_text_file(path)
+
+
+def vault_roots() -> list[str]:
+    """Folders the user added as Obsidian vaults (Settings / `ragdesk obsidian`)."""
+    from ragdesk import settings as app_settings  # noqa: PLC0415 - optional knob
+
+    raw = app_settings.load().get("vaults") or []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def vault_for(path: Path, roots: list[str]) -> str:
+    """The vault name this file belongs to, or ""."""
+    from ragdesk.obsidian import vault_name  # noqa: PLC0415 - avoids an import cycle
+
+    text = str(path)
+    for root in roots:
+        if text == root or text.startswith(root.rstrip("/") + "/"):
+            return vault_name(root)
+    return ""
 
 
 def never_index_patterns() -> list[str]:
@@ -268,6 +288,7 @@ def index_paths(
         )
     stats = IndexStats()
     patterns = never_index_patterns()
+    vaults = vault_roots()
     for file in iter_files(paths):
         stats.files_scanned += 1
         if progress is not None:
@@ -297,6 +318,15 @@ def index_paths(
                 stats.skip(file, "no extractable text")
                 continue
 
+            metadata = None
+            vault = vault_for(file, vaults) if vaults else ""
+            if vault:
+                from ragdesk.obsidian import vault_metadata  # noqa: PLC0415
+
+                metadata, content = vault_metadata(vault, content)
+                if not content.strip():
+                    stats.skip(file, "no extractable text")
+                    continue
             chunks = index_document(
                 store,
                 embedder,
@@ -306,6 +336,7 @@ def index_paths(
                 mtime=info.st_mtime,
                 chunk_chars=chunk_chars,
                 chunk_overlap=chunk_overlap,
+                metadata=metadata,
             )
         except Exception as exc:  # noqa: BLE001 - report and keep indexing
             stats.skip(file, f"error: {type(exc).__name__}: {exc}")

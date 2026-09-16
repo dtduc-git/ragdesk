@@ -224,6 +224,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_web.add_argument("--depth", type=int, default=2)
     p_web.add_argument("--json", action="store_true", help="machine-readable output")
 
+    p_refusals = sub.add_parser(
+        "refusals", help="questions your sources could not answer (gap report)"
+    )
+    p_refusals.add_argument("--limit", type=int, default=25)
+    p_refusals.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p_vault = sub.add_parser(
+        "obsidian", help="add an Obsidian vault: aliases/tags searchable, config dirs skipped"
+    )
+    p_vault.add_argument("path", type=Path, help="the vault folder (the one holding .obsidian/)")
+    p_vault.add_argument("--json", action="store_true", help="machine-readable output")
+
     p_save = sub.add_parser("save", help="save one web page (bookmark) into the index")
     p_save.add_argument("url", help="page URL, e.g. https://example.com/article")
     p_save.add_argument("--json", action="store_true", help="machine-readable output")
@@ -642,6 +654,40 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             emit_stats(stats, getattr(args, 'json', False))
+            return 0
+
+        if args.command == "refusals":
+            rows = store.refused_questions(limit=args.limit)
+            if getattr(args, "json", False):
+                emit_json({"questions": rows})
+            elif not rows:
+                print("no refusals yet — every question so far found its sources")
+            else:
+                for row in rows:
+                    mark = "answered since" if row["resolved"] else "still nothing"
+                    print(f"  {row['count']:>2}x  {row['question'][:70]:<70} {mark}")
+            return 0
+
+        if args.command == "obsidian":
+            vault = args.path.expanduser()
+            if not vault.is_dir():
+                print(f"error: not a folder: {vault}", file=sys.stderr)
+                return 2
+            from ragdesk.obsidian import is_vault
+
+            if not is_vault(str(vault)):
+                print(
+                    f"note: {vault} has no .obsidian/ folder — indexing it as a plain folder",
+                    file=sys.stderr,
+                )
+            vaults = [
+                entry
+                for entry in app_settings.load().get("vaults") or []
+                if entry != str(vault)
+            ]
+            app_settings.save({"vaults": [*vaults, str(vault)]})
+            stats = index_paths(store, embedder, [vault])
+            emit_stats(stats, getattr(args, "json", False), vault=str(vault))
             return 0
 
         if args.command == "save":

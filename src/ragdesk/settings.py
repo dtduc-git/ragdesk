@@ -23,6 +23,7 @@ DEFAULTS: dict = {
     "chunk_overlap": 150,
     "embed_threads": 0,
     "never_index": [],
+    "vaults": [],
 }
 
 

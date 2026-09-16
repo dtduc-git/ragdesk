@@ -523,6 +523,27 @@ def test_answer_stream_refuses_when_model_emits_nothing():
     assert list(answer_stream("q", [hit], FakeLLM(pieces=[]))) == [REFUSAL]
 
 
+def test_refused_questions_track_count_and_resolution(tmp_path: Path):
+    with make_store(tmp_path) as store:
+        chat = store.create_chat("gaps")
+        store.add_message(chat, "user", "what is the deploy rollback?")
+        store.add_message(chat, "assistant", REFUSAL)
+        store.add_message(chat, "user", "what is the deploy rollback?")
+        store.add_message(chat, "assistant", "kubectl rollout undo [1]")  # resolved later
+        store.add_message(chat, "user", "where is the tax form?")
+        store.add_message(chat, "assistant", REFUSAL)
+        store.add_message(chat, "user", "where is the tax form?")
+        store.add_message(chat, "assistant", REFUSAL)
+
+        rows = store.refused_questions()
+    assert [row["question"] for row in rows] == [
+        "where is the tax form?",
+        "what is the deploy rollback?",
+    ]
+    assert rows[0]["count"] == 2 and rows[0]["resolved"] is False
+    assert rows[1]["count"] == 1 and rows[1]["resolved"] is True
+
+
 def test_corrections_roundtrip_and_nearest(tmp_path: Path):
     embedder = HashingEmbedder()
     with make_store(tmp_path) as store:

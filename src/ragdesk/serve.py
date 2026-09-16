@@ -261,6 +261,9 @@ class Handler(BaseHTTPRequestHandler):
                             "last_run": settings.load()["auto_index_last"],
                         },
                         "watch_seconds": int(settings.load().get("watch_seconds") or 0),
+                        "vaults": [
+                            str(entry) for entry in (settings.load().get("vaults") or [])
+                        ],
                         "hyde": bool(settings.load()["hyde"]),
                         "answer_length": str(settings.load()["answer_length"]),
                         "embed_threads": int(settings.load().get("embed_threads") or 0),
@@ -361,6 +364,31 @@ class Handler(BaseHTTPRequestHandler):
             with Store(self.state.db) as store:
                 clusters = store.duplicate_clusters()
             self._send(200, {"clusters": clusters})
+            return
+        if self.path.startswith("/api/refusals"):
+            probe = "probe=1" in self.path
+            with Store(self.state.db) as store:
+                rows = store.refused_questions()
+                if probe:
+                    for row in rows[:10]:
+                        hits = retrieve(
+                            store,
+                            self.state.embedder,
+                            str(row["question"]),
+                            top_k=1,
+                        )
+                        if hits:
+                            row["best_hit"] = hits[0].path
+                            row["best_cosine"] = round(hits[0].cosine, 3)
+            self._send(
+                200,
+                {
+                    "rows": rows,
+                    "total": sum(int(row["count"]) for row in rows),
+                    "resolved": sum(1 for row in rows if row["resolved"]),
+                    "probed": probe,
+                },
+            )
             return
         if self.path == "/api/topics":
             with Store(self.state.db) as store:
@@ -497,6 +525,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_gdrive(body)
             elif self.path == "/api/sync/web":
                 self._handle_sync_web(body)
+            elif self.path == "/api/obsidian":
+                self._handle_add_vault(body)
             elif self.path == "/api/sync/email":
                 self._handle_sync_email(body)
             elif self.path == "/api/sync/email-mbox":
@@ -1322,6 +1352,34 @@ class Handler(BaseHTTPRequestHandler):
             200,
             {
                 "url": url,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_add_vault(self, body: dict[str, Any]) -> None:
+        """Add an Obsidian vault: remember it, then index it vault-aware."""
+        path = str(body.get("path", "")).strip()
+        if not path:
+            self._send(400, {"error": "path required (the folder holding .obsidian/)"})
+            return
+        vault = Path(path).expanduser()
+        if not vault.is_dir():
+            self._send(400, {"error": f"not a folder: {vault}"})
+            return
+        vaults = [str(entry) for entry in (settings.load().get("vaults") or [])]
+        if str(vault) not in vaults:
+            settings.save({"vaults": [*vaults, str(vault)]})
+        with self.state.lock, Store(self.state.db) as store:
+            stats = index_paths(store, self.state.embedder, [vault])
+        self._send(
+            200,
+            {
+                "path": str(vault),
+                "is_vault": (vault / ".obsidian").is_dir(),
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,

@@ -128,6 +128,26 @@ def test_smart_retrieval_prompt_renders_its_json_example():
     assert "{history}" not in rendered
 
 
+def test_refusals_endpoint_reports_gaps(base_url: str):
+    # a question the corpus cannot answer (the gate refuses before any model call)
+    status, ask = request(
+        f"{base_url}/api/ask", {"query": "how do tokens expire", "min_cosine": 0.99}
+    )
+    assert ask["refused"] is True
+
+    status, payload = request(f"{base_url}/api/refusals")
+    assert status == 200
+    assert [row["question"] for row in payload["rows"]] == ["how do tokens expire"]
+    assert payload["rows"][0]["count"] == 1
+    assert payload["rows"][0]["resolved"] is False
+    assert payload["total"] == 1
+
+    # the probe asks retrieval what the corpus can offer today
+    status, payload = request(f"{base_url}/api/refusals?probe=1")
+    assert status == 200 and payload["probed"] is True
+    assert payload["rows"][0]["best_hit"].endswith("auth.md")
+
+
 def test_topics_endpoint(base_url: str):
     status, payload = request(f"{base_url}/api/topics")
     assert status == 200

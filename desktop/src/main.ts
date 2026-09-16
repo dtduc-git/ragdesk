@@ -37,6 +37,7 @@ type Status = {
   local_paths: PathStat[];
   auto_index: { hours: number; last_run: string };
   watch_seconds: number;
+  vaults: string[];
   memory: { models_loaded: boolean; idle_unload_minutes: number };
   hyde: boolean;
   notes_available: boolean;
@@ -224,6 +225,7 @@ function activateTab(tab: string): void {
   if (tab === "indexed") {
     void loadHealth();
     void loadTopics();
+    void loadRefusals();
     void loadDuplicates();
   }
   if (tab === "sources") void loadBookmarks();
@@ -1442,6 +1444,30 @@ function emailCard(conn: Connections["email"]): string {
   </div>`;
 }
 
+function vaultCard(vaults: string[]): string {
+  const list = vaults.length
+    ? `<div class="memory-list">${vaults
+        .map(
+          (vault) =>
+            `<div class="memory-item"><span class="bookmark-url" title="${escapeHtml(vault)}">${escapeHtml(vault)}</span></div>`,
+        )
+        .join("")}</div>`
+    : `<p class="caption">no vault added yet</p>`;
+  return `<div class="source-card">
+    <h3>Obsidian vault</h3>
+    <p class="source-note">Aliases and tags become searchable, front-matter stays filterable, and .obsidian/.trash are never read. Wikilinks already resolve through Backlinks.</p>
+    ${list}
+    <div class="button-row">
+      <button class="btn" type="button" data-action="pick-vault">Choose vault…</button>
+    </div>
+    <form data-form="obsidian-add" class="field-row">
+      <input name="path" placeholder="…or paste the vault path" />
+      <button class="btn" type="submit">Add vault</button>
+    </form>
+    <p class="source-result" data-result="obsidian"></p>
+  </div>`;
+}
+
 function notesCard(available: boolean): string {
   if (!available) return "";
   return `<div class="source-card">
@@ -1531,6 +1557,7 @@ function renderSources(): void {
     msgraphCard(msgraph) +
     notionCard(notion) +
     emailCard(email) +
+    vaultCard(status?.vaults ?? []) +
     notesCard(status?.notes_available ?? false) +
     webCard();
   for (const [kind, message] of Object.entries(sourceResults)) {
@@ -1651,6 +1678,16 @@ $("source-grid").addEventListener("submit", async (event) => {
       await loadStatus();
       return;
     }
+    if (kind === "obsidian-add") {
+      const path = String(payload.path ?? "");
+      if (!path) {
+        setResult("obsidian", "paste the vault path first");
+        return;
+      }
+      (form as HTMLFormElement).reset();
+      await addVault(path);
+      return;
+    }
     if (kind === "web-save") {
       const url = String(payload.url ?? "");
       if (!url) {
@@ -1704,6 +1741,39 @@ $("source-grid").addEventListener("submit", async (event) => {
     toast(message);
   }
 });
+
+async function addVault(path?: string): Promise<void> {
+  let chosen = path ?? "";
+  if (!chosen) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selection = await open({
+        directory: true,
+        multiple: false,
+        title: "Choose an Obsidian vault",
+      });
+      if (!selection) return;
+      chosen = Array.isArray(selection) ? selection[0] : selection;
+    } catch {
+      setResult("obsidian", "Folder picking works in the desktop app; paste the path instead.");
+      return;
+    }
+  }
+  setResult("obsidian", "indexing the vault…");
+  try {
+    const response = await post<{ is_vault: boolean } & Record<string, number>>(
+      "/api/obsidian",
+      { path: chosen },
+    );
+    setResult(
+      "obsidian",
+      `${summarize(response)}${response.is_vault ? "" : " (no .obsidian/ folder — indexed as a plain folder)"}`,
+    );
+    await loadStatus();
+  } catch (error) {
+    setResult("obsidian", error instanceof Error ? error.message : String(error));
+  }
+}
 
 async function loadMcp(): Promise<void> {
   try {
@@ -1780,6 +1850,10 @@ document.addEventListener("click", async (event) => {
   }
   const target = element.closest<HTMLElement>("[data-action]");
   const action = target?.dataset.action ?? "";
+  if (action === "pick-vault") {
+    void addVault();
+    return;
+  }
   if (action === "notes-sync") {
     // Apple Notes has no form: the button is a data-action, so it never went
     // through the form dispatcher and the click did nothing at all.
@@ -2399,8 +2473,48 @@ $("backup-list")?.addEventListener("click", async (event) => {
 });
 
 type TopicCluster = { label: string; documents: number; paths: string[] };
+type Refusal = {
+  question: string;
+  count: number;
+  last_seen: string;
+  resolved: boolean;
+  best_hit?: string;
+  best_cosine?: number;
+};
 const MAX_TOPIC_PATHS = 5;
 const MAX_TOPIC_CLUSTERS = 15;
+
+async function loadRefusals(): Promise<void> {
+  const box = document.getElementById("refusal-list");
+  if (!box) return;
+  box.innerHTML = `<p class="caption">reading the transcripts…</p>`;
+  try {
+    const { rows } = await get<{ rows: Refusal[]; total: number }>("/api/refusals?probe=1");
+    if (!rows.length) {
+      box.innerHTML = `<p class="caption">nothing yet — every question so far found its sources</p>`;
+      return;
+    }
+    box.innerHTML = rows
+      .slice(0, 10)
+      .map((row) => {
+        const state = row.resolved
+          ? `<span class="health-line is-ok"><span class="health-dot"></span>answered since</span>`
+          : (row.best_cosine ?? 0) >= 0.45 && row.best_hit
+            ? `<span class="caption">closest now: <code data-open-path="${escapeHtml(row.best_hit)}">${escapeHtml(row.best_hit.split("/").pop() ?? row.best_hit)}</code> (${row.best_cosine?.toFixed(2)}) — worth asking again</span>`
+            : `<span class="caption">still nothing — add or connect a source</span>`;
+        return `<div class="correction-item">
+          <div class="correction-text">
+            <p class="correction-q">${escapeHtml(row.question)}</p>
+            <p class="correction-a">${state}</p>
+          </div>
+          <span class="dup-meta">${row.count}×</span>
+        </div>`;
+      })
+      .join("");
+  } catch (error) {
+    box.innerHTML = `<p class="caption">${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
+  }
+}
 
 async function loadTopics(): Promise<void> {
   const box = document.getElementById("topic-list");

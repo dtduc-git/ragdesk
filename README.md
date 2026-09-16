@@ -12,6 +12,7 @@ numbers.</p>
 
 <p align="center">
   <a href="https://github.com/dtduc-git/ragdesk/actions/workflows/ci.yml"><img src="https://github.com/dtduc-git/ragdesk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/dtduc-git/ragdesk/actions/workflows/eval.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/dtduc-git/ragdesk/main/docs/eval.json" alt="retrieval recall@5"></a>
   <img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/status-pre--alpha-orange.svg" alt="Status: pre-alpha">
@@ -288,7 +289,9 @@ this repository's own docs and source.
 | corpus (24 queries: VN notes, PDFs, two codebases) | 1.000 | 0.964 | 0.951 |
 | repo (12 queries, `folder:`-scoped) / EmbeddingGemma int8, text chunking | **0.917** | **0.874** | **0.833** |
 | repo (12 queries) / + smart retrieval (rewrite + HyDE + sub-queries, one call) | 0.917 | 0.832 | 0.778 |
-| repo docs+source subset (the CI run) / EmbeddingGemma int8 | 0.917 | 0.783 | 0.736 |
+<!-- eval-ci:start -->
+| repo docs+source subset (the CI run) / EmbeddingGemma int8 | 1.000 | 0.866 | 0.819 |
+<!-- eval-ci:end -->
 | follow-ups (5 queries, `fixtures/golden_multiturn.jsonl`) raw | 1.000 | 0.926 | 0.900 |
 | follow-ups (5 queries) / `--rewrite` (Qwen3.5-4B MLX) | 1.000 | **1.000** | **1.000** |
 
@@ -341,6 +344,10 @@ same 12 scoped queries):
   12-query repo golden is the harder one.
 - The dependency-free `lexical` reranker **lowers** nDCG/MRR here — it is a
   test baseline, not a quality feature.
+- The badge above and the `[CI run]` row are refreshed by the **Eval** workflow
+  (monthly, on a release tag, or by hand): it scores the golden set, rewrites
+  `docs/eval.json` and this row, and commits the change only when a number
+  moved — so the published figures cannot drift from the code.
 - CI gates `recall@5 >= 0.8` on both harnesses (the fixtures set with the
   offline hash embedder, the repo golden with the real EmbeddingGemma model),
   so retrieval regressions fail the build.

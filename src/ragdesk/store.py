@@ -597,6 +597,48 @@ class Store:
             )
         return out
 
+    def refused_questions(self, limit: int = 25) -> list[dict[str, Any]]:
+        """Questions that got a refusal, newest first, grouped by wording.
+
+        A refusal is stored verbatim, so this is one ordered scan of assistant
+        messages; ``resolved`` marks a wording whose *latest* reply did answer
+        (the user added a source or rephrased), so the report does not keep
+        listing gaps that are closed.
+        """
+        from ragdesk.answer import REFUSAL  # noqa: PLC0415 - avoids an import cycle
+
+        latest: dict[str, bool] = {}
+        refused: dict[str, dict[str, Any]] = {}
+        for row in self.conn.execute(
+            """
+            SELECT m.id, m.created_at, m.text,
+                   (SELECT u.text FROM messages u
+                    WHERE u.chat_id = m.chat_id AND u.id < m.id AND u.role = 'user'
+                    ORDER BY u.id DESC LIMIT 1) AS question
+            FROM messages m
+            WHERE m.role = 'assistant'
+            ORDER BY m.id
+            """
+        ):
+            question = str(row["question"] or "").strip()
+            if not question:
+                continue
+            was_refusal = str(row["text"]) == REFUSAL
+            latest[question] = was_refusal
+            if not was_refusal:
+                continue
+            entry = refused.setdefault(
+                question, {"question": question, "count": 0, "last_seen": ""}
+            )
+            entry["count"] += 1
+            entry["last_seen"] = str(row["created_at"])
+        rows = [
+            {**entry, "resolved": not latest.get(entry["question"], True)}
+            for entry in refused.values()
+        ]
+        rows.sort(key=lambda entry: (entry["count"], entry["last_seen"]), reverse=True)
+        return rows[:limit]
+
     def delete_chat(self, chat_id: int) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
