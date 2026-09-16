@@ -172,6 +172,38 @@ def group_parents(texts: list[str], max_chars: int = 4000) -> tuple[list[str], l
     return parents, assignment
 
 
+def _embed_with_cache(
+    store: Store, embedder: Embedder, texts: list[str]
+) -> list[list[float]]:
+    """Embed only what changed: identical chunk text reuses its stored vector.
+
+    Chunk text + embedder identity is the cache key, so a one-line edit in a
+    long document costs one embedding instead of hundreds, and a duplicated
+    file indexes with zero model calls. Vectors come from the same model, so
+    retrieval results are unchanged — the cache is never allowed to alter an
+    answer, only the work it takes to produce one.
+    """
+    keys = [store.embed_key(embedder.name, embedder.dim, text) for text in texts]
+    cached = store.embed_cache_get(keys)
+    vectors: list[list[float] | None] = [None] * len(texts)
+    pending: list[tuple[int, str, str]] = []
+    for position, (key, text) in enumerate(zip(keys, texts, strict=True)):
+        hit = cached.get(key)
+        if hit is None:
+            pending.append((position, key, text))
+        else:
+            vectors[position] = hit
+    for start in range(0, len(pending), EMBED_BATCH):
+        batch = pending[start : start + EMBED_BATCH]
+        fresh = embedder.embed([text for _position, _key, text in batch])
+        store.embed_cache_put(
+            [(key, vector) for (_position, key, _text), vector in zip(batch, fresh, strict=True)]
+        )
+        for (position, _key, _text), vector in zip(batch, fresh, strict=True):
+            vectors[position] = vector
+    return [vector or [] for vector in vectors]
+
+
 def index_document(
     store: Store,
     embedder: Embedder,
@@ -199,11 +231,8 @@ def index_document(
         max_chars=chunk_chars or DEFAULT_MAX_CHARS,
         overlap=chunk_overlap or DEFAULT_OVERLAP,
     )
-    embeddings: list[list[float]] = []
-    for start in range(0, len(chunks), EMBED_BATCH):
-        batch = chunks[start : start + EMBED_BATCH]
-        embeddings.extend(embedder.embed([chunk.text for chunk in batch]))
     texts = [chunk.text for chunk in chunks]
+    embeddings = _embed_with_cache(store, embedder, texts)
     parents, assignment = group_parents(texts)
     store.upsert_document(
         source=source,

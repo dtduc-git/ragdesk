@@ -76,6 +76,11 @@ CREATE TABLE IF NOT EXISTS memories (
     embedding BLOB NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS embed_cache (
+    key TEXT PRIMARY KEY,
+    embedding BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS corrections (
     id INTEGER PRIMARY KEY,
     question TEXT NOT NULL,
@@ -683,6 +688,46 @@ class Store:
         with self.conn:
             cursor = self.conn.execute("DELETE FROM answer_cache")
         return int(cursor.rowcount)
+
+    # --- embedding cache ----------------------------------------------------------
+
+    EMBED_CACHE_MAX = 50_000
+
+    @staticmethod
+    def embed_key(embedder_name: str, dim: int, text: str) -> str:
+        """Identity of one embedding: model + dimensions + exact chunk text."""
+        return hashlib.sha1(f"{embedder_name}|{dim}|{text}".encode()).hexdigest()
+
+    def embed_cache_get(self, keys: list[str]) -> dict[str, list[float]]:
+        """Vectors for the keys that are already cached (misses are absent)."""
+        found: dict[str, list[float]] = {}
+        for start in range(0, len(keys), 500):
+            batch = keys[start : start + 500]
+            placeholders = ",".join("?" for _ in batch)
+            rows = self.conn.execute(
+                f"SELECT key, embedding FROM embed_cache WHERE key IN ({placeholders})",  # noqa: S608 - placeholders only
+                batch,
+            ).fetchall()
+            for row in rows:
+                vec = array.array("f")
+                vec.frombytes(row["embedding"])
+                found[str(row["key"])] = list(vec)
+        return found
+
+    def embed_cache_put(self, pairs: list[tuple[str, list[float]]]) -> None:
+        with self.conn:
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO embed_cache (key, embedding) VALUES (?, ?)",
+                [
+                    (key, array.array("f", vector).tobytes())
+                    for key, vector in pairs
+                ],
+            )
+            self.conn.execute(
+                "DELETE FROM embed_cache WHERE key NOT IN "
+                "(SELECT key FROM embed_cache ORDER BY created_at DESC LIMIT ?)",
+                (self.EMBED_CACHE_MAX,),
+            )
 
     # --- memory -----------------------------------------------------------------
 

@@ -83,6 +83,81 @@ def test_index_and_search_end_to_end(tmp_path: Path):
         assert hits[0].path.endswith("auth.md")
 
 
+class CountingEmbedder:
+    """Wraps an embedder and counts how many texts were really embedded."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.texts = 0
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    @property
+    def dim(self) -> int:
+        return self.inner.dim
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.texts += len(texts)
+        return self.inner.embed(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.inner.embed_query(text)
+
+
+def test_embed_key_is_model_and_text_specific():
+    base = Store.embed_key("onnx:model-a", 768, "hello")
+    assert base == Store.embed_key("onnx:model-a", 768, "hello")
+    assert base != Store.embed_key("onnx:model-b", 768, "hello")
+    assert base != Store.embed_key("onnx:model-a", 512, "hello")
+    assert base != Store.embed_key("onnx:model-a", 768, "hello ")
+
+
+def test_embedding_cache_reuses_vectors_for_identical_chunks(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    body = "\n\n".join(f"paragraph {i} " + "alpha beta gamma " * 20 for i in range(12))
+    (docs / "original.md").write_text(body)
+    embedder = CountingEmbedder(HashingEmbedder(dim=512))
+    with make_store(tmp_path) as store:
+        index_paths(store, embedder, [docs])
+        first = embedder.texts
+        assert first > 0
+
+        (docs / "copy.md").write_text(body)  # same content, new path
+        index_paths(store, embedder, [docs])
+        assert embedder.texts == first  # the copy embedded nothing at all
+
+        rows = store.conn.execute(
+            "SELECT d.path AS path, c.embedding AS embedding FROM chunks c "
+            "JOIN documents d ON d.id = c.doc_id ORDER BY d.path, c.ordinal"
+        ).fetchall()
+        original = [row["embedding"] for row in rows if row["path"].endswith("original.md")]
+        copied = [row["embedding"] for row in rows if row["path"].endswith("copy.md")]
+        assert original and original == copied  # byte-identical vectors
+
+
+def test_embedding_cache_embeds_only_the_changed_chunk(tmp_path: Path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    note = docs / "note.md"
+    paragraphs = [f"paragraph {i} " + "lorem ipsum " * 30 for i in range(12)]
+    note.write_text("\n\n".join(paragraphs))
+    embedder = CountingEmbedder(HashingEmbedder(dim=512))
+    with make_store(tmp_path) as store:
+        index_paths(store, embedder, [docs])
+        chunks = store.conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"]
+        assert chunks >= 4
+        before = embedder.texts
+
+        paragraphs[0] = "paragraph 0 changed " + "lorem ipsum " * 30
+        note.write_text("\n\n".join(paragraphs))
+        index_paths(store, embedder, [docs])
+        embedded = embedder.texts - before
+        assert 0 < embedded <= 3, (embedded, chunks)
+
+
 def test_reindex_is_incremental(tmp_path: Path):
     docs = tmp_path / "docs"
     docs.mkdir()

@@ -101,7 +101,7 @@ Ollama, MLX in-process, or an OpenAI-compatible endpoint you point at.
 
 | Path | What |
 |---|---|
-| `~/.ragdesk/index.db` | the entire index: documents, chunks, FTS5, vectors, chats, caches, corrections |
+| `~/.ragdesk/index.db` | the entire index: documents, chunks, FTS5, vectors, chats, answer + embedding caches, corrections |
 | `~/.ragdesk/backups/` | index snapshots (Settings → Index backup; restore keeps a safety copy) |
 | `~/.ragdesk/serve.log` | the desktop app's server log |
 | `~/.config/ragdesk/credentials.json` | connection credentials, mode `0600` |
@@ -250,6 +250,7 @@ The same UI also runs in a browser for development:
 | Chat history: conversations in SQLite, multi-turn context, a history popover (open/delete), resume or start fresh | |
 | Live progress: phased status while answering (searching → thinking, elapsed seconds) with a Stop button; sync/index activity in the rail | |
 | Answer cache: an identical question on an unchanged corpus replays instantly | |
+| Chunk-level embedding cache: re-indexing embeds only what changed (a duplicated file costs zero model calls; measured 96.8s → 0.2s on a 48-doc re-index) | |
 | Memory: durable notes you add (or extract from a chat) ride along with every answer | |
 | Corrections: fix an answer in place (Fix) and matching questions reuse your version — corrections invalidate the answer cache | |
 | Semantic answer cache: a paraphrase of an answered question replays instantly (cosine ≥ 0.88, calibrated) | |

@@ -143,6 +143,22 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   2408 chunks, absolute paths) bench none+onnx and the 24-query corpus copy
   both identical before/after (0.917/0.752/0.694 and 0.542/0.557/0.549);
   `tests/test_retrieval.py` proves the reorder canonical > plain > draft.
+- Embedding cache (`store.embed_cache`, key = sha1 of embedder name + dim + exact
+  chunk text): `index._embed_with_cache` embeds only what is new, so a one-line
+  edit costs one embedding instead of a whole document's worth and a duplicated
+  file costs zero model calls. Measured on the 48-doc / 648-chunk repo subset:
+  cold index 96.8s, wipe-the-documents-and-re-index 0.2s, and the golden
+  numbers unchanged (0.917 / 0.783) — the cache must never alter a result, only
+  the work it takes to produce one. It lives in the same SQLite file (one vector
+  per chunk, ~3KB, pruned to 50k rows FIFO) and is disposable: delete the rows
+  and the next index run re-embeds.
+- Rejected after measuring: a **`tiny` LLM preset** (Qwen3.5-2B-4bit, ~1.2GB RAM
+  vs the 4B's 2.5GB). The deterministic proxy looked *better* (grounded 1.000 vs
+  0.953) but reading the answers showed the drop: the 2B opened the second
+  question by re-answering the first (context bleed), missed the named flags and
+  was visibly less structured. Lesson: `ground_answer` measures sentence overlap
+  with the cited chunks, so a short extractive answer scores high — **always read
+  the answers before shipping a model swap**, and keep the 4B.
 - Ranking extras: `diversify` caps chunks per document (2 by default, backfills
   when a query is dominated by one file) and `recency_factor` adds a mild
   freshness nudge to the RRF score (RECENCY_WEIGHT).
