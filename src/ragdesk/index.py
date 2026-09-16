@@ -42,6 +42,7 @@ class IndexStats:
     unchanged: int = 0
     skipped: int = 0
     chunks: int = 0
+    attachments: int = 0  # email attachments indexed as their own documents
     skipped_samples: list = field(default_factory=list)
 
     def skip(self, path: Path, reason: str) -> None:

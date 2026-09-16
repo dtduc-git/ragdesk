@@ -239,6 +239,29 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   words. `GET /api/topics` powers the Indexed tab's Topics card, which shows
   multi-document clusters open, collapses single-document topics, and caps
   paths per cluster. Display only — never a ranking lane.
+- Connector auto-sync: `settings.sync_jobs` holds `{id, provider, params}` entries
+  (id = sha1 of provider+params, so the same sync is one job); the UI's
+  "Keep in sync (hourly)" checkbox on a sync form posts to `/api/sync-jobs`
+  after a successful sync. `SYNC_HANDLERS` in serve.py dispatches all nine
+  connectors — github, gitlab, confluence, gdrive, msgraph, notion, email,
+  web, s3 — pulling credentials from the same places the manual endpoints do
+  (email's password from `credentials`, tokens resolved by each connector).
+  `run_auto_index` runs local roots first, then every job, and returns a
+  `connectors` list; a failing job is reported in it, never fatal.
+  `GET /api/sync-jobs`, `POST /api/sync-jobs`, `/api/sync-jobs/delete`;
+  `/api/status.sync_jobs` feeds the Settings card.
+- S3 (`s3.py`): the connector shells out to the **aws CLI** (`s3 ls
+  --recursive`, `s3 cp … -`) instead of adding boto3 — the machine already has
+  profiles/SSO, and ragdesk never stores a key (same posture as reusing `gh`).
+  Objects go through the shared `is_indexable` + `extract_bytes`, so PDFs,
+  Office, images (OCR) and text behave exactly like local files; paths are
+  `s3://bucket/key`, source `s3:<bucket>`, metadata carries bucket/prefix.
+  Missing CLI → a clear S3Error; `/api/status.s3_available` drives the card.
+- Email attachments (`email_source.attachments`): up to 10 per message, each
+  decoded and pushed through `extract_bytes` (so OCR and sheet row-refs work);
+  indexed as their own documents at `<base>::<message-key>::NN-<name>` with
+  `kind: attachment`, while the message body keeps `[attachment: name]` lines.
+  `IndexStats.attachments` counts them and flows into every sync summary.
 - Reliability surfaces: `GET /api/health` (embedder match, last local run + `skipped_samples` from `store.last_index_report()`, oldest documents, db
   size, never-index patterns + docs still matching them), `POST
   /api/never-index {patterns}` (saves `settings.never_index` AND prunes matching

@@ -91,6 +91,56 @@ def test_index_mbox_indexes_each_message(tmp_path: Path):
         assert again.indexed == 0 and again.unchanged == 2
 
 
+def write_mbox_with_attachment(path: Path) -> None:
+    import email.message
+
+    message = email.message.EmailMessage()
+    message["Subject"] = "Invoice for September"
+    message["From"] = "vendor@example.com"
+    message["To"] = "me@example.com"
+    message["Message-ID"] = "<with-attachment@example.com>"
+    message["Date"] = "Mon, 15 Sep 2026 09:00:00 +0700"
+    message.set_content("Please find the invoice attached.")
+    message.add_attachment(
+        b"Invoice total is 250 million VND, payable in 30 days.",
+        maintype="text",
+        subtype="plain",
+        filename="invoice.txt",
+    )
+    message.add_attachment(
+        b"\xff\xfe\x00binary", maintype="application", subtype="octet-stream", filename="blob.bin"
+    )
+    path.write_bytes(
+        b"From vendor@example.com Mon Sep 15 09:00:00 2026\n" + message.as_bytes()
+    )
+
+
+def test_index_mbox_indexes_attachment_contents(tmp_path: Path):
+    box = tmp_path / "inbox.mbox"
+    write_mbox_with_attachment(box)
+    embedder = HashingEmbedder()
+    with Store(tmp_path / "index.db") as store:
+        stats = index_mbox(store, embedder, box)
+        assert stats.indexed == 1 and stats.attachments == 1  # blob.bin is not indexable
+        paths = sorted(row["path"] for row in store.documents())
+        assert len(paths) == 2
+        attachment = next(path for path in paths if path.endswith("00-invoice.txt"))
+        assert attachment.startswith(f"mbox://{box}::with-attachment@example.com::")
+        row = store.conn.execute(
+            "SELECT metadata FROM documents WHERE path = ?", (attachment,)
+        ).fetchone()
+        assert '"kind": "attachment"' in row["metadata"]
+        assert "invoice.txt" in row["metadata"]
+
+        # the attachment body is searchable on its own
+        hits = hybrid_search(store, embedder, "payable in 30 days", top_k=3)
+        assert hits and hits[0].path.endswith("00-invoice.txt")
+
+        # and its name stays listed in the message text
+        message = next(path for path in paths if path.endswith("with-attachment@example.com"))
+        assert "[attachment: invoice.txt]" in (store.document_text(message) or "")
+
+
 def test_index_mbox_missing_file(tmp_path: Path):
     with Store(tmp_path / "index.db") as store:
         with pytest.raises(EmailError):

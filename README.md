@@ -244,7 +244,9 @@ The same UI also runs in a browser for development:
 | Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme — **built from source** (no DMG release yet) | Packaged DMG + notarization (Apple Developer ID) when the project ships binaries |
 | Command palette (⌘K): jump to a conversation, switch tabs, search your sources and open a file — plus ⌘1-4 tabs, ? for the shortcut sheet | |
 | The catalog-drawer look: ruled ledger transcript with entry numbers, violet library ink for actions, amber for live/cited things, light + dark | |
-| Watch for changes: new and edited files in your folders are indexed automatically (Settings, default every minute; Off / 30s / 1m / 5m / 15m) | Connector auto-sync (local paths only for now) |
+| Watch for changes: new and edited files in your folders are indexed automatically (Settings, default every minute; Off / 30s / 1m / 5m / 15m) | Connector auto-sync is hourly only (no per-connector interval yet) |
+| Connector auto-sync: tick "Keep in sync" on any connector's sync form and it re-runs with the auto re-index timer (GitHub, GitLab, Confluence, Drive, OneDrive, Notion, IMAP, web crawl, S3) | |
+| S3: index a bucket prefix through the **aws CLI** you already have — your profiles, SSO and env vars, no key ever stored; PDF/Office/image/OCR handled like local files | Writing to S3 (read-only, by design) |
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) — the safety net behind the watcher | |
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Quiet indexing (Settings, off by default): caps the ONNX embedding threads — measured on this repo, 651 chunks index in 97s at ~580% CPU, or 136s at ~390% with 4 threads; `--embed-threads N` goes lower (2 threads: 256s at ~200%) | |
@@ -269,7 +271,7 @@ The same UI also runs in a browser for development:
 | Call graph on demand: ask "who calls hybrid_search?" and get definitions + call sites with file:line, answered from the code itself (regex scan, never a ranking lane) | Full AST/cross-language precision |
 | Topic map: the Indexed tab groups documents into labelled clusters (greedy leader clustering over the stored vectors, labels = distinctive terms) | 2D visual map (needs a projection dependency) |
 | Bookmarks: save one page from the Sources tab (or `ragdesk save <url>`), then Open or Refresh it later | |
-| Email: read-only IMAP sync (last N messages, `BODY.PEEK` — nothing is marked read) and mbox files; one document per message, searchable by subject, sender or body | Attachment contents (names are listed); mail writing/deleting |
+| Email: read-only IMAP sync (last N messages, `BODY.PEEK` — nothing is marked read) and mbox files; one document per message, searchable by subject, sender or body, and **attachments are indexed too** (PDF/Office/images through the same extractors, OCR included; names stay listed in the message) | Mail writing/deleting; a 200-file dump attached to one message (capped at 10) |
 | Duplicates: the Indexed tab lists documents that share most of their exact chunks (the same file saved twice), with open-file links | Automatic cleanup — sources stay read-only |
 | Index health: the last run's skips (with reasons), oldest documents, embedder-match check and DB size | |
 | Never index: glob patterns (`*secret*`, `*.pem`) are never read, and saving a pattern removes already-indexed matches | |

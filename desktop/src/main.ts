@@ -41,6 +41,8 @@ type Status = {
   memory: { models_loaded: boolean; idle_unload_minutes: number };
   hyde: boolean;
   notes_available: boolean;
+  s3_available: boolean;
+  sync_jobs: Array<{ id: string; provider: string; params: Record<string, string> }>;
   answer_length: string;
   embed_threads: number;
   activity: {
@@ -400,6 +402,8 @@ function renderStatus(): void {
     : "Auto keeps the local model; OpenAI-compatible covers LM Studio, llama.cpp, vLLM or OpenAI itself.";
   markSeg("answer-length-seg", status.answer_length);
   markSeg("hyde-seg", status.hyde ? 1 : 0);
+  syncJobCache = status.sync_jobs ?? [];
+  renderSyncJobs();
   markSeg("quiet-seg", status.embed_threads ? 1 : 0);
   $("quiet-note").textContent = status.embed_threads
     ? `capped at ${status.embed_threads} threads — measured on this repo: 1.4× slower to index, ~35% of the CPU`
@@ -1055,7 +1059,7 @@ function setResult(kind: string, message: string): void {
 }
 
 function summarize(payload: Record<string, unknown>): string {
-  const parts = ["scanned", "indexed", "unchanged", "skipped", "chunks"]
+  const parts = ["scanned", "indexed", "unchanged", "skipped", "chunks", "attachments"]
     .filter((key) => typeof payload[key] === "number")
     .map((key) => `${key} ${payload[key]}`);
   return parts.length ? parts.join(" · ") : "done";
@@ -1213,6 +1217,7 @@ function githubCard(conn: Connections["github"]): string {
         <input name="subdir" placeholder="subfolder (optional)" />
       </div>
       <button class="btn btn-primary" type="submit">Sync repo</button>
+          ${keepToggle()}
     </form>
     <p class="source-result" data-result="github"></p>
   </div>`;
@@ -1354,6 +1359,7 @@ function gitlabCard(conn: Connections["gitlab"]): string {
         <input name="subdir" placeholder="subfolder (optional)" />
       </div>
       <button class="btn btn-primary" type="submit">Sync repo</button>
+          ${keepToggle()}
     </form>
     <p class="source-result" data-result="gitlab"></p>
   </div>`;
@@ -1467,9 +1473,91 @@ function emailCard(conn: Connections["email"]): string {
         <input name="limit" type="number" min="1" max="5000" placeholder="newest 200" />
       </div>
       <button class="btn btn-primary" type="submit">Sync email</button>
+          ${keepToggle()}
     </form>
     ${mboxForm}
     <p class="source-result" data-result="email"></p>
+  </div>`;
+}
+
+function keepToggle(): string {
+  return `<label class="keep-toggle caption">
+    <input type="checkbox" name="keep" value="on" /> Keep in sync (hourly)
+  </label>`;
+}
+
+let syncJobCache: Status["sync_jobs"] = [];
+
+async function maybeKeepJob(formKind: string, payload: Record<string, unknown>): Promise<void> {
+  if (!payload.keep) return;
+  const provider = formKind.replace(/-sync$|-save$/, "");
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (key !== "keep") params[key] = String(value);
+  }
+  try {
+    const result = await post<{ jobs: Status["sync_jobs"] }>("/api/sync-jobs", {
+      provider,
+      params,
+    });
+    syncJobCache = result.jobs;
+    toast(`Keeping ${provider} in sync with every auto re-index`);
+    await loadStatus();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function renderSyncJobs(): void {
+  const box = document.getElementById("sync-job-list");
+  if (!box) return;
+  box.innerHTML = syncJobCache.length
+    ? syncJobCache
+        .map((job) => {
+          const detail = Object.entries(job.params)
+            .map(([key, value]) => `${key} ${value}`)
+            .join(", ");
+          return `<div class="memory-item">
+            <span class="bookmark-url" title="${escapeHtml(detail)}">${escapeHtml(job.provider)} — ${escapeHtml(detail.slice(0, 80))}</span>
+            <button class="memory-drop" type="button" data-job="${escapeHtml(job.id)}" aria-label="Stop syncing this">×</button>
+          </div>`;
+        })
+        .join("")
+    : `<p class="caption">nothing kept in sync yet — tick "Keep in sync" on a connector above</p>`;
+}
+
+document.getElementById("sync-job-list")?.addEventListener("click", async (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>("[data-job]");
+  if (!button?.dataset.job) return;
+  try {
+    const result = await post<{ jobs: Status["sync_jobs"] }>("/api/sync-jobs/delete", {
+      id: button.dataset.job,
+    });
+    syncJobCache = result.jobs;
+    renderSyncJobs();
+    await loadStatus();
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error));
+  }
+});
+
+function s3Card(available: boolean): string {
+  const note = available
+    ? "Read-only via the aws CLI — it uses your existing profiles (SSO, ~/.aws); ragdesk never stores a key."
+    : "The aws CLI is not on PATH — install it (brew install awscli) and log in, then reload.";
+  return `<div class="source-card">
+    <h3>S3 bucket</h3>
+    <p class="source-note">${note}</p>
+    <form data-form="s3-sync" class="stack">
+      <input name="bucket" placeholder="my-data-bucket" required />
+      <div class="field-row">
+        <input name="prefix" placeholder="prefix (docs/)" />
+        <input name="profile" placeholder="aws profile (optional)" />
+      </div>
+      <button class="btn btn-primary" type="submit" ${available ? "" : "disabled"}>Sync bucket</button>
+          ${keepToggle()}
+    </form>
+    <p class="source-result" data-result="s3"></p>
   </div>`;
 }
 
@@ -1518,6 +1606,7 @@ function webCard(): string {
         <input name="max_depth" type="number" min="0" max="5" placeholder="depth (2)" />
       </div>
       <button class="btn btn-primary" type="submit">Crawl site</button>
+          ${keepToggle()}
     </form>
     <form data-form="web-save" class="field-row">
       <input name="url" placeholder="https://example.com/article" required />
@@ -1587,6 +1676,7 @@ function renderSources(): void {
     notionCard(notion) +
     emailCard(email) +
     vaultCard(status?.vaults ?? []) +
+    s3Card(status?.s3_available ?? false) +
     notesCard(status?.notes_available ?? false) +
     webCard();
   for (const [kind, message] of Object.entries(sourceResults)) {
@@ -1691,6 +1781,7 @@ $("source-grid").addEventListener("submit", async (event) => {
         limit: payload.limit ? Number(payload.limit) : 0,
       });
       setResult("email", summarize(response));
+      await maybeKeepJob(kind, payload);
       await loadStatus();
       return;
     }
@@ -1704,6 +1795,19 @@ $("source-grid").addEventListener("submit", async (event) => {
         path: String(payload.path),
       });
       setResult("email", summarize(response));
+      await maybeKeepJob(kind, payload);
+      await loadStatus();
+      return;
+    }
+    if (kind === "s3-sync") {
+      setResult("s3", "listing the bucket…");
+      const response = await post<Record<string, number>>("/api/sync/s3", {
+        bucket: String(payload.bucket ?? ""),
+        prefix: String(payload.prefix ?? ""),
+        profile: String(payload.profile ?? ""),
+      });
+      setResult("s3", summarize(response));
+      await maybeKeepJob(kind, payload);
       await loadStatus();
       return;
     }
@@ -1762,6 +1866,7 @@ $("source-grid").addEventListener("submit", async (event) => {
       await loadConnections();
     } else {
       setResult(provider, summarize(response));
+      await maybeKeepJob(kind, payload);
       await loadStatus();
     }
   } catch (error) {

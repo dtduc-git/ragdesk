@@ -18,6 +18,7 @@ import threading
 import time
 import urllib.parse
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -60,7 +61,7 @@ from ragdesk.github import whoami as github_whoami
 from ragdesk.gitlab import DEFAULT_BASE_URL as GITLAB_DEFAULT_BASE
 from ragdesk.gitlab import GitLabError, sync_gitlab
 from ragdesk.gitlab import whoami as gitlab_whoami
-from ragdesk.index import index_paths, never_index_patterns
+from ragdesk.index import IndexStats, index_paths, never_index_patterns
 from ragdesk.llm import (
     LLMUnavailable,
     llm_status,
@@ -81,6 +82,7 @@ from ragdesk.notion import whoami as notion_whoami
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable, post_stream
 from ragdesk.presets import PRESETS
 from ragdesk.rerank import get_reranker
+from ragdesk.s3 import S3Error, aws_available, sync_s3
 from ragdesk.search import Hit, hit_to_dict, parse_filters, retrieve
 from ragdesk.store import Store, matches_any
 from ragdesk.symbols import find_symbol, parse_symbol_question, symbol_answer
@@ -263,6 +265,7 @@ class Handler(BaseHTTPRequestHandler):
                             "last_run": settings.load()["auto_index_last"],
                         },
                         "watch_seconds": int(settings.load().get("watch_seconds") or 0),
+                        "sync_jobs": sync_jobs(),
                         "vaults": [
                             str(entry) for entry in (settings.load().get("vaults") or [])
                         ],
@@ -279,6 +282,7 @@ class Handler(BaseHTTPRequestHandler):
                         },
                         "onboarded": bool(settings.load()["onboarded"]),
                         "notes_available": notes_available(),
+                        "s3_available": aws_available(),
                         "system": system_info(),
                         "activity": dict(self.state.activity),
                         "memory": {
@@ -301,6 +305,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/health":
             with Store(self.state.db) as store:
                 self._send(200, self._health_payload(store))
+            return
+        if self.path == "/api/sync-jobs":
+            self._send(200, {"jobs": sync_jobs()})
             return
         if self.path == "/api/bundles":
             self._send(
@@ -531,6 +538,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_confluence(body)
             elif self.path == "/api/sync/gdrive":
                 self._handle_sync_gdrive(body)
+            elif self.path == "/api/sync/s3":
+                self._handle_sync_s3(body)
             elif self.path == "/api/sync/web":
                 self._handle_sync_web(body)
             elif self.path == "/api/obsidian":
@@ -543,6 +552,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_save_page(body)
             elif self.path == "/api/never-index":
                 self._handle_never_index(body)
+            elif self.path == "/api/sync-jobs":
+                self._handle_add_sync_job(body)
+            elif self.path == "/api/sync-jobs/delete":
+                self._handle_delete_sync_job(body)
             elif self.path == "/api/export":
                 self._send(200, run_export(self.state.db))
             elif self.path == "/api/import":
@@ -566,6 +579,7 @@ class Handler(BaseHTTPRequestHandler):
         except LLMUnavailable as exc:
             self._send(503, {"error": str(exc)})
         except (
+            S3Error,
             GitHubError,
             ConfluenceError,
             GdriveError,
@@ -1194,6 +1208,7 @@ class Handler(BaseHTTPRequestHandler):
                 "unchanged": stats.unchanged,
                 "skipped": stats.skipped,
                 "chunks": stats.chunks,
+                "attachments": stats.attachments,
             },
         )
 
@@ -1214,6 +1229,7 @@ class Handler(BaseHTTPRequestHandler):
                 "unchanged": stats.unchanged,
                 "skipped": stats.skipped,
                 "chunks": stats.chunks,
+                "attachments": stats.attachments,
             },
         )
 
@@ -1338,6 +1354,56 @@ class Handler(BaseHTTPRequestHandler):
                 "unchanged": stats.unchanged,
                 "skipped": stats.skipped,
                 "chunks": stats.chunks,
+            },
+        )
+
+    def _handle_add_sync_job(self, body: dict[str, Any]) -> None:
+        provider = str(body.get("provider", "")).strip()
+        if provider not in SYNC_HANDLERS:
+            supported = ", ".join(sorted(SYNC_HANDLERS))
+            self._send(
+                400,
+                {"error": f"cannot auto-sync {provider!r} (supported: {supported})"},
+            )
+            return
+        params = body.get("params")
+        if not isinstance(params, dict) or not params:
+            self._send(400, {"error": "params required (the same fields the sync used)"})
+            return
+        job = add_sync_job(provider, params)
+        self._send(200, {"added": True, "job": job, "jobs": sync_jobs()})
+
+    def _handle_delete_sync_job(self, body: dict[str, Any]) -> None:
+        job_id = str(body.get("id", "")).strip()
+        if not job_id:
+            self._send(400, {"error": "id required"})
+            return
+        self._send(200, {"deleted": delete_sync_job(job_id), "jobs": sync_jobs()})
+
+    def _handle_sync_s3(self, body: dict[str, Any]) -> None:
+        bucket = str(body.get("bucket", "")).strip()
+        if not bucket:
+            self._send(400, {"error": "bucket required (e.g. my-data-bucket)"})
+            return
+        with self.state.lock, Store(self.state.db) as store:
+            stats = sync_s3(
+                store,
+                self.state.embedder,
+                bucket=bucket,
+                prefix=str(body.get("prefix", "")),
+                profile=str(body.get("profile", "")),
+                limit=int(body.get("limit") or 500),
+            )
+        self._send(
+            200,
+            {
+                "bucket": bucket,
+                "scanned": stats.files_scanned,
+                "indexed": stats.indexed,
+                "unchanged": stats.unchanged,
+                "skipped": stats.skipped,
+                "chunks": stats.chunks,
+                "skipped_samples": list(stats.skipped_samples),
             },
         )
 
@@ -2544,6 +2610,130 @@ def release_idle_models(state: AppState, minutes: float) -> dict[str, Any] | Non
     return {"released": True, "idle_seconds": int(idle_seconds)}
 
 
+def sync_jobs() -> list[dict[str, Any]]:
+    """Saved connector syncs, run by the same timer that refreshes local roots."""
+    raw = settings.load().get("sync_jobs") or []
+    return [
+        entry
+        for entry in raw
+        if isinstance(entry, dict)
+        and entry.get("provider")
+        and isinstance(entry.get("params"), dict)
+    ]
+
+
+def sync_job_id(provider: str, params: dict[str, Any]) -> str:
+    payload = json.dumps(params, sort_keys=True, default=str)
+    return hashlib.sha1(f"{provider}|{payload}".encode()).hexdigest()[:12]
+
+
+def add_sync_job(provider: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Idempotent: the same provider+params is one job."""
+    clean = {key: value for key, value in params.items() if value not in ("", None)}
+    clean.pop("keep", None)
+    job = {"id": sync_job_id(provider, clean), "provider": provider, "params": clean}
+    jobs = [entry for entry in sync_jobs() if entry.get("id") != job["id"]]
+    settings.save({"sync_jobs": [*jobs, job]})
+    return job
+
+
+def delete_sync_job(job_id: str) -> bool:
+    jobs = sync_jobs()
+    kept = [entry for entry in jobs if entry.get("id") != job_id]
+    settings.save({"sync_jobs": kept})
+    return len(kept) != len(jobs)
+
+
+def _email_password() -> str:
+    return str(credentials.get("email").get("password") or "")
+
+
+SYNC_HANDLERS: dict[str, Callable[[Store, Embedder, dict], IndexStats]] = {
+    "github": lambda store, embedder, p: sync_github(
+        store, embedder, repo=p["repo"], ref=p.get("ref", ""), subdir=p.get("subdir", "")
+    ),
+    "gitlab": lambda store, embedder, p: sync_gitlab(
+        store,
+        embedder,
+        project=p["project"],
+        ref=p.get("ref", ""),
+        subdir=p.get("subdir", ""),
+        base_url=p.get("base_url", "") or GITLAB_DEFAULT_BASE,
+    ),
+    "confluence": lambda store, embedder, p: sync_confluence(
+        store,
+        embedder,
+        space=p["space"],
+        base_url=p.get("base_url", ""),
+        email=p.get("email") or None,
+        token=p.get("token") or None,
+        limit=int(p.get("limit") or 100),
+    ),
+    "gdrive": lambda store, embedder, p: sync_gdrive(
+        store,
+        embedder,
+        client_id=p.get("client_id", ""),
+        client_secret=p.get("client_secret", ""),
+        folder_id=p.get("folder_id", ""),
+        interactive=False,
+    ),
+    "msgraph": lambda store, embedder, p: sync_onedrive(
+        store,
+        embedder,
+        site=p.get("site", ""),
+        folder_id=p.get("folder_id", ""),
+        client_id=resolve_ms_client_id(),
+    ),
+    "notion": lambda store, embedder, p: sync_notion(store, embedder),
+    "email": lambda store, embedder, p: email_sync_imap(
+        store,
+        embedder,
+        host=p["host"],
+        user=p["user"],
+        password=p.get("password") or _email_password(),
+        port=int(p.get("port") or EMAIL_DEFAULT_PORT),
+        folder=p.get("folder") or EMAIL_DEFAULT_FOLDER,
+        limit=int(p.get("limit") or EMAIL_DEFAULT_LIMIT),
+    ),
+    "web": lambda store, embedder, p: crawl_site(
+        store,
+        embedder,
+        start_url=p["url"],
+        max_pages=int(p.get("max_pages") or 50),
+        max_depth=int(p.get("max_depth") or 2),
+    ),
+    "s3": lambda store, embedder, p: sync_s3(
+        store,
+        embedder,
+        bucket=p["bucket"],
+        prefix=p.get("prefix", ""),
+        profile=p.get("profile", ""),
+        limit=int(p.get("limit") or 500),
+    ),
+}
+
+
+def run_sync_job(state: AppState, job: dict[str, Any]) -> dict[str, Any]:
+    """Run one saved connector sync; a failure is reported, never fatal."""
+    provider = str(job.get("provider") or "")
+    handler = SYNC_HANDLERS.get(provider)
+    if handler is None:
+        return {"provider": provider, "error": f"cannot auto-sync {provider!r}"}
+    params = dict(job.get("params") or {})
+    try:
+        with state.lock, Store(state.db) as store:
+            stats = handler(store, state.embedder, params)
+    except Exception as exc:  # noqa: BLE001 - one connector must not stop the pass
+        return {"provider": provider, "error": f"{type(exc).__name__}: {exc}"[:200]}
+    return {
+        "provider": provider,
+        "indexed": stats.indexed,
+        "unchanged": stats.unchanged,
+        "chunks": stats.chunks,
+        **({"attachments": stats.attachments} if stats.attachments else {}),
+    }
+
+
 def run_auto_index(state: AppState) -> dict[str, Any]:
     """Re-index the recorded local paths; called by the serve auto-index timer."""
     token = f"auto-index:{time.time()}"
@@ -2568,6 +2758,10 @@ def run_auto_index(state: AppState) -> dict[str, Any]:
         stats = (
             index_paths(store, state.embedder, roots, progress=progress) if roots else None
         )
+    connectors: list[dict[str, Any]] = []
+    for job in sync_jobs():
+        progress(f"syncing {job.get('provider')}", 0, 0)
+        connectors.append(run_sync_job(state, job))
     state.activity["running"] = False
     settings.save(
         {"auto_index_last": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")}
@@ -2577,6 +2771,7 @@ def run_auto_index(state: AppState) -> dict[str, Any]:
         "indexed": stats.indexed if stats else 0,
         "unchanged": stats.unchanged if stats else 0,
         "chunks": stats.chunks if stats else 0,
+        **({"connectors": connectors} if connectors else {}),
     }
 
 

@@ -48,6 +48,7 @@ from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable
 from ragdesk.presets import DEFAULT_PRESET, PRESETS
 from ragdesk.presets import resolve as resolve_preset
 from ragdesk.rerank import get_reranker
+from ragdesk.s3 import S3Error, sync_s3
 from ragdesk.search import parse_filters, retrieve
 from ragdesk.serve import (
     HYDE_PROMPT,
@@ -229,6 +230,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--token", default=None, help="default: NOTION_TOKEN env or saved connection"
     )
     p_notion.add_argument("--json", action="store_true", help="machine-readable output")
+
+    p_s3 = sub.add_parser("s3", help="index an S3 bucket prefix via the aws CLI (read-only)")
+    p_s3.add_argument("bucket")
+    p_s3.add_argument("--prefix", default="", help="key prefix, e.g. docs/")
+    p_s3.add_argument("--profile", default="", help="aws profile (default: your environment)")
+    p_s3.add_argument("--limit", type=int, default=500, help="max objects per run")
+    p_s3.add_argument("--json", action="store_true", help="machine-readable output")
 
     p_web = sub.add_parser("web", help="crawl a docs site and index it (read-only)")
     p_web.add_argument("url", help="start URL, e.g. https://docs.example.com/")
@@ -661,6 +669,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
             emit_stats(stats, getattr(args, 'json', False))
+            return 0
+
+        if args.command == "s3":
+            try:
+                stats = sync_s3(
+                    store,
+                    embedder,
+                    bucket=args.bucket,
+                    prefix=args.prefix,
+                    profile=args.profile,
+                    limit=args.limit,
+                )
+            except S3Error as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+            emit_stats(stats, getattr(args, "json", False), bucket=args.bucket)
             return 0
 
         if args.command == "web":

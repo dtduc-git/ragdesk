@@ -5,8 +5,9 @@ body — so "the email from the bank about the loan" retrieves by either field.
 IMAP is opened with ``EXAMINE``/``readonly=True`` and fetched with
 ``BODY.PEEK``: the mailbox is never modified and nothing is marked as read.
 
-Attachments are not indexed (their names are listed in the message text);
-point ragdesk at the folder where you keep those files instead.
+Attachments are indexed too: PDF/Office/images go through the shared
+``extract_bytes`` dispatcher (so OCR and sheet row-refs work as everywhere
+else) as their own documents, and their names stay in the message text.
 """
 
 from __future__ import annotations
@@ -25,13 +26,14 @@ from pathlib import Path
 from ragdesk import credentials
 from ragdesk.embed import Embedder
 from ragdesk.htmlutil import html_to_text
-from ragdesk.index import IndexStats, index_document
+from ragdesk.index import IndexStats, extract_bytes, index_document, is_indexable
 from ragdesk.store import Store
 
 DEFAULT_IMAP_PORT = 993
 DEFAULT_FOLDER = "INBOX"
 DEFAULT_LIMIT = 200
 MAX_MESSAGE_CHARS = 60_000
+MAX_ATTACHMENTS = 10  # per message: a 200-file zip dump is not a message
 
 
 class EmailError(RuntimeError):
@@ -115,6 +117,20 @@ def _metadata(message: Message, extra: dict[str, str] | None = None) -> dict[str
     }
 
 
+def attachments(message: Message) -> Iterator[tuple[str, bytes]]:
+    """(filename, bytes) for every decodable attachment, capped per message."""
+    count = 0
+    for part in message.walk() if message.is_multipart() else []:
+        filename = part.get_filename()
+        if not filename or count >= MAX_ATTACHMENTS:
+            continue
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        count += 1
+        yield filename, payload
+
+
 def _index_message(
     store: Store,
     embedder: Embedder,
@@ -122,18 +138,50 @@ def _index_message(
     source: str,
     base_path: str,
     message: Message,
-) -> int:
+) -> tuple[int, int, int]:
+    """Index a message and its attachments.
+
+    Returns ``(message_chunks, attachment_files, attachment_chunks)``;
+    ``message_chunks`` is -1 when the message holds no indexable text.
+    """
     text = message_text(message)
-    if not text:
-        return -1
-    return index_document(
-        store,
-        embedder,
-        source=source,
-        path=f"{base_path}::{_message_key(message)}",
-        content=text,
-        metadata=_metadata(message),
-    )
+    message_chunks = -1
+    if text:
+        message_chunks = index_document(
+            store,
+            embedder,
+            source=source,
+            path=f"{base_path}::{_message_key(message)}",
+            content=text,
+            metadata=_metadata(message),
+        )
+    files = 0
+    chunks = 0
+    key = _message_key(message)
+    for position, (filename, payload) in enumerate(attachments(message)):
+        if not is_indexable(Path(filename), len(payload)):
+            continue
+        try:
+            content = extract_bytes(payload, filename)
+        except Exception:  # noqa: BLE001 - a broken attachment must not stop the sync
+            continue
+        if content is None or not content.strip():
+            continue
+        written = index_document(
+            store,
+            embedder,
+            source=source,
+            path=f"{base_path}::{key}::{position:02d}-{Path(filename).name}",
+            content=content,
+            metadata={
+                **_metadata(message),
+                "kind": "attachment",
+                "attachment": Path(filename).name,
+            },
+        )
+        files += 1
+        chunks += written
+    return message_chunks, files, chunks
 
 
 def index_mbox(
@@ -165,9 +213,10 @@ def index_mbox(
             stats.files_scanned += 1
             if progress is not None:
                 progress(f"message {position + 1}", stats.files_scanned, 0)
-            chunks = _index_message(
+            chunks, files, attachment_chunks = _index_message(
                 store, embedder, source=source, base_path=base_path, message=message
             )
+            stats.attachments += files
             if chunks < 0:
                 stats.skipped += 1
             elif chunks:
@@ -175,6 +224,7 @@ def index_mbox(
                 stats.chunks += chunks
             else:
                 stats.unchanged += 1
+            stats.chunks += attachment_chunks
     except (OSError, mailbox.Error) as exc:
         raise EmailError(f"cannot read mbox: {exc}") from exc
     finally:
@@ -270,9 +320,10 @@ def sync_imap(
             if progress is not None:
                 progress(f"message {stats.files_scanned}", stats.files_scanned, 0)
             message = email.message_from_bytes(raw, policy=email.policy.default)
-            chunks = _index_message(
+            chunks, files, attachment_chunks = _index_message(
                 store, embedder, source=source, base_path=base_path, message=message
             )
+            stats.attachments += files
             if chunks < 0:
                 stats.skipped += 1
             elif chunks:
@@ -280,4 +331,5 @@ def sync_imap(
                 stats.chunks += chunks
             else:
                 stats.unchanged += 1
+            stats.chunks += attachment_chunks
     return stats

@@ -231,6 +231,84 @@ def test_never_index_endpoint_saves_and_prunes(base_url: str, tmp_path: Path):
     assert payload["skipped"] == 1  # the pattern keeps it out from now on
 
 
+def test_sync_jobs_roundtrip_and_dispatch(base_url: str, tmp_path: Path, monkeypatch):
+    from ragdesk import settings
+    from ragdesk.serve import AppState, run_sync_job
+
+    status, payload = request(
+        f"{base_url}/api/sync-jobs",
+        {"provider": "web", "params": {"url": "https://example.com/docs", "max_pages": "5"}},
+    )
+    assert status == 200 and payload["added"] is True
+    job_id = payload["job"]["id"]
+
+    _, again = request(
+        f"{base_url}/api/sync-jobs",
+        {"provider": "web", "params": {"url": "https://example.com/docs", "max_pages": "5"}},
+    )
+    assert len(again["jobs"]) == 1  # same provider+params is one job
+
+    _, listing = request(f"{base_url}/api/status")
+    assert [job["id"] for job in listing["sync_jobs"]] == [job_id]
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/sync-jobs", {"provider": "nope", "params": {"x": "1"}})
+    assert excinfo.value.code == 400
+
+    # the dispatch reaches the right function with the stored params
+    from ragdesk.index import IndexStats
+
+    seen: dict = {}
+
+    def fake_crawl(store, embedder, **kwargs):
+        seen.update(kwargs)
+        return IndexStats(files_scanned=1, indexed=1, chunks=2)
+
+    monkeypatch.setattr("ragdesk.serve.crawl_site", fake_crawl)
+    state = AppState(
+        db=str(tmp_path / "dispatch.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+    )
+    result = run_sync_job(state, settings.load()["sync_jobs"][0])
+    assert result == {"provider": "web", "indexed": 1, "unchanged": 0, "chunks": 2}
+    assert seen["start_url"] == "https://example.com/docs"
+    assert seen["max_pages"] == 5
+
+    # an unsupported provider reports instead of raising
+    assert "error" in run_sync_job(state, {"provider": "nope", "params": {}})
+
+    _, payload = request(f"{base_url}/api/sync-jobs/delete", {"id": job_id})
+    assert payload["deleted"] is True and payload["jobs"] == []
+
+
+def test_auto_index_runs_saved_connector_jobs(base_url: str, tmp_path: Path, monkeypatch):
+    from ragdesk.index import IndexStats
+    from ragdesk.serve import AppState, run_auto_index
+
+    request(
+        f"{base_url}/api/sync-jobs",
+        {"provider": "web", "params": {"url": "https://example.com/docs"}},
+    )
+    monkeypatch.setattr(
+        "ragdesk.serve.crawl_site",
+        lambda store, embedder, **kwargs: IndexStats(files_scanned=2, indexed=2, chunks=3),
+    )
+    state = AppState(
+        db=str(tmp_path / "auto.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+    )
+    summary = run_auto_index(state)
+    assert summary["connectors"] == [
+        {"provider": "web", "indexed": 2, "unchanged": 0, "chunks": 3}
+    ]
+
+
 def test_export_and_import_bundle(base_url: str, tmp_path: Path):
     import json
     import zipfile
