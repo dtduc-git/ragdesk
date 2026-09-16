@@ -9,11 +9,12 @@ set -euo pipefail
 
 gate=""
 db=".ragdesk/eval-repo.db"
-for arg in "$@"; do
-  case "$arg" in
-    --gate) gate="--min-recall 0.8" ;;
-    --db=*) db="${arg#--db=}" ;;
-    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --gate) gate="--min-recall 0.8"; shift ;;
+    --db) db="$2"; shift 2 ;;
+    --db=*) db="${1#--db=}"; shift ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
