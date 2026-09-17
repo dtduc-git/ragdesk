@@ -964,15 +964,28 @@ def test_release_idle_models_returns_memory(tmp_path: Path):
             self.loaded = False
 
     embedder = FakeEmbedder()
+
+    class FakeReranker:
+        loaded = True
+
+        def __init__(self) -> None:
+            self.unloaded = False
+
+        def unload(self) -> None:
+            self.unloaded = True
+            self.loaded = False
+
+    reranker = FakeReranker()
     state = AppState(
         db=str(tmp_path / "idle.db"),
         embedder=embedder,
-        rerank="none",
+        rerank="onnx",
         llm_model="",
         llm_host="http://127.0.0.1:9",
-        preset="light",
+        preset="balanced",
     )
     state.llm = object()
+    state.reranker = reranker
     assert release_idle_models(state, 0) is None  # disabled
     assert release_idle_models(state, 15) is None  # still fresh
     state.last_used -= 20 * 60
@@ -980,6 +993,7 @@ def test_release_idle_models_returns_memory(tmp_path: Path):
     assert released is not None and released["released"] is True
     assert state.llm is None
     assert embedder.unloaded is True
+    assert reranker.unloaded is True  # the reranker idles out with the rest
     # nothing left to release
     assert release_idle_models(state, 15) is None
 

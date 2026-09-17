@@ -168,6 +168,8 @@ class AppState:
         self.llm_host = llm_host
         self.llm_spec = llm_spec
         self.llm: Any = None
+        self.reranker: Any = None
+        self.reranker_spec: str = ""
         self.llm_setup: dict[str, Any] = {
             "running": False,
             "kind": "",
@@ -289,7 +291,8 @@ class Handler(BaseHTTPRequestHandler):
                         "activity": dict(self.state.activity),
                         "memory": {
                             "models_loaded": self.state.llm is not None
-                            or getattr(self.state.embedder, "loaded", False),
+                            or getattr(self.state.embedder, "loaded", False)
+                            or getattr(self.state.reranker, "loaded", False),
                             "idle_unload_minutes": settings.load()["idle_unload_minutes"],
                         },
                         "presets": [
@@ -599,7 +602,13 @@ class Handler(BaseHTTPRequestHandler):
     # --- endpoints ------------------------------------------------------------
 
     def _reranker_for(self, override: str | None):
-        return get_reranker(override or self.state.rerank)
+        """One cached instance per spec: a fresh session per question costs
+        seconds of model load, and the idle unload only frees what is cached."""
+        spec = (override or self.state.rerank or "none").strip()
+        if self.state.reranker_spec != spec:
+            self.state.reranker = get_reranker(spec)
+            self.state.reranker_spec = spec
+        return self.state.reranker
 
     def _handle_llm_setup(self, body: dict[str, Any]) -> None:
         options = llm_setup_options(
@@ -662,11 +671,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             threads = max(0, min(threads, 64))
             updates["embed_threads"] = threads
-            # the pool size is fixed when the session is built: drop it so the
-            # next question or index run picks the new value up
-            unload = getattr(self.state.embedder, "unload", None)
-            if callable(unload):
-                unload()
+            # the pool size is fixed when a session is built: drop the models so
+            # the next question or index run picks the new value up
+            for model in (self.state.embedder, self.state.reranker):
+                unload = getattr(model, "unload", None)
+                if callable(unload):
+                    unload()
         if "answer_length" in body:
             length = str(body["answer_length"])
             if length not in ("short", "medium", "long"):
@@ -2608,12 +2618,19 @@ def release_idle_models(state: AppState, minutes: float) -> dict[str, Any] | Non
     """Drop loaded models after an idle stretch; the next use reloads lazily."""
     if minutes <= 0:
         return None
-    if state.llm is None and not getattr(state.embedder, "loaded", False):
+    if (
+        state.llm is None
+        and not getattr(state.embedder, "loaded", False)
+        and not getattr(state.reranker, "loaded", False)
+    ):
         return None
     idle_seconds = time.monotonic() - state.last_used
     if idle_seconds < minutes * 60:
         return None
     state.embedder.unload()
+    unload = getattr(state.reranker, "unload", None)
+    if callable(unload):
+        unload()
     state.llm = None
     return {"released": True, "idle_seconds": int(idle_seconds)}
 

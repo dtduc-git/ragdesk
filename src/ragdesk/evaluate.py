@@ -83,6 +83,7 @@ def evaluate(
     reranker: Any = None,
     hyde_for: HydeFor | None = None,
     rewrite_for: RewriteFor | None = None,
+    pool: int | None = None,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     per_query: list[dict[str, Any]] = []
     for row in golden:
@@ -93,6 +94,9 @@ def evaluate(
             rewritten = str(rewrite_for(query, history)).strip()
         search_text = rewritten or query
         hyde_text = hyde_for(search_text) if hyde_for is not None else ""
+        kwargs: dict[str, Any] = {}
+        if pool is not None:  # sweep knob: the rerank candidate pool
+            kwargs["pool"] = pool
         hits = retrieve(
             store,
             embedder,
@@ -101,6 +105,7 @@ def evaluate(
             reranker=reranker,
             hyde_text=hyde_text,
             filters=filters,
+            **kwargs,
         )
         ranking = _rank_docs(hits)
         relevant = row["relevant"]

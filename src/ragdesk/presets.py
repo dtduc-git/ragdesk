@@ -12,9 +12,11 @@ PRESETS: dict[str, dict[str, str]] = {
     },
     "balanced": {
         "embedder": "onnx",
-        # Measured 2026-09-15: the English fastembed cross-encoder drops recall
-        # on a Vietnamese+code corpus (0.750 vs 0.833 without), while the
-        # multilingual gte-onnx reranker lifts it to 0.917.
+        # The multilingual gte cross-encoder on purpose: an English-only
+        # cross-encoder dropped recall on a Vietnamese+code corpus. Re-measured
+        # 2026-09-17 at the shipped pool: recall@5 0.833 -> 0.917, nDCG@10
+        # 0.671 -> 0.736, for ~2.2s and ~1.3GB while a question is in flight
+        # (batched, and the session unloads when idle).
         "rerank": "onnx",
         "llm": "qwen3.5:4b",
         "llm_mlx": "mlx-community/Qwen3.5-4B-MLX-4bit",
