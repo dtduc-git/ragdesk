@@ -2178,7 +2178,7 @@ $("feedback-golden").addEventListener("click", async () => {
   try {
     const payload = await get<{ rows: number; jsonl: string }>("/api/feedback/golden");
     if (!payload.rows) {
-      toast("No rated answers yet — use the ▲/▼ buttons in Chat");
+      toast("No rated answers yet — use the 👍/👎 buttons in Chat");
       return;
     }
     const blob = new Blob([payload.jsonl], { type: "application/x-ndjson" });
@@ -2810,8 +2810,8 @@ function renderAnswerActions(
     return;
   }
   actions.innerHTML = `
-    <button class="action" type="button" data-thumb="1" aria-label="Good answer" class="${feedbackValue === 1 ? "is-on" : ""}">▲</button>
-    <button class="action" type="button" data-thumb="-1" aria-label="Bad answer" class="${feedbackValue === -1 ? "is-on" : ""}">▼</button>
+    <button class="action action-thumb ${feedbackValue === 1 ? "is-on" : ""}" type="button" data-thumb="1" aria-label="Good answer" title="Good answer">👍</button>
+    <button class="action action-thumb ${feedbackValue === -1 ? "is-on" : ""}" type="button" data-thumb="-1" aria-label="Bad answer" title="Bad answer">👎</button>
     <button class="action action-text" type="button" data-verify="1">Verify</button>
     ${question ? `<button class="action action-text" type="button" data-fix="1">Fix</button>` : ""}
     <span class="action-note" data-note></span>`;

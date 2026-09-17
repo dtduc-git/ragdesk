@@ -1522,6 +1522,20 @@ textarea::placeholder {
   border-color: var(--stamp);
 }
 
+/* Thumbs are emoji: they keep their own colour, so the "is-on" state leans on
+   the border and a soft bed instead of the ink colour. */
+.action-thumb {
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji",
+    var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1;
+  padding: 2px 6px 3px;
+}
+
+.action-thumb.is-on {
+  background: color-mix(in srgb, var(--stamp) 12%, transparent);
+}
+
 .action-note {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
