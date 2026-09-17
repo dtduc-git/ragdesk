@@ -14,7 +14,7 @@ import re
 
 from ragdesk.index import parse_front_matter
 
-WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")   # [[Note]], [[Note|label]], [[Note#heading]]
+WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)")  # [[Note]], [[Note|label]], [[Note#heading]]
 TAG_RE = re.compile(r"(?<![\w/])#([A-Za-z][\w/-]{1,40})")
 MAX_ALIASES = 12
 
@@ -23,9 +23,7 @@ def parse_aliases(raw: str) -> list[str]:
     """`aliases: one, two` and YAML-list-ish `[one, two]` both work."""
     cleaned = raw.strip().strip("[]")
     return [
-        alias.strip().strip("'\"")
-        for alias in cleaned.split(",")
-        if alias.strip().strip("'\"")
+        alias.strip().strip("'\"") for alias in cleaned.split(",") if alias.strip().strip("'\"")
     ][:MAX_ALIASES]
 
 

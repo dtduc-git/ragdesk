@@ -91,9 +91,7 @@ def fake_server():
 
 
 def test_ask_remote_reads_the_ndjson_stream(fake_server: str):
-    chat_id, text, hits = ask_remote(
-        fake_server, "hi", out=lambda _line: None, stream=False
-    )
+    chat_id, text, hits = ask_remote(fake_server, "hi", out=lambda _line: None, stream=False)
     assert chat_id == 7
     assert text == "hello world"
     assert hits == [{"path": "a.md", "line": 3}]

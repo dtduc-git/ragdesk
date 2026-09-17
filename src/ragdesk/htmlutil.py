@@ -6,9 +6,7 @@ import html
 import re
 
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-_BLOCK_RE = re.compile(
-    r"</(?:p|div|li|tr|h[1-6]|table|ul|ol|blockquote|pre|code)>", re.IGNORECASE
-)
+_BLOCK_RE = re.compile(r"</(?:p|div|li|tr|h[1-6]|table|ul|ol|blockquote|pre|code)>", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 

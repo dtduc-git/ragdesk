@@ -125,10 +125,7 @@ def whoami(
     base = base_url.rstrip("/")
     payload = _get_json(f"{base}{api_path}", auth, timeout=timeout)
     return str(
-        payload.get("displayName")
-        or payload.get("publicName")
-        or payload.get("email")
-        or email
+        payload.get("displayName") or payload.get("publicName") or payload.get("email") or email
     )
 
 

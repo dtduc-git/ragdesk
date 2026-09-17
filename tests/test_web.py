@@ -19,13 +19,8 @@ PAGES: dict[str, object] = {
         "<a href='/logo.png'>image</a>"
         "</body></html>"
     ),
-    "/docs/a": (
-        "<html><head><title>Doc A</title></head><body>alpha rollback canary"
-        "</body></html>"
-    ),
-    "/docs/b": (
-        "<html><head><title>Doc B</title></head><body>bravo oauth pkce</body></html>"
-    ),
+    "/docs/a": ("<html><head><title>Doc A</title></head><body>alpha rollback canary</body></html>"),
+    "/docs/b": ("<html><head><title>Doc B</title></head><body>bravo oauth pkce</body></html>"),
     "/logo.png": b"\x89PNG\x00binary",
 }
 

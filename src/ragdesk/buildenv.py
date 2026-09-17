@@ -74,9 +74,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     mapped = write_build_env(args.env, args.out)
     baked = [const for const, value in mapped.items() if value]
-    refused = [const for const in REFUSED if parse_env_file(args.env.read_text()).get(
-        next(env for env, name in ENV_TO_CONST.items() if name == const), ""
-    )]
+    refused = [
+        const
+        for const in REFUSED
+        if parse_env_file(args.env.read_text()).get(
+            next(env for env, name in ENV_TO_CONST.items() if name == const), ""
+        )
+    ]
     print(f"baked {args.out} from {args.env}: {', '.join(sorted(baked)) or 'no values'}")
     if refused:
         print(

@@ -127,9 +127,7 @@ def test_index_requires_paths(base_url: str):
 
 
 def test_ask_grounding_gate_skips_llm(base_url: str):
-    status, payload = request(
-        f"{base_url}/api/ask", {"query": "access tokens", "min_cosine": 0.99}
-    )
+    status, payload = request(f"{base_url}/api/ask", {"query": "access tokens", "min_cosine": 0.99})
     assert status == 200
     assert payload["refused"] is True
     assert payload["hits"]
@@ -233,9 +231,7 @@ def test_never_index_endpoint_saves_and_prunes(base_url: str, tmp_path: Path):
     _, payload = request(f"{base_url}/api/index", {"paths": [str(docs)]})
     assert payload["indexed"] == 2
 
-    status, payload = request(
-        f"{base_url}/api/never-index", {"patterns": ["*secret*"]}
-    )
+    status, payload = request(f"{base_url}/api/never-index", {"patterns": ["*secret*"]})
     assert status == 200
     assert [Path(path).name for path in payload["removed"]] == ["api-secrets.md"]
 
@@ -320,9 +316,7 @@ def test_auto_index_runs_saved_connector_jobs(base_url: str, tmp_path: Path, mon
         llm_host="http://127.0.0.1:9",
     )
     summary = run_auto_index(state)
-    assert summary["connectors"] == [
-        {"provider": "web", "indexed": 2, "unchanged": 0, "chunks": 3}
-    ]
+    assert summary["connectors"] == [{"provider": "web", "indexed": 2, "unchanged": 0, "chunks": 3}]
 
 
 def test_export_and_import_bundle(base_url: str, tmp_path: Path):
@@ -399,9 +393,7 @@ def test_backup_and_restore_endpoints(base_url: str, tmp_path: Path):
 def test_duplicates_endpoint_and_bookmarks(base_url: str, tmp_path: Path, monkeypatch):
     docs = tmp_path / "dupes"
     docs.mkdir()
-    body = "\n\n".join(
-        f"paragraph {i} " + "alpha beta gamma delta " * 20 for i in range(12)
-    )
+    body = "\n\n".join(f"paragraph {i} " + "alpha beta gamma delta " * 20 for i in range(12))
     (docs / "copy-a.md").write_text(body)
     (docs / "copy-b.md").write_text(body)
     status, payload = request(f"{base_url}/api/index", {"paths": [str(docs)]})
@@ -417,9 +409,7 @@ def test_duplicates_endpoint_and_bookmarks(base_url: str, tmp_path: Path, monkey
 
     page = "<html><title>Saved</title><body><p>a saved page about widgets</p></body></html>"
     monkeypatch.setattr("ragdesk.web._fetch", lambda url, timeout=30.0: page)
-    status, payload = request(
-        f"{base_url}/api/save", {"url": "https://example.com/post/1"}
-    )
+    status, payload = request(f"{base_url}/api/save", {"url": "https://example.com/post/1"})
     assert status == 200 and payload["indexed"] == 1
 
     status, payload = request(f"{base_url}/api/bookmarks")
@@ -445,9 +435,7 @@ def test_ask_answers_symbol_questions_without_the_model(base_url: str, tmp_path:
     assert status == 200 and payload["indexed"] == 1
 
     # the fixture's LLM host is unreachable: a 200 proves the model was skipped
-    status, payload = request(
-        f"{base_url}/api/ask", {"query": "who calls hybrid_search?"}
-    )
+    status, payload = request(f"{base_url}/api/ask", {"query": "who calls hybrid_search?"})
     assert status == 200
     assert payload["symbol"] == "hybrid_search"
     assert "1 definition(s), 1 call site(s)" in payload["answer"]
@@ -474,9 +462,7 @@ def test_corrections_endpoints(base_url: str):
     correction_id = payload["id"]
 
     _, payload = request(f"{base_url}/api/corrections")
-    assert [row["question"] for row in payload["corrections"]] == [
-        "when do access tokens expire"
-    ]
+    assert [row["question"] for row in payload["corrections"]] == ["when do access tokens expire"]
 
     status, payload = request(f"{base_url}/api/corrections/delete", {"id": correction_id})
     assert status == 200
@@ -598,16 +584,12 @@ def test_github_device_flow_connect(base_url: str, monkeypatch):
     assert payload["user_code"] == "ABCD-1234"
 
     # pending poll keeps waiting
-    monkeypatch.setattr(
-        "ragdesk.serve.device_flow_poll_once", lambda cid, dc: ("pending", None)
-    )
+    monkeypatch.setattr("ragdesk.serve.device_flow_poll_once", lambda cid, dc: ("pending", None))
     status, payload = request(f"{base_url}/api/connections/github/device/poll", {})
     assert payload["connected"] is False and payload["pending"] is True
 
     # approved poll stores the token
-    monkeypatch.setattr(
-        "ragdesk.serve.device_flow_poll_once", lambda cid, dc: ("token", "tok-1")
-    )
+    monkeypatch.setattr("ragdesk.serve.device_flow_poll_once", lambda cid, dc: ("token", "tok-1"))
     monkeypatch.setattr("ragdesk.serve.github_whoami", lambda token: "duke")
     status, payload = request(f"{base_url}/api/connections/github/device/poll", {})
     assert payload["connected"] is True and payload["login"] == "duke"
@@ -718,9 +700,7 @@ def test_connect_gitlab_and_sync(base_url: str, monkeypatch):
     from ragdesk.index import IndexStats
 
     monkeypatch.setattr("ragdesk.serve.gitlab_whoami", lambda token, base_url="": "duke")
-    status, payload = request(
-        f"{base_url}/api/connections/gitlab", {"token": "glpat-test"}
-    )
+    status, payload = request(f"{base_url}/api/connections/gitlab", {"token": "glpat-test"})
     assert status == 200
     assert payload["display_name"] == "duke"
     _, connections = request(f"{base_url}/api/connections")
@@ -900,9 +880,7 @@ def test_email_connect_sync_and_mbox(base_url: str, tmp_path: Path, monkeypatch)
     monkeypatch.setattr("ragdesk.serve.email_whoami", lambda **kwargs: kwargs["user"])
     monkeypatch.setattr(
         "ragdesk.serve.email_sync_imap",
-        lambda store, embedder, **kwargs: IndexStats(
-            files_scanned=2, indexed=2, chunks=2
-        ),
+        lambda store, embedder, **kwargs: IndexStats(files_scanned=2, indexed=2, chunks=2),
     )
     status, payload = request(
         f"{base_url}/api/connections/email",
@@ -1111,9 +1089,7 @@ def test_cache_invalidates_when_the_corpus_changes(base_url: str, monkeypatch, t
 def test_stream_replays_a_cached_answer_without_the_model(base_url: str, monkeypatch):
     monkeypatch.setattr(
         "ragdesk.serve.answer",
-        lambda q, hits, llm, **kwargs: (
-            "cached later"
-        ),
+        lambda q, hits, llm, **kwargs: "cached later",
     )
     request(f"{base_url}/api/ask", {"query": "access tokens"})
 
@@ -1128,9 +1104,7 @@ def test_stream_replays_a_cached_answer_without_the_model(base_url: str, monkeyp
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req) as response:
-        lines = [
-            json.loads(line) for line in response.read().decode().splitlines() if line
-        ]
+        lines = [json.loads(line) for line in response.read().decode().splitlines() if line]
     text = "".join(line["delta"] for line in lines if "delta" in line)
     assert text == "cached later"
     assert lines[-1]["cached"] is True
@@ -1362,9 +1336,7 @@ def test_msgraph_device_flow(base_url: str, monkeypatch):
         request(f"{base_url}/api/connections/msgraph/device/start", {})
     assert excinfo.value.code == 400  # no client id yet
 
-    status, payload = request(
-        f"{base_url}/api/connections/msgraph", {"client_id": "ms-client-1"}
-    )
+    status, payload = request(f"{base_url}/api/connections/msgraph", {"client_id": "ms-client-1"})
     assert payload["saved"] is True
 
     monkeypatch.setattr(
@@ -1379,9 +1351,7 @@ def test_msgraph_device_flow(base_url: str, monkeypatch):
     status, payload = request(f"{base_url}/api/connections/msgraph/device/start", {})
     assert payload["user_code"] == "WXYZ-1234"
 
-    monkeypatch.setattr(
-        "ragdesk.serve.ms_poll_once", lambda cid, dc: ("pending", {})
-    )
+    monkeypatch.setattr("ragdesk.serve.ms_poll_once", lambda cid, dc: ("pending", {}))
     status, payload = request(f"{base_url}/api/connections/msgraph/device/poll", {})
     assert payload["pending"] is True
 
@@ -1410,9 +1380,7 @@ def test_msgraph_device_flow(base_url: str, monkeypatch):
 
 
 def test_eval_endpoint(base_url: str):
-    status, payload = request(
-        f"{base_url}/api/eval", {"golden": str(FIXTURES / "golden.jsonl")}
-    )
+    status, payload = request(f"{base_url}/api/eval", {"golden": str(FIXTURES / "golden.jsonl")})
     assert status == 200
     assert payload["metrics"]["recall@5"] >= 0.8
     assert payload["queries"]
@@ -1441,9 +1409,7 @@ def test_connect_notion_and_sync(base_url: str, monkeypatch):
     from ragdesk.index import IndexStats
 
     monkeypatch.setattr("ragdesk.serve.notion_whoami", lambda token: "Duke's bot")
-    status, payload = request(
-        f"{base_url}/api/connections/notion", {"token": "ntn_test"}
-    )
+    status, payload = request(f"{base_url}/api/connections/notion", {"token": "ntn_test"})
     assert status == 200
     assert payload["display_name"] == "Duke's bot"
     _, connections = request(f"{base_url}/api/connections")
@@ -1503,9 +1469,7 @@ def test_ask_stream(base_url: str, monkeypatch):
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req) as response:
-        lines = [
-            json.loads(line) for line in response.read().decode().splitlines() if line
-        ]
+        lines = [json.loads(line) for line in response.read().decode().splitlines() if line]
     text = "".join(line["delta"] for line in lines if "delta" in line)
     assert text == "Hello"
     assert lines[-1]["done"] is True
@@ -1537,6 +1501,7 @@ def test_static_ui_serving_and_traversal_guard(tmp_path: Path):
     thread.start()
     host, port = httpd.server_address[:2]
     try:
+
         def raw_get(path: str) -> tuple[int, bytes, str]:
             conn = http.client.HTTPConnection(host, port, timeout=5)
             conn.request("GET", path)

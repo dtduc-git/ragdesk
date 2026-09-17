@@ -55,11 +55,7 @@ def _shared_strings(archive: zipfile.ZipFile) -> list[str]:
     for item in root:
         if _local(item.tag) != "si":
             continue
-        parts = [
-            (node.text or "")
-            for node in item.iter()
-            if _local(node.tag) == "t"
-        ]
+        parts = [(node.text or "") for node in item.iter() if _local(node.tag) == "t"]
         strings.append("".join(parts))
     return strings
 
@@ -72,11 +68,7 @@ def _sheet_titles(archive: zipfile.ZipFile) -> list[str]:
     root = _safe_parse(xml)
     if root is None:
         return []
-    return [
-        str(node.get("name") or "")
-        for node in root.iter()
-        if _local(node.tag) == "sheet"
-    ]
+    return [str(node.get("name") or "") for node in root.iter() if _local(node.tag) == "sheet"]
 
 
 DATE_NUMFMT_IDS = set(range(14, 23)) | {27, 30, 36, 45, 46, 47, 50, 57}
@@ -160,11 +152,7 @@ def _sheet_rows(
     for row in root.iter():
         if _local(row.tag) != "row":
             continue
-        values = [
-            _cell_text(cell, shared, date_styles)
-            for cell in row
-            if _local(cell.tag) == "c"
-        ]
+        values = [_cell_text(cell, shared, date_styles) for cell in row if _local(cell.tag) == "c"]
         values = [value for value in values if value]
         if not values:
             continue
@@ -227,9 +215,7 @@ def extract_office_text(data: bytes, suffix: str) -> str | None:
                     for name in archive.namelist()
                     if name.startswith("ppt/slides/slide") and name.endswith(".xml")
                 )
-                xml = "\n".join(
-                    archive.read(name).decode("utf-8", "replace") for name in names
-                )
+                xml = "\n".join(archive.read(name).decode("utf-8", "replace") for name in names)
             else:
                 return None
     except (KeyError, zipfile.BadZipFile, OSError):

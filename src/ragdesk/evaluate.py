@@ -87,9 +87,7 @@ def evaluate(
     per_query: list[dict[str, Any]] = []
     for row in golden:
         query, filters = parse_filters(row["query"])
-        history = [
-            (str(role), str(text)) for role, text in (row.get("history") or [])
-        ]
+        history = [(str(role), str(text)) for role, text in (row.get("history") or [])]
         rewritten = ""
         if rewrite_for is not None and history:
             rewritten = str(rewrite_for(query, history)).strip()
@@ -114,9 +112,7 @@ def evaluate(
         recall = len(top5) / len(relevant) if relevant else 0.0
 
         dcg = sum(
-            1.0 / math.log2(rank + 2)
-            for rank, path in enumerate(ranking[:10])
-            if is_relevant(path)
+            1.0 / math.log2(rank + 2) for rank, path in enumerate(ranking[:10]) if is_relevant(path)
         )
         ideal = sum(1.0 / math.log2(rank + 2) for rank in range(min(len(relevant), 10)))
         ndcg = dcg / ideal if ideal else 0.0
@@ -181,11 +177,7 @@ def ground_answer(answer: str, citations: list[str]) -> dict[str, Any]:
     # Stopword-free overlap keeps the check honest: shared filler words must not
     # make an invented sentence look grounded.
     corpus_tokens = set(tokenize(" ".join(citations)))
-    sentences = [
-        part.strip()
-        for part in re.split(r"(?<=[.!?…])\s+", answer)
-        if part.strip()
-    ]
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?…])\s+", answer) if part.strip()]
     grounded = 0
     for sentence in sentences:
         tokens = set(tokenize(sentence))
@@ -221,9 +213,7 @@ def parse_judge_reply(raw: str) -> dict[str, Any]:
         return {"judged": False}
     supported = max(0, min(supported, total))
     unsupported = [
-        str(item)[:300]
-        for item in (payload.get("unsupported") or [])
-        if str(item).strip()
+        str(item)[:300] for item in (payload.get("unsupported") or []) if str(item).strip()
     ]
     return {
         "judged": True,
@@ -258,11 +248,7 @@ def ground_answer_detail(answer: str, citations: list[str]) -> dict[str, Any]:
     """Per-sentence version of :func:`ground_answer` for the Verify button."""
     summary = ground_answer(answer, citations)
     corpus_tokens = set(tokenize(" ".join(citations)))
-    sentences = [
-        part.strip()
-        for part in re.split(r"(?<=[.!?…])\s+", answer)
-        if part.strip()
-    ]
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?…])\s+", answer) if part.strip()]
     rows: list[dict[str, Any]] = []
     for sentence in sentences:
         tokens = set(tokenize(sentence))

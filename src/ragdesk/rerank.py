@@ -90,9 +90,7 @@ class OnnxReranker:
     the ``onnx`` extra.
     """
 
-    def __init__(
-        self, repo: str = DEFAULT_ONNX_RERANK_REPO, *, max_length: int = 512
-    ) -> None:
+    def __init__(self, repo: str = DEFAULT_ONNX_RERANK_REPO, *, max_length: int = 512) -> None:
         self.name = f"onnx:{repo}"
         self.repo = repo
         self.max_length = max_length
@@ -142,14 +140,10 @@ class OnnxReranker:
         encodings = self._tokenizer.encode_batch([(query, doc) for doc in documents])
         feed = {
             "input_ids": np.array([enc.ids for enc in encodings], dtype=np.int64),
-            "attention_mask": np.array(
-                [enc.attention_mask for enc in encodings], dtype=np.int64
-            ),
+            "attention_mask": np.array([enc.attention_mask for enc in encodings], dtype=np.int64),
         }
         if "token_type_ids" in self._input_names:
-            feed["token_type_ids"] = np.array(
-                [enc.type_ids for enc in encodings], dtype=np.int64
-            )
+            feed["token_type_ids"] = np.array([enc.type_ids for enc in encodings], dtype=np.int64)
         outputs = self._session.run(
             None, {key: value for key, value in feed.items() if key in self._input_names}
         )

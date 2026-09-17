@@ -104,11 +104,7 @@ def fold_text(text: str) -> str:
 def matches_any(path: str, patterns: list[str]) -> bool:
     """True when the full path or the file name matches any user glob."""
     name = Path(path).name
-    return any(
-        fnmatch(path, pattern) or fnmatch(name, pattern)
-        for pattern in patterns
-        if pattern
-    )
+    return any(fnmatch(path, pattern) or fnmatch(name, pattern) for pattern in patterns if pattern)
 
 
 class EmbedderMismatch(RuntimeError):
@@ -143,9 +139,7 @@ class Store:
             },
         }
         for table, columns in migrations.items():
-            existing = {
-                row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")
-            }
+            existing = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
             for name, spec in columns.items():
                 if name not in existing:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
@@ -207,9 +201,7 @@ class Store:
             ).fetchall()
             if not chunks:
                 continue
-            parents, assignment = group_parents(
-                [str(chunk["text"]) for chunk in chunks], max_chars
-            )
+            parents, assignment = group_parents([str(chunk["text"]) for chunk in chunks], max_chars)
             for ordinal, text in enumerate(parents):
                 self.conn.execute(
                     "INSERT INTO parents (doc_id, ordinal, text) VALUES (?, ?, ?)",
@@ -298,9 +290,7 @@ class Store:
         if len(texts) != len(embeddings):
             raise ValueError("texts and embeddings must have the same length")
         with self.conn:
-            row = self.conn.execute(
-                "SELECT id FROM documents WHERE path = ?", (path,)
-            ).fetchone()
+            row = self.conn.execute("SELECT id FROM documents WHERE path = ?", (path,)).fetchone()
             if row:
                 self._delete_doc(row["id"])
             cursor = self.conn.execute(
@@ -422,14 +412,10 @@ class Store:
     def touch_document(self, path: str, mtime: float) -> None:
         """Record a new mtime for unchanged content so the watcher fast-path holds."""
         with self.conn:
-            self.conn.execute(
-                "UPDATE documents SET mtime = ? WHERE path = ?", (mtime, path)
-            )
+            self.conn.execute("UPDATE documents SET mtime = ? WHERE path = ?", (mtime, path))
 
     def doc_mtime(self, path: str) -> float | None:
-        row = self.conn.execute(
-            "SELECT mtime FROM documents WHERE path = ?", (path,)
-        ).fetchone()
+        row = self.conn.execute("SELECT mtime FROM documents WHERE path = ?", (path,)).fetchone()
         return float(row["mtime"]) if row else None
 
     def stats(self) -> dict[str, int]:
@@ -498,9 +484,7 @@ class Store:
         for entry in self._local_roots():
             root = str(entry["path"])
             prefix = root.rstrip("/") + "/"
-            under = [
-                row for row in rows if row["path"] == root or row["path"].startswith(prefix)
-            ]
+            under = [row for row in rows if row["path"] == root or row["path"].startswith(prefix)]
             out.append(
                 {
                     "path": root,
@@ -518,9 +502,7 @@ class Store:
             cursor = self.conn.execute("INSERT INTO chats (title) VALUES (?)", (title,))
         return int(cursor.lastrowid)
 
-    def add_message(
-        self, chat_id: int, role: str, text: str, citations: list | None = None
-    ) -> int:
+    def add_message(self, chat_id: int, role: str, text: str, citations: list | None = None) -> int:
         with self.conn:
             cursor = self.conn.execute(
                 "INSERT INTO messages (chat_id, role, text, citations) VALUES (?, ?, ?, ?)",
@@ -589,9 +571,7 @@ class Store:
                     "question": str(row["question"] or ""),
                     "feedback": int(row["feedback"]),
                     "relevant": [
-                        str(item.get("path", ""))
-                        for item in citations
-                        if item.get("path")
+                        str(item.get("path", "")) for item in citations if item.get("path")
                     ],
                 }
             )
@@ -760,10 +740,7 @@ class Store:
         with self.conn:
             self.conn.executemany(
                 "INSERT OR REPLACE INTO embed_cache (key, embedding) VALUES (?, ?)",
-                [
-                    (key, array.array("f", vector).tobytes())
-                    for key, vector in pairs
-                ],
+                [(key, array.array("f", vector).tobytes()) for key, vector in pairs],
             )
             self.conn.execute(
                 "DELETE FROM embed_cache WHERE key NOT IN "
@@ -888,9 +865,7 @@ class Store:
 
     def related_documents(self, path: str, limit: int = 5) -> list[dict[str, Any]]:
         """Other documents closest to this one's average chunk vector."""
-        row = self.conn.execute(
-            "SELECT id FROM documents WHERE path = ?", (path,)
-        ).fetchone()
+        row = self.conn.execute("SELECT id FROM documents WHERE path = ?", (path,)).fetchone()
         if row is None:
             return []
         doc_id = int(row["id"])
@@ -908,8 +883,7 @@ class Store:
             scored.append((dot / (norm * other_norm), other_path))
         scored.sort(key=lambda item: -item[0])
         return [
-            {"path": other_path, "score": round(score, 3)}
-            for score, other_path in scored[:limit]
+            {"path": other_path, "score": round(score, 3)} for score, other_path in scored[:limit]
         ]
 
     def duplicate_clusters(
@@ -1015,9 +989,7 @@ class Store:
                 params.append(str(value).lower())
         return (" AND " + " AND ".join(clauses)) if clauses else "", params
 
-    def bm25_search(
-        self, query: str, limit: int, filters: Any = None
-    ) -> list[dict[str, Any]]:
+    def bm25_search(self, query: str, limit: int, filters: Any = None) -> list[dict[str, Any]]:
         tokens = TOKEN_RE.findall(fold_text(query))
         if not tokens:
             return []
@@ -1040,9 +1012,7 @@ class Store:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def path_search(
-        self, query: str, limit: int, filters: Any = None
-    ) -> list[dict[str, Any]]:
+    def path_search(self, query: str, limit: int, filters: Any = None) -> list[dict[str, Any]]:
         """Match query words against file paths, best (most words) first."""
         tokens = [token for token in TOKEN_RE.findall(query.lower()) if len(token) >= 3]
         if not tokens:

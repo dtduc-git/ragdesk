@@ -21,6 +21,7 @@ SYMBOL_RE = re.compile(
 DEFAULT_MAX_CHARS = 1000
 DEFAULT_OVERLAP = 150
 
+
 @dataclass(frozen=True)
 class Chunk:
     ordinal: int
@@ -62,9 +63,7 @@ def chunk_text(
             pieces.append((offset, para))
         else:
             step = max_chars - overlap
-            pieces.extend(
-                (offset + i, para[i : i + max_chars]) for i in range(0, len(para), step)
-            )
+            pieces.extend((offset + i, para[i : i + max_chars]) for i in range(0, len(para), step))
 
     chunks: list[tuple[int, str]] = []
     buf = ""

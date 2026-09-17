@@ -35,12 +35,7 @@ def _flags(parser: argparse.ArgumentParser) -> list[tuple[str, str]]:
 
 
 def _clean(text: str) -> str:
-    return (
-        text.replace('"', "'")
-        .replace("'", "")
-        .replace("[", "(")
-        .replace("]", ")")
-    )
+    return text.replace('"', "'").replace("'", "").replace("[", "(").replace("]", ")")
 
 
 def _zsh_opts(flags: list[tuple[str, str]]) -> str:
@@ -55,8 +50,7 @@ def bash_script(parser: argparse.ArgumentParser) -> str:
     commands, _helps = _subparsers(parser)
     global_words = " ".join(flag for flag, _ in _flags(parser))
     cases = "\n".join(
-        f'      {name}) words="{global_words} '
-        f'{" ".join(flag for flag, _ in _flags(sub))}" ;;'
+        f'      {name}) words="{global_words} {" ".join(flag for flag, _ in _flags(sub))}" ;;'
         for name, sub in commands.items()
     )
     return f"""# bash completion for ragdesk
@@ -65,7 +59,7 @@ _ragdesk() {{
   local cur words
   cur="${{COMP_WORDS[COMP_CWORD]}}"
   if [[ $COMP_CWORD -eq 1 ]]; then
-    words="{' '.join(commands)} {global_words}"
+    words="{" ".join(commands)} {global_words}"
   else
     words=""
     case "${{COMP_WORDS[1]}}" in
@@ -80,12 +74,9 @@ complete -o default -F _ragdesk ragdesk
 
 def zsh_script(parser: argparse.ArgumentParser) -> str:
     commands, helps = _subparsers(parser)
-    command_list = " ".join(
-        f"'{name}:{_clean(helps.get(name, ''))}'" for name in commands
-    )
+    command_list = " ".join(f"'{name}:{_clean(helps.get(name, ''))}'" for name in commands)
     cases = "\n".join(
-        f"    {name}) opts=({_zsh_opts(_flags(sub))}) ;;"
-        for name, sub in commands.items()
+        f"    {name}) opts=({_zsh_opts(_flags(sub))}) ;;" for name, sub in commands.items()
     )
     return f"""#compdef ragdesk
 _ragdesk() {{

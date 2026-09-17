@@ -210,9 +210,7 @@ def _fetch_text(file: dict, access_token: str) -> str | None:
     return None
 
 
-def resolve_client_credentials(
-    client_id: str = "", client_secret: str = ""
-) -> tuple[str, str]:
+def resolve_client_credentials(client_id: str = "", client_secret: str = "") -> tuple[str, str]:
     """(client_id, client_secret): explicit > env > saved > shipped defaults."""
     stored = credentials.get("gdrive")
     resolved_id = (

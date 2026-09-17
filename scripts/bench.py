@@ -130,9 +130,7 @@ def main() -> int:
                 stats = store.stats()
             for spec in reranks:
                 reranker = None if spec == "none" else get_reranker(spec)
-                metrics, per_query = score(
-                    db, golden, embedder, reranker, weights, args.top_k
-                )
+                metrics, per_query = score(db, golden, embedder, reranker, weights, args.top_k)
                 row = {
                     "chunk_chars": chars,
                     "overlap": args.overlap,

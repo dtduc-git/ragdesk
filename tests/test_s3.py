@@ -264,4 +264,3 @@ def test_sync_s3_requires_a_bucket(tmp_path: Path):
     with Store(tmp_path / "index.db") as store:
         with pytest.raises(S3Error):
             sync_s3(store, HashingEmbedder(dim=64), bucket="  ")
-

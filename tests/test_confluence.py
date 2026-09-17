@@ -164,9 +164,7 @@ def test_connect_oauth_flow(monkeypatch):
     )
     monkeypatch.setattr(
         "ragdesk.confluence.accessible_resources",
-        lambda access: [
-            {"id": "cloud-1", "url": "https://team.atlassian.net", "name": "Team"}
-        ],
+        lambda access: [{"id": "cloud-1", "url": "https://team.atlassian.net", "name": "Team"}],
     )
     session = connect_oauth("cid", "secret", timeout=1)
     assert session["cloud_id"] == "cloud-1"

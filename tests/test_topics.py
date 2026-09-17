@@ -34,8 +34,7 @@ def test_cluster_documents_groups_by_topic(tmp_path: Path):
         index_paths(store, HashingEmbedder(dim=512), [docs])
         clusters = cluster_documents(store)
     groups = sorted(
-        sorted(Path(path).name.split("-")[0] for path in cluster["paths"])
-        for cluster in clusters
+        sorted(Path(path).name.split("-")[0] for path in cluster["paths"]) for cluster in clusters
     )
     assert groups == [["k8s", "k8s", "k8s"], ["tax", "tax", "tax"]]
 

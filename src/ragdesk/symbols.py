@@ -22,10 +22,40 @@ from ragdesk.search import Hit
 from ragdesk.store import Store
 
 CODE_EXTENSIONS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".go", ".rs", ".java", ".kt", ".kts", ".swift", ".cs", ".rb", ".php",
-    ".sh", ".bash", ".zsh", ".fish", ".pl", ".lua", ".scala", ".ex", ".exs",
-    ".c", ".h", ".cc", ".cpp", ".hpp", ".m", ".mm", ".sql", ".tf",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".kts",
+    ".swift",
+    ".cs",
+    ".rb",
+    ".php",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".pl",
+    ".lua",
+    ".scala",
+    ".ex",
+    ".exs",
+    ".c",
+    ".h",
+    ".cc",
+    ".cpp",
+    ".hpp",
+    ".m",
+    ".mm",
+    ".sql",
+    ".tf",
 }
 MAX_SITES = 25
 MAX_TEXT = 160
@@ -68,9 +98,7 @@ def _snippet(line: str) -> str:
     return flat[: MAX_TEXT - 1] + "…" if len(flat) > MAX_TEXT else flat
 
 
-def _true_line(
-    path: str, estimate: int, snippet: str, cache: dict[str, list[str]]
-) -> int:
+def _true_line(path: str, estimate: int, snippet: str, cache: dict[str, list[str]]) -> int:
     """Map the chunk-relative estimate onto the real file line (local docs only).
 
     The chunk text rejoins paragraphs, so the estimate can be a few lines low in
@@ -194,15 +222,13 @@ def symbol_answer(name: str, result: dict) -> tuple[str, list[Hit]]:
     if defs:
         lines.append("Defined in:")
         lines += [
-            f"- {site['path']}:{site['line']} — `{site['text']}` [{mark(site)}]"
-            for site in defs
+            f"- {site['path']}:{site['line']} — `{site['text']}` [{mark(site)}]" for site in defs
         ]
         lines.append("")
     if calls:
         lines.append("Called from:")
         lines += [
-            f"- {site['path']}:{site['line']} — `{site['text']}` [{mark(site)}]"
-            for site in calls
+            f"- {site['path']}:{site['line']} — `{site['text']}` [{mark(site)}]" for site in calls
         ]
         lines.append("")
     if result["mentions"]:

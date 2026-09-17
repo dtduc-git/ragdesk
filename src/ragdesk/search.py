@@ -212,11 +212,7 @@ def hybrid_search(
     dense_rows = next(rows for lane, rows in lane_rows if lane == "dense")
     cosine = {row["id"]: row["score"] for row in dense_rows}
     members = {lane: {row["id"] for row in rows} for lane, rows in lane_rows}
-    lane_weights = (
-        [float(weights.get(lane, 1.0)) for lane, _rows in lane_rows]
-        if weights
-        else None
-    )
+    lane_weights = [float(weights.get(lane, 1.0)) for lane, _rows in lane_rows] if weights else None
     fused = fuse(
         [[row["id"] for row in rows] for _lane, rows in lane_rows],
         weights=lane_weights,

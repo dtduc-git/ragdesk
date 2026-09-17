@@ -22,9 +22,7 @@ def make_docx(text: str) -> bytes:
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr(
             "word/document.xml",
-            "<w:document><w:body><w:p><w:r>"
-            f"<w:t>{text}</w:t>"
-            "</w:r></w:p></w:body></w:document>",
+            f"<w:document><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>",
         )
     return buffer.getvalue()
 
@@ -83,9 +81,7 @@ def test_device_flow_connect_saves_tokens(monkeypatch):
             "interval": 0,
         },
     )
-    responses = iter(
-        [("pending", {}), ("token", {"access_token": "at", "refresh_token": "rt"})]
-    )
+    responses = iter([("pending", {}), ("token", {"access_token": "at", "refresh_token": "rt"})])
     monkeypatch.setattr("ragdesk.msgraph.device_flow_poll_once", lambda cid, dc: next(responses))
     monkeypatch.setattr("ragdesk.msgraph.whoami", lambda token: "duke@outlook.com")
     monkeypatch.setattr(

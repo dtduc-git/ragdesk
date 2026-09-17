@@ -40,9 +40,7 @@ def _render_png(text: str, path: Path, width: int = 900, height: int = 140) -> N
         None, width, height, 8, 4, True, False, "NSCalibratedRGBColorSpace", 0, 0
     )
     NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.setCurrentContext_(
-        NSGraphicsContext.graphicsContextWithBitmapImageRep_(rep)
-    )
+    NSGraphicsContext.setCurrentContext_(NSGraphicsContext.graphicsContextWithBitmapImageRep_(rep))
     NSColor.whiteColor().set()
     NSMakeRect(0, 0, width, height)
     from AppKit import NSRectFill  # type: ignore[import-not-found]
@@ -52,9 +50,7 @@ def _render_png(text: str, path: Path, width: int = 900, height: int = 140) -> N
         NSFontAttributeName: NSFont.systemFontOfSize_(40),
         NSForegroundColorAttributeName: NSColor.blackColor(),
     }
-    NSString.stringWithString_(text).drawAtPoint_withAttributes_(
-        NSMakePoint(30, 50), attrs
-    )
+    NSString.stringWithString_(text).drawAtPoint_withAttributes_(NSMakePoint(30, 50), attrs)
     NSGraphicsContext.restoreGraphicsState()
     data = rep.representationUsingType_properties_(NSBitmapImageFileTypePNG, {})
     path.write_bytes(bytes(data))
@@ -132,8 +128,7 @@ def _make_empty_pdf() -> bytes:
     for offset in offsets:
         out.write(b"%010d 00000 n \n" % offset)
     out.write(
-        b"trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n"
-        % (len(objects) + 1, xref)
+        b"trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
     )
     return out.getvalue()
 

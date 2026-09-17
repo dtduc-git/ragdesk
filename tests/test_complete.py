@@ -35,7 +35,7 @@ def test_completion_script_shapes():
 def test_man_page_is_roff_with_the_commands():
     parser = _build_parser()
     man = man_page(parser)
-    assert man.startswith('.TH RAGDESK 1')
+    assert man.startswith(".TH RAGDESK 1")
     assert ".SH COMMANDS" in man
     assert ".SH GLOBAL OPTIONS" in man
     assert "ragdesk serve" in man

@@ -42,9 +42,7 @@ Sources:
 Question: {question}
 Answer:"""
 
-HISTORY_HEADER = (
-    "Recent conversation (context only — the sources are the only source of truth):\n"
-)
+HISTORY_HEADER = "Recent conversation (context only — the sources are the only source of truth):\n"
 HISTORY_TURNS = 3
 HISTORY_CHARS = 400
 MEMORY_HEADER = (
@@ -66,8 +64,17 @@ in the same language as the question.
 """
 # Words that mean "draw me something" rather than "tell me something".
 DIAGRAM_WORDS = (
-    "diagram", "flowchart", "flow chart", "sequence diagram", "architecture diagram",
-    "draw", "chart", "graph", "sơ đồ", "biểu đồ", "vẽ",
+    "diagram",
+    "flowchart",
+    "flow chart",
+    "sequence diagram",
+    "architecture diagram",
+    "draw",
+    "chart",
+    "graph",
+    "sơ đồ",
+    "biểu đồ",
+    "vẽ",
 )
 
 
@@ -98,9 +105,7 @@ def build_prompt(
     diagram: bool = False,
     corrections: list[dict] | None = None,
 ) -> str:
-    blocks = [
-        f"[{i}] {hit.path}\n{hit.context}" for i, hit in enumerate(hits, start=1)
-    ]
+    blocks = [f"[{i}] {hit.path}\n{hit.context}" for i, hit in enumerate(hits, start=1)]
     lines: list[str] = []
     for role, text in (history or [])[-HISTORY_TURNS * 2 :]:
         speaker = "User" if role == "user" else "ragdesk"

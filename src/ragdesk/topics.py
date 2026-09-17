@@ -33,9 +33,7 @@ def _merge(centroid: list[float], count: int, vector: list[float]) -> list[float
     return [(a * count + b) / total for a, b in zip(centroid, vector, strict=False)]
 
 
-def cluster_documents(
-    store: Store, threshold: float = CLUSTER_THRESHOLD
-) -> list[dict]:
+def cluster_documents(store: Store, threshold: float = CLUSTER_THRESHOLD) -> list[dict]:
     """Greedy leader clustering of documents by their average chunk vector."""
     vectors = store._doc_vectors()  # noqa: SLF001 - the shared average-vector helper
     if not vectors:
@@ -77,11 +75,7 @@ def cluster_labels(store: Store, clusters: list[dict], limit: int = LABEL_TERMS)
     # ponytail: the corpus-wide baseline is sampled past 20k chunks — labels
     # stay useful, and the pass stays fast on big corpora.
     for row in store.conn.execute("SELECT text FROM chunks LIMIT 20000"):
-        tokens = [
-            token
-            for token in tokenize(str(row["text"]))
-            if len(token) >= MIN_TERM_LENGTH
-        ]
+        tokens = [token for token in tokenize(str(row["text"])) if len(token) >= MIN_TERM_LENGTH]
         corpus_counts.update(tokens)
         corpus_tokens += len(tokens)
 
@@ -95,9 +89,7 @@ def cluster_labels(store: Store, clusters: list[dict], limit: int = LABEL_TERMS)
         ).fetchall()
         for row in rows:
             tokens = [
-                token
-                for token in tokenize(str(row["text"]))
-                if len(token) >= MIN_TERM_LENGTH
+                token for token in tokenize(str(row["text"])) if len(token) >= MIN_TERM_LENGTH
             ]
             counts.update(tokens)
             total += len(tokens)

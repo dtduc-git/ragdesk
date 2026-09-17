@@ -67,13 +67,9 @@ def _ocr_bytes(data: bytes, languages: tuple[str, ...] = LANGUAGES, scale: float
         return ""
     if scale > 1.0:
         # Small screenshots OCR better upscaled.
-        image = image.imageByApplyingTransform_(
-            Quartz.CGAffineTransformMakeScale(scale, scale)
-        )
+        image = image.imageByApplyingTransform_(Quartz.CGAffineTransformMakeScale(scale, scale))
     with objc.autorelease_pool():
-        vision_handler = Vision.VNImageRequestHandler.alloc().initWithCIImage_options_(
-            image, None
-        )
+        vision_handler = Vision.VNImageRequestHandler.alloc().initWithCIImage_options_(image, None)
         vision_handler.performRequests_error_([request], None)
     return "\n".join(lines)
 

@@ -193,9 +193,7 @@ def sync_notion(
 ) -> IndexStats:
     resolved = resolve_token(token)
     if resolved is None:
-        raise NotionError(
-            "no Notion token: connect the integration in the app or set NOTION_TOKEN"
-        )
+        raise NotionError("no Notion token: connect the integration in the app or set NOTION_TOKEN")
     store.ensure_embedder(embedder.name, embedder.dim)
 
     stats = IndexStats()

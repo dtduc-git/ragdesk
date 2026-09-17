@@ -71,9 +71,7 @@ def test_resolve_token_precedence(monkeypatch):
     monkeypatch.setenv("GITLAB_TOKEN", "env-token")
     assert resolve_token() == "env-token"
     monkeypatch.delenv("GITLAB_TOKEN")
-    monkeypatch.setattr(
-        "ragdesk.gitlab.credentials.get", lambda provider: {"token": "stored"}
-    )
+    monkeypatch.setattr("ragdesk.gitlab.credentials.get", lambda provider: {"token": "stored"})
     assert resolve_token() == "stored"
 
 

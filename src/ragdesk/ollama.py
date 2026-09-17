@@ -16,8 +16,7 @@ class OllamaUnavailable(RuntimeError):
 
 def _raise_unavailable(host: str, exc: BaseException) -> None:
     raise OllamaUnavailable(
-        f"cannot reach Ollama at {host}: {exc}. Is it running? "
-        f"(ollama serve; ollama pull <model>)"
+        f"cannot reach Ollama at {host}: {exc}. Is it running? (ollama serve; ollama pull <model>)"
     ) from exc
 
 
@@ -39,9 +38,7 @@ def post_json(host: str, path: str, payload: dict, *, timeout: float = 300.0) ->
     return {}  # unreachable; _raise_unavailable always raises
 
 
-def post_stream(
-    host: str, path: str, payload: dict, *, timeout: float = 300.0
-) -> Iterator[dict]:
+def post_stream(host: str, path: str, payload: dict, *, timeout: float = 300.0) -> Iterator[dict]:
     """Stream newline-delimited JSON objects from Ollama (``stream=true``)."""
     url = f"{host.rstrip('/')}{path}"
     request = urllib.request.Request(
@@ -61,4 +58,3 @@ def post_stream(
             line = raw_line.strip()
             if line:
                 yield json.loads(line)
-

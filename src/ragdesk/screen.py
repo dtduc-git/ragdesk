@@ -112,9 +112,7 @@ class ChatScreen(App):
         self._answer_text = ""
         self.write_line(f"> {question}", "question")
         self.set_status("thinking…")
-        self.run_worker(
-            lambda: self.exchange(question), thread=True, exclusive=True
-        )
+        self.run_worker(lambda: self.exchange(question), thread=True, exclusive=True)
 
     def command(self, raw: str) -> None:
         name = raw.split()[0]
@@ -132,8 +130,7 @@ class ChatScreen(App):
                 rows = store.sources()
             for row in rows:
                 self.write_line(
-                    f"  {row['source']:<16} {row['documents']:>5} docs  "
-                    f"{row['chunks']:>6} chunks"
+                    f"  {row['source']:<16} {row['documents']:>5} docs  {row['chunks']:>6} chunks"
                 )
             return
         self.write_line(f"unknown command: {name} — {HELP}", "error")

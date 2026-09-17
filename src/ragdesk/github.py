@@ -99,9 +99,7 @@ def _token_from_gh() -> str | None:
     if not gh:
         return None
     try:
-        result = subprocess.run(
-            [gh, "auth", "token"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
     token = result.stdout.strip()

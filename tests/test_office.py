@@ -30,8 +30,7 @@ def make_pdf(text: str) -> bytes:
     for offset in offsets:
         out.write(b"%010d 00000 n \n" % offset)
     out.write(
-        b"trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n"
-        % (len(objects) + 1, xref)
+        b"trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
     )
     return out.getvalue()
 

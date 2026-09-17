@@ -154,14 +154,11 @@ class McpServer:
                 return self._tool_error("query is required")
             top_k = int(arguments.get("top_k") or 8)
             with Store(self.db) as store:
-                hits = retrieve(
-                    store, self.embedder, query, top_k=top_k, reranker=self.reranker
-                )
+                hits = retrieve(store, self.embedder, query, top_k=top_k, reranker=self.reranker)
             if not hits:
                 return self._tool_text("no matches in the local index")
             blocks = [
-                f"[{index}] {hit.path} (score {hit.score:.4f}, lanes {hit.lanes})\n"
-                f"{hit.text[:600]}"
+                f"[{index}] {hit.path} (score {hit.score:.4f}, lanes {hit.lanes})\n{hit.text[:600]}"
                 for index, hit in enumerate(hits, start=1)
             ]
             return self._tool_text("\n\n".join(blocks))

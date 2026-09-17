@@ -267,9 +267,7 @@ class Handler(BaseHTTPRequestHandler):
                         },
                         "watch_seconds": int(settings.load().get("watch_seconds") or 0),
                         "sync_jobs": sync_jobs(),
-                        "vaults": [
-                            str(entry) for entry in (settings.load().get("vaults") or [])
-                        ],
+                        "vaults": [str(entry) for entry in (settings.load().get("vaults") or [])],
                         "hyde": bool(settings.load()["hyde"]),
                         "answer_length": str(settings.load()["answer_length"]),
                         "embed_threads": int(settings.load().get("embed_threads") or 0),
@@ -277,18 +275,14 @@ class Handler(BaseHTTPRequestHandler):
                             "preference": str(settings.load().get("llm_preference") or ""),
                             "openai_host": str(settings.load().get("openai_host") or ""),
                             "openai_model": str(settings.load().get("openai_model") or ""),
-                            "openai_key_set": bool(
-                                credentials.get("openai").get("api_key")
-                            ),
+                            "openai_key_set": bool(credentials.get("openai").get("api_key")),
                         },
                         "onboarded": bool(settings.load()["onboarded"]),
                         "notes_available": notes_available(),
                         "s3": {
                             "configured": bool(credentials.get("s3").get("access_key")),
                             "bucket": str(credentials.get("s3").get("bucket", "")),
-                            "region": str(
-                                credentials.get("s3").get("region") or S3_DEFAULT_REGION
-                            ),
+                            "region": str(credentials.get("s3").get("region") or S3_DEFAULT_REGION),
                             "endpoint": str(credentials.get("s3").get("endpoint", "")),
                         },
                         "system": system_info(),
@@ -333,9 +327,9 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         if self.path.startswith("/api/related"):
-            target = urllib.parse.parse_qs(
-                urllib.parse.urlparse(self.path).query
-            ).get("path", [""])[0]
+            target = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get(
+                "path", [""]
+            )[0]
             if not target:
                 self._send(400, {"error": "path required"})
                 return
@@ -343,9 +337,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"related": store.related_documents(target)})
             return
         if self.path.startswith("/api/backlinks"):
-            target = urllib.parse.parse_qs(
-                urllib.parse.urlparse(self.path).query
-            ).get("path", [""])[0]
+            target = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get(
+                "path", [""]
+            )[0]
             if not target:
                 self._send(400, {"error": "path required"})
                 return
@@ -518,9 +512,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_sync_notes(body)
             elif self.path == "/api/sync/msgraph":
                 self._handle_sync_msgraph(body)
-            elif self.path.endswith("/disconnect") and self.path.startswith(
-                "/api/connections/"
-            ):
+            elif self.path.endswith("/disconnect") and self.path.startswith("/api/connections/"):
                 self._handle_disconnect(self.path.split("/")[3])
             elif self.path == "/api/mcp/install":
                 self._handle_mcp_install()
@@ -641,9 +633,7 @@ class Handler(BaseHTTPRequestHandler):
             "detail": "starting",
             "error": "",
         }
-        threading.Thread(
-            target=run_llm_setup, args=(self.state, kind), daemon=True
-        ).start()
+        threading.Thread(target=run_llm_setup, args=(self.state, kind), daemon=True).start()
         self._send(202, {"started": True, **self.state.llm_setup})
 
     def _handle_settings(self, body: dict[str, Any]) -> None:
@@ -1124,9 +1114,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "token required"})
             return
         name = gitlab_whoami(token, base_url=base_url)
-        credentials.set_provider(
-            "gitlab", {"token": token, "base_url": base_url, "name": name}
-        )
+        credentials.set_provider("gitlab", {"token": token, "base_url": base_url, "name": name})
         self._send(200, {"connected": True, "display_name": name})
 
     def _handle_sync_gitlab(self, body: dict[str, Any]) -> None:
@@ -1275,7 +1263,9 @@ class Handler(BaseHTTPRequestHandler):
             200,
             {
                 "user_code": data.get("user_code", ""),
-                "verification_uri": data.get("verification_uri", "https://microsoft.com/devicelogin"),
+                "verification_uri": data.get(
+                    "verification_uri", "https://microsoft.com/devicelogin"
+                ),
                 "interval": interval,
                 "expires_in": data.get("expires_in", 900),
             },
@@ -1330,9 +1320,7 @@ class Handler(BaseHTTPRequestHandler):
         site = str(body.get("site", "")).strip()
         folder_id = str(body.get("folder_id", "")).strip()
         with self.state.lock, Store(self.state.db) as store:
-            stats = sync_onedrive(
-                store, self.state.embedder, site=site, folder_id=folder_id
-            )
+            stats = sync_onedrive(store, self.state.embedder, site=site, folder_id=folder_id)
         self._send(
             200,
             {
@@ -1413,9 +1401,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"connected": True, "bucket": bucket, "region": values["region"]})
 
     def _handle_sync_s3(self, body: dict[str, Any]) -> None:
-        bucket = str(body.get("bucket", "")).strip() or str(
-            credentials.get("s3").get("bucket", "")
-        )
+        bucket = str(body.get("bucket", "")).strip() or str(credentials.get("s3").get("bucket", ""))
         if not bucket:
             self._send(400, {"error": "bucket required (e.g. my-data-bucket)"})
             return
@@ -1629,8 +1615,7 @@ class Handler(BaseHTTPRequestHandler):
             if not certain:
                 return "", [], ""
             return (
-                f"No definitions or call sites found for `{name}` in the indexed "
-                "code files.",
+                f"No definitions or call sites found for `{name}` in the indexed code files.",
                 [],
                 name,
             )
@@ -1705,9 +1690,7 @@ class Handler(BaseHTTPRequestHandler):
                 cache_key = self._cache_key(fingerprint, query)
                 cached = store.cache_get(cache_key)
                 if cached is None:
-                    cached = store.cache_nearest(
-                        query_vec, fingerprint, SEMANTIC_CACHE_MIN_COSINE
-                    )
+                    cached = store.cache_nearest(query_vec, fingerprint, SEMANTIC_CACHE_MIN_COSINE)
                 history = store.recent_turns(chat_id) if chat_id else []
                 if cached is None:
                     # The rewrite variants are the right key for the lookups: a
@@ -1987,9 +1970,7 @@ class Handler(BaseHTTPRequestHandler):
             cache_key = self._cache_key(fingerprint, query)
             cached = store.cache_get(cache_key)
             if cached is None:
-                cached = store.cache_nearest(
-                    query_vec, fingerprint, SEMANTIC_CACHE_MIN_COSINE
-                )
+                cached = store.cache_nearest(query_vec, fingerprint, SEMANTIC_CACHE_MIN_COSINE)
             history = store.recent_turns(chat_id) if chat_id else []
             if cached is None:
                 # Same as the streaming path: the rewrite variants are the better
@@ -2374,9 +2355,7 @@ def run_import(db: str, bundle: str, *, embedder_name: str = "") -> dict[str, An
     }
 
 
-def make_server(
-    state: AppState, host: str = "127.0.0.1", port: int = 8765
-) -> ThreadingHTTPServer:
+def make_server(state: AppState, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
     handler = type("BoundHandler", (Handler,), {"state": state})
     return ThreadingHTTPServer((host, port), handler)
 
@@ -2417,11 +2396,7 @@ def mcp_setup_info(state: AppState) -> dict[str, Any]:
         "snippets": {
             "claude_code": "claude mcp add ragdesk -- ragdesk mcp",
             "claude_desktop": json.dumps(
-                {
-                    "mcpServers": {
-                        "ragdesk": {"command": "ragdesk", "args": ["mcp"]}
-                    }
-                },
+                {"mcpServers": {"ragdesk": {"command": "ragdesk", "args": ["mcp"]}}},
                 indent=2,
             ),
             "codex": '[mcp_servers.ragdesk]\ncommand = "ragdesk"\nargs = ["mcp"]',
@@ -2448,9 +2423,7 @@ def install_cli_shim() -> dict[str, Any]:
 def system_info() -> dict[str, Any]:
     """Machine facts the wizard uses to suggest a preset (never leaves the box)."""
     try:
-        ram_gb = int(
-            (os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")) / (1024**3)
-        )
+        ram_gb = int((os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")) / (1024**3))
     except (ValueError, OSError, AttributeError):
         ram_gb = 0
     if ram_gb and ram_gb < 12:
@@ -2468,9 +2441,7 @@ def system_info() -> dict[str, Any]:
         if candidate.is_dir()
     ]
     executable = Path(sys.executable)
-    bundled = any(
-        part.endswith(".app") or part == "Resources" for part in executable.parts
-    )
+    bundled = any(part.endswith(".app") or part == "Resources" for part in executable.parts)
     return {
         "ram_gb": ram_gb,
         "platform": sys.platform,
@@ -2560,9 +2531,7 @@ def _byte_bar(job: dict[str, Any], name: str, base: int, total: int, size: int) 
             if size:
                 loaded = base + self.n
                 job["progress"] = min(0.99, loaded / total)
-                job["detail"] = (
-                    f"downloading {name} — {loaded / 1e9:.2f}/{total / 1e9:.2f} GB"
-                )
+                job["detail"] = f"downloading {name} — {loaded / 1e9:.2f}/{total / 1e9:.2f} GB"
             return result
 
     return _Bar
@@ -2794,17 +2763,13 @@ def run_auto_index(state: AppState) -> dict[str, Any]:
         roots = [
             Path(entry["path"]) for entry in store.local_paths() if Path(entry["path"]).exists()
         ]
-        stats = (
-            index_paths(store, state.embedder, roots, progress=progress) if roots else None
-        )
+        stats = index_paths(store, state.embedder, roots, progress=progress) if roots else None
     connectors: list[dict[str, Any]] = []
     for job in sync_jobs():
         progress(f"syncing {job.get('provider')}", 0, 0)
         connectors.append(run_sync_job(state, job))
     state.activity["running"] = False
-    settings.save(
-        {"auto_index_last": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")}
-    )
+    settings.save({"auto_index_last": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")})
     return {
         "roots": [str(root) for root in roots],
         "indexed": stats.indexed if stats else 0,
@@ -2818,9 +2783,7 @@ def watch_pass(state: AppState) -> dict[str, Any] | None:
     """Cheap freshness pass: index_paths skips unchanged mtimes without reading."""
     with state.lock, Store(state.db) as store:
         roots = [
-            Path(entry["path"])
-            for entry in store.local_paths()
-            if Path(entry["path"]).exists()
+            Path(entry["path"]) for entry in store.local_paths() if Path(entry["path"]).exists()
         ]
         if not roots:
             return None

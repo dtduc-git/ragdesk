@@ -83,9 +83,7 @@ def test_path_lane_finds_files_by_name(tmp_path: Path):
         assert rows
         assert rows[0]["path"].endswith("RRF-fusion-notes.md")
 
-        hits = hybrid_search(
-            store, HashingEmbedder(dim=512), "rrf fusion notes", top_k=5
-        )
+        hits = hybrid_search(store, HashingEmbedder(dim=512), "rrf fusion notes", top_k=5)
         assert hits
         assert any("RRF" in h.path for h in hits)
 
@@ -177,8 +175,10 @@ def test_metadata_boost_prefers_the_canonical_twin(tmp_path: Path):
         hits = hybrid_search(store, embedder, "deploy rollback procedure", top_k=5)
         paths = [hit.path for hit in hits]
         assert paths[0].endswith("canonical.md"), paths
-        assert paths.index("/docs/canonical.md") < paths.index("/docs/plain.md") < paths.index(
-            "/docs/draft.md"
+        assert (
+            paths.index("/docs/canonical.md")
+            < paths.index("/docs/plain.md")
+            < paths.index("/docs/draft.md")
         ), paths
         tagged = next(hit for hit in hits if hit.path.endswith("canonical.md"))
         assert tagged.metadata == {"authority": "canonical"}  # dict, never a raw JSON string
@@ -186,9 +186,7 @@ def test_metadata_boost_prefers_the_canonical_twin(tmp_path: Path):
 
 
 def test_duplicate_clusters_find_exact_copies(tmp_path: Path):
-    body = "\n\n".join(
-        f"paragraph {i} " + "alpha beta gamma delta " * 20 for i in range(12)
-    )
+    body = "\n\n".join(f"paragraph {i} " + "alpha beta gamma delta " * 20 for i in range(12))
     with make_store(
         tmp_path,
         {
@@ -210,8 +208,7 @@ def test_duplicate_clusters_find_exact_copies(tmp_path: Path):
 def test_duplicate_clusters_ignore_topical_neighbours(tmp_path: Path):
     def body(topic: str) -> str:
         return "\n\n".join(
-            f"paragraph {i} about {topic} " + f"filler {i} {topic} " * 20
-            for i in range(12)
+            f"paragraph {i} about {topic} " + f"filler {i} {topic} " * 20 for i in range(12)
         )
 
     with make_store(
@@ -302,9 +299,7 @@ def test_evaluate_groups_categories_and_accepts_hyde(tmp_path: Path):
             calls.append(text)
             return "rrf fusion ranks by reciprocal rank"
 
-        metrics, per_query = evaluate(
-            store, HashingEmbedder(dim=512), golden, hyde_for=hyde_for
-        )
+        metrics, per_query = evaluate(store, HashingEmbedder(dim=512), golden, hyde_for=hyde_for)
         assert calls == ["thuế thu nhập", "rrf fusion"]
         assert metrics["recall@5"] == 1.0
         grouped = category_metrics(per_query)

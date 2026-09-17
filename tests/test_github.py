@@ -39,7 +39,7 @@ def store(tmp_path: Path):
         yield store
 
 
-def test_tar_members_filters( ):
+def test_tar_members_filters():
     data = make_tarball(
         {
             "README.md": b"# hello",
@@ -94,9 +94,7 @@ def test_resolve_token_precedence(monkeypatch):
     monkeypatch.setattr("ragdesk.github._token_from_gh", lambda: "cli-token")
     assert resolve_token() == "cli-token"
     # stored credentials beat the gh CLI
-    monkeypatch.setattr(
-        "ragdesk.github.credentials.get", lambda provider: {"token": "stored"}
-    )
+    monkeypatch.setattr("ragdesk.github.credentials.get", lambda provider: {"token": "stored"})
     assert resolve_token() == "stored"
 
 
@@ -118,9 +116,7 @@ def test_token_source_respects_disconnect_flag(monkeypatch):
     monkeypatch.setattr("ragdesk.settings.load", lambda path=None: {"github_ignore_gh": True})
     assert token_source() is None
     # a stored token still wins over the flag
-    monkeypatch.setattr(
-        "ragdesk.github.credentials.get", lambda provider: {"token": "stored"}
-    )
+    monkeypatch.setattr("ragdesk.github.credentials.get", lambda provider: {"token": "stored"})
     assert token_source() == ("credentials", "stored")
 
 

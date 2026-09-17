@@ -71,9 +71,7 @@ def _fetch(url: str, *, timeout: float = 30.0) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
-def _index_page(
-    store: Store, embedder: Embedder, url: str, page: str
-) -> int | None:
+def _index_page(store: Store, embedder: Embedder, url: str, page: str) -> int | None:
     """Index one fetched HTML page. Returns chunks, 0 if unchanged, None if empty."""
     parser = _PageParser()
     parser.feed(page)
@@ -94,9 +92,7 @@ def _index_page(
     )
 
 
-def save_page(
-    store: Store, embedder: Embedder, url: str, *, timeout: float = 30.0
-) -> IndexStats:
+def save_page(store: Store, embedder: Embedder, url: str, *, timeout: float = 30.0) -> IndexStats:
     """Fetch and index exactly one page (the bookmark button).
 
     Unlike a crawl, a fetch failure raises: saving one URL must say what went

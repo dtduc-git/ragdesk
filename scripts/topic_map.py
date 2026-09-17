@@ -22,8 +22,18 @@ from ragdesk.store import Store  # noqa: E402
 from ragdesk.topics import cluster_documents, cluster_labels  # noqa: E402
 
 PALETTE = [
-    "#4a3d6b", "#a97a1e", "#2e6b58", "#a33b32", "#3a6ea5", "#7a4a8c",
-    "#6b7a1e", "#8c5a3a", "#1e6b6b", "#8c3a6b", "#5a6b8c", "#3a8c5a",
+    "#4a3d6b",
+    "#a97a1e",
+    "#2e6b58",
+    "#a33b32",
+    "#3a6ea5",
+    "#7a4a8c",
+    "#6b7a1e",
+    "#8c5a3a",
+    "#1e6b6b",
+    "#8c3a6b",
+    "#5a6b8c",
+    "#3a8c5a",
 ]
 MAX_POINTS = 1200
 PER_CLUSTER = 12  # a 200-copy pile must not squash the rest of the map
@@ -53,11 +63,7 @@ def build_map(store: Store, *, limit: int = MAX_POINTS) -> dict:
             cluster_of[path] = (index, color, cluster.get("label", ""))
     sampled = len(clustered) > len(cluster_of)
     if sampled:
-        items = [
-            item
-            for item in items
-            if item[1][0] not in clustered or item[1][0] in cluster_of
-        ]
+        items = [item for item in items if item[1][0] not in clustered or item[1][0] in cluster_of]
 
     paths = [path for _doc_id, (path, _vector) in items]
     matrix = np.array([vector for _doc_id, (_path, vector) in items], dtype=np.float32)
@@ -115,7 +121,7 @@ def render_html(artifact: dict, *, title: str = "ragdesk topic map") -> str:
     )
     legend = "\n".join(
         f'<li><span class="swatch" style="background:{entry["color"]}"></span>'
-        f'{html.escape(entry["label"])} <em>{entry["documents"]}</em></li>'
+        f"{html.escape(entry['label'])} <em>{entry['documents']}</em></li>"
         for entry in artifact["clusters"]
     )
     return f"""<!doctype html>

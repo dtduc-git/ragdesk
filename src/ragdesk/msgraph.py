@@ -81,9 +81,7 @@ def _post_form(url: str, data: dict[str, str], *, timeout: float = 60.0) -> dict
 
 
 def device_flow_start(client_id: str, *, timeout: float = 60.0) -> dict:
-    return _post_form(
-        DEVICE_CODE_URL, {"client_id": client_id, "scope": SCOPES}, timeout=timeout
-    )
+    return _post_form(DEVICE_CODE_URL, {"client_id": client_id, "scope": SCOPES}, timeout=timeout)
 
 
 def device_flow_poll_once(
@@ -122,9 +120,7 @@ def refresh_access_token(client_id: str, refresh_token: str, *, timeout: float =
     )
 
 
-def device_flow_connect(
-    client_id: str, *, on_code=None, interval_default: float = 5.0
-) -> dict:
+def device_flow_connect(client_id: str, *, on_code=None, interval_default: float = 5.0) -> dict:
     """Run the full device flow (start → wait → save tokens) for the CLI."""
     start = device_flow_start(client_id)
     if on_code is not None:
@@ -185,9 +181,7 @@ def whoami(access_token: str, *, timeout: float = 30.0) -> str:
     payload = _get_json(
         f"{GRAPH}/me?$select=displayName,userPrincipalName", access_token, timeout=timeout
     )
-    return str(
-        payload.get("userPrincipalName") or payload.get("displayName") or "microsoft"
-    )
+    return str(payload.get("userPrincipalName") or payload.get("displayName") or "microsoft")
 
 
 def resolve_access_token(
@@ -271,9 +265,7 @@ def sync_onedrive(
     max_items: int = MAX_ITEMS,
     timeout: float = 60.0,
 ) -> IndexStats:
-    token = resolve_access_token(
-        client_id, access_token=access_token, timeout=timeout
-    )
+    token = resolve_access_token(client_id, access_token=access_token, timeout=timeout)
     store.ensure_embedder(embedder.name, embedder.dim)
     host = "sharepoint" if site else "onedrive"
     drive = _drive_base(token, site, timeout)
@@ -294,9 +286,7 @@ def sync_onedrive(
             continue
 
         path = f"{host}://{item.get('id', '')}/{name}"
-        chunks = index_document(
-            store, embedder, source=f"msgraph:{host}", path=path, content=text
-        )
+        chunks = index_document(store, embedder, source=f"msgraph:{host}", path=path, content=text)
         if chunks:
             stats.indexed += 1
             stats.chunks += chunks

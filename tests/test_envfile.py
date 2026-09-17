@@ -7,7 +7,7 @@ from ragdesk.envfile import load_env_file, parse_env_file
 
 
 def test_parse_env_file_handles_comments_quotes_export():
-    text = '# comment\n\n export FOO=bar\nQUOTED="a b"\nSINGLE=\'c\'\nNO_VALUE\n'
+    text = "# comment\n\n export FOO=bar\nQUOTED=\"a b\"\nSINGLE='c'\nNO_VALUE\n"
     assert parse_env_file(text) == {"FOO": "bar", "QUOTED": "a b", "SINGLE": "c"}
 
 

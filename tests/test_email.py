@@ -110,9 +110,7 @@ def write_mbox_with_attachment(path: Path) -> None:
     message.add_attachment(
         b"\xff\xfe\x00binary", maintype="application", subtype="octet-stream", filename="blob.bin"
     )
-    path.write_bytes(
-        b"From vendor@example.com Mon Sep 15 09:00:00 2026\n" + message.as_bytes()
-    )
+    path.write_bytes(b"From vendor@example.com Mon Sep 15 09:00:00 2026\n" + message.as_bytes())
 
 
 def test_index_mbox_indexes_attachment_contents(tmp_path: Path):

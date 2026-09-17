@@ -79,9 +79,7 @@ def _get_bytes(url: str, token: str, *, timeout: float = 180.0) -> bytes:
         raise GitLabError(f"cannot reach GitLab: {exc}") from exc
 
 
-def whoami(
-    token: str, *, base_url: str = DEFAULT_BASE_URL, timeout: float = 30.0
-) -> str:
+def whoami(token: str, *, base_url: str = DEFAULT_BASE_URL, timeout: float = 30.0) -> str:
     base = base_url.rstrip("/")
     payload = _get_json(f"{base}/api/v4/user", token, timeout=timeout)
     return str(payload.get("username") or payload.get("name") or "gitlab")

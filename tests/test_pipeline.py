@@ -194,15 +194,14 @@ def test_orphan_fts_rows_are_pruned_on_open(tmp_path: Path):
     with Store(db) as store:
         index_paths(store, embedder, [docs])
         orphan = int(store.conn.execute("SELECT MAX(id) FROM chunks").fetchone()[0]) + 1
-        store.conn.execute(
-            "INSERT INTO chunks_fts (rowid, text) VALUES (?, 'ghost')", (orphan,)
-        )
+        store.conn.execute("INSERT INTO chunks_fts (rowid, text) VALUES (?, 'ghost')", (orphan,))
         store.conn.commit()
 
     with Store(db) as store:  # opening the store prunes the ghost row
-        assert store.conn.execute(
-            "SELECT 1 FROM chunks_fts WHERE rowid = ?", (orphan,)
-        ).fetchone() is None
+        assert (
+            store.conn.execute("SELECT 1 FROM chunks_fts WHERE rowid = ?", (orphan,)).fetchone()
+            is None
+        )
         note.write_text("alpha bravo charlie delta")
         stats = index_paths(store, embedder, [docs])
         # would raise sqlite3.IntegrityError (the live wedge) without the prune
@@ -217,16 +216,12 @@ def test_save_page_indexes_one_page_and_keeps_its_url(tmp_path: Path, monkeypatc
     monkeypatch.setattr("ragdesk.web._fetch", lambda url, timeout=30.0: page)
     embedder = HashingEmbedder()
     with make_store(tmp_path) as store:
-        stats = save_page(
-            store, embedder, "https://docs.example.com/runbooks/rollback"
-        )
+        stats = save_page(store, embedder, "https://docs.example.com/runbooks/rollback")
         assert stats.indexed == 1 and stats.skipped == 0
         again = save_page(store, embedder, "https://docs.example.com/runbooks/rollback")
         assert again.unchanged == 1
         pages = store.web_pages()
-        assert [page["url"] for page in pages] == [
-            "https://docs.example.com/runbooks/rollback"
-        ]
+        assert [page["url"] for page in pages] == ["https://docs.example.com/runbooks/rollback"]
         assert pages[0]["path"] == "web://docs.example.com/runbooks/rollback"
         assert store.document_text(pages[0]["path"])
 
@@ -270,9 +265,7 @@ def test_oldest_documents_and_redaction(tmp_path: Path):
             ("/docs/new.md", "new", 200.0),
             ("/docs/secret.md", "shh", 300.0),
         ):
-            index_document(
-                store, embedder, source="local", path=path, content=text, mtime=mtime
-            )
+            index_document(store, embedder, source="local", path=path, content=text, mtime=mtime)
         assert [row["path"] for row in store.oldest_documents(limit=2)] == [
             "/docs/old.md",
             "/docs/new.md",
@@ -409,9 +402,7 @@ def test_eval_with_lexical_reranker(tmp_path: Path):
     with make_store(tmp_path) as store:
         index_paths(store, embedder, [FIXTURES / "docs"])
         golden = load_golden(FIXTURES / "golden.jsonl")
-        metrics, per_query = evaluate(
-            store, embedder, golden, reranker=LexicalReranker()
-        )
+        metrics, per_query = evaluate(store, embedder, golden, reranker=LexicalReranker())
         assert metrics["recall@5"] >= 0.8, per_query
 
 
