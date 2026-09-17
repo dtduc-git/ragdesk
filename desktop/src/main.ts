@@ -3151,7 +3151,11 @@ function wizardPreset(): string {
   const current = status?.preset ?? "light";
   const note = (status?.presets ?? []).find((entry) => entry.name === current)?.note ?? "";
   return `
-    <p class="wizard-hint">This machine has ${status?.system.ram_gb || "?"} GB of RAM — <strong>${suggested}</strong> fits it best. You are on <strong>${escapeHtml(current)}</strong>.</p>
+    <p class="wizard-hint">Starts on <strong>${escapeHtml(current)}</strong> — the smallest download and the lightest on RAM, so first run stays cheap. ${
+      suggested !== current
+        ? `This machine (${status?.system.ram_gb || "?"} GB) could handle <strong>${suggested}</strong> later if you want stronger answers — switch whenever, nothing gets re-indexed.`
+        : "It fits this machine well."
+    }</p>
     <div class="seg" id="wizard-preset-seg" role="group" aria-label="Machine preset">
       <button class="seg-item ${current === "light" ? "is-active" : ""}" type="button" data-value="light">Light</button>
       <button class="seg-item ${current === "balanced" ? "is-active" : ""}" type="button" data-value="balanced">Balanced</button>
