@@ -37,14 +37,14 @@ The script prints all of it.
 
 | embedder | dim | weights | corpus | recall@5 | nDCG@10 | MRR@10 | index | peak RSS |
 |---|---|---|---|---|---|---|---|---|
-| `onnx-community/embeddinggemma-300m-ONNX` **(shipped)** | 768 | 629M | fixtures (3 chunks) | 1.000 | 1.000 | 1.000 | 2s | 1625 MB |
-| `onnx-community/embeddinggemma-300m-ONNX` | 768 | 629M | repo (2873 chunks) | 0.833 | **0.671** | 0.590 | 615s* | 2734 MB* |
-| `Xenova/multilingual-e5-small` | 384 | 258M | fixtures (3 chunks) | 1.000 | 1.000 | 1.000 | 2s | 735 MB |
-| `Xenova/multilingual-e5-small` | 384 | 258M | repo (2879 chunks) | **0.917** | 0.626 | 0.531 | 236s* | 2059 MB* |
-| `Xenova/multilingual-e5-base` | 768 | 564M | fixtures (3 chunks) | 1.000 | 1.000 | 1.000 | 3s | 1083 MB |
-| `Xenova/multilingual-e5-base` | 768 | 564M | repo (2879 chunks) | pending | | | | |
-| `onnx-community/gte-multilingual-base` | 768 | 682M | fixtures (3 chunks) | 1.000 | 1.000 | 1.000 | 2s | 1190 MB |
-| `onnx-community/gte-multilingual-base` | 768 | 682M | repo (2873 chunks) | 0.833 | 0.659 | **0.603** | 277s* | 2611 MB* |
+| `onnx-community/embeddinggemma-300m-ONNX` **(shipped)** | 768 | 315M | fixtures (3 chunks) | 1.000 | 1.000 | 1.000 | 2s | 1625 MB |
+| `onnx-community/embeddinggemma-300m-ONNX` | 768 | 315M | repo (2873 chunks) | 0.833 | **0.671** | 0.590 | 615s* | 2734 MB* |
+| `Xenova/multilingual-e5-small` | 384 | 129M | fixtures (3 chunks) | 1.000 | 1.000 | 1.000 | 2s | 735 MB |
+| `Xenova/multilingual-e5-small` | 384 | 129M | repo (2879 chunks) | **0.917** | 0.626 | 0.531 | 236s* | 2059 MB* |
+| `Xenova/multilingual-e5-base` | 768 | 282M | fixtures (3 chunks) | 1.000 | 1.000 | 1.000 | 3s | 1083 MB |
+| `Xenova/multilingual-e5-base` | 768 | 282M | repo (2879 chunks) | pending | | | | |
+| `onnx-community/gte-multilingual-base` | 768 | 341M | fixtures (3 chunks) | 1.000 | 1.000 | 1.000 | 2s | 1190 MB |
+| `onnx-community/gte-multilingual-base` | 768 | 341M | repo (2873 chunks) | 0.833 | 0.659 | **0.603** | 277s* | 2611 MB* |
 
 \* measured while the machine was also doing other work — treat as relative, not
 as a benchmark. The `repo` rows also span two snapshots of this repository
@@ -66,7 +66,7 @@ kept only to prove the harness end-to-end.
   A preset-specific embedder would; `balanced` cannot quietly use e5-small while
   `light` uses Gemma.
 - **The runner-up is now a supported option.** `multilingual-e5-small` is 2.4x
-  smaller to download (258M vs 629M), 384-dim (a smaller index), and indexed
+  smaller to download (129M vs 315M), 384-dim (a smaller index), and indexed
   2.6x faster than Gemma in this session despite the load. It costs ordering
   (nDCG 0.626 vs 0.671), which the reranker would largely hide:
   `ragdesk --embedder onnx:Xenova/multilingual-e5-small …`.

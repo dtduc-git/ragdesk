@@ -63,10 +63,14 @@ def metrics(eval_stdout: str) -> dict[str, float]:
 
 
 def model_size(repo: str) -> str:
+    """On-disk footprint; blobs only — snapshots/ are symlinks to them and would
+    make every model look twice its size."""
     cache = Path.home() / ".cache/huggingface/hub" / f"models--{repo.replace('/', '--')}"
     if not cache.is_dir():
         return "?"
-    total = sum(f.stat().st_size for f in cache.rglob("*") if f.is_file())
+    blobs = cache / "blobs"
+    files = blobs.rglob("*") if blobs.is_dir() else cache.rglob("*")
+    total = sum(f.stat().st_size for f in files if f.is_file() and not f.is_symlink())
     return f"{total / (1024**3):.2f}G" if total > 1024**3 else f"{total / (1024**2):.0f}M"
 
 
