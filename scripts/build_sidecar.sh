@@ -33,7 +33,7 @@ rsync -a \
   "$py_root/" "$dest/python/"
 
 echo "==> installing ragdesk[$extras] into it (no venv: the interpreter is ours)"
-uv pip install --python "$dest/python/bin/python3" --no-cache "$root[$extras]"
+uv pip install --python "$dest/python/bin/python3" "$root[$extras]"
 
 echo "==> pruning caches"
 find "$dest" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
