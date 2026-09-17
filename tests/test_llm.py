@@ -254,3 +254,16 @@ def test_llm_status_reports_openai(monkeypatch, tmp_path):
     status = llm_status(None, preset="light")
     assert status["kind"] == "openai"
     assert "1234" in status["note"]
+
+
+def test_is_local_host():
+    from ragdesk.llm import is_local_host
+
+    assert is_local_host("")  # not configured: nothing leaves
+    assert is_local_host("http://127.0.0.1:1234/v1")
+    assert is_local_host("http://localhost:11434")
+    assert is_local_host("http://[::1]:8080/v1")
+    assert is_local_host("127.0.0.1:11434")
+    assert not is_local_host("https://api.openai.com/v1")
+    assert not is_local_host("http://192.168.1.50:8000/v1")
+    assert not is_local_host("http://gpu-box.lan:8000/v1")

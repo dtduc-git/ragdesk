@@ -998,6 +998,21 @@ def test_release_idle_models_returns_memory(tmp_path: Path):
     assert release_idle_models(state, 15) is None
 
 
+def test_status_flags_a_remote_openai_endpoint(base_url: str):
+    """The UI warns before a question and its passages go to another machine."""
+    _, payload = request(f"{base_url}/api/status")
+    assert payload["llm_setting"]["openai_host_remote"] is False
+
+    status, _ = request(f"{base_url}/api/settings", {"openai_host": "https://api.example.com/v1"})
+    assert status == 200
+    _, payload = request(f"{base_url}/api/status")
+    assert payload["llm_setting"]["openai_host_remote"] is True
+
+    request(f"{base_url}/api/settings", {"openai_host": "http://127.0.0.1:1234/v1"})
+    _, payload = request(f"{base_url}/api/status")
+    assert payload["llm_setting"]["openai_host_remote"] is False
+
+
 def test_settings_accepts_idle_unload(base_url: str):
     from ragdesk import settings
 

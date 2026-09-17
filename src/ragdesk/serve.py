@@ -64,6 +64,7 @@ from ragdesk.gitlab import whoami as gitlab_whoami
 from ragdesk.index import IndexStats, index_paths, never_index_patterns
 from ragdesk.llm import (
     LLMUnavailable,
+    is_local_host,
     llm_status,
     mlx_available,
     mlx_model_cached,
@@ -278,6 +279,11 @@ class Handler(BaseHTTPRequestHandler):
                             "openai_host": str(settings.load().get("openai_host") or ""),
                             "openai_model": str(settings.load().get("openai_model") or ""),
                             "openai_key_set": bool(credentials.get("openai").get("api_key")),
+                            # The UI warns when a remote endpoint would receive the
+                            # question and the retrieved passages.
+                            "openai_host_remote": not is_local_host(
+                                str(settings.load().get("openai_host") or "")
+                            ),
                         },
                         "onboarded": bool(settings.load()["onboarded"]),
                         "notes_available": notes_available(),

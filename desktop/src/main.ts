@@ -60,6 +60,7 @@ type Status = {
     openai_host: string;
     openai_model: string;
     openai_key_set: boolean;
+    openai_host_remote: boolean;
   };
   onboarded: boolean;
   system: {
@@ -399,6 +400,12 @@ function renderStatus(): void {
     : "released — the next question reloads them";
   markSeg("backend-seg", status.llm_setting.preference);
   $<HTMLFormElement>("openai-form").hidden = status.llm_setting.preference !== "openai";
+  const remote = status.llm_setting.openai_host_remote;
+  const warning = $("openai-remote-warning");
+  warning.hidden = !remote;
+  warning.textContent = remote
+    ? `Heads-up: ${status.llm_setting.openai_host} is not on this machine — every question and the passages it matches are sent there. Ask, and the answer comes back; nothing is stored locally by ragdesk.`
+    : "";
   $("backend-note").textContent = status.llm_setting.openai_host
     ? `endpoint ${status.llm_setting.openai_host} · model ${status.llm_setting.openai_model}${status.llm_setting.openai_key_set ? " · key saved" : ""}`
     : "Auto keeps the local model; OpenAI-compatible covers LM Studio, llama.cpp, vLLM or OpenAI itself.";

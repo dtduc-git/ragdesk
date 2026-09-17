@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,6 +26,26 @@ DEFAULT_SPEC = "auto"
 
 class LLMUnavailable(RuntimeError):
     """No usable LLM: Ollama lacks the model and the MLX extra is absent."""
+
+
+# Hosts that mean "this machine": anything else gets a privacy warning in the UI,
+# because the prompt contains the retrieved passages.
+_LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}
+
+
+def is_local_host(host: str) -> bool:
+    """True when a configured endpoint stays on this machine ("" = not configured)."""
+    raw = host.strip()
+    if not raw:
+        return True
+    try:
+        name = urllib.parse.urlsplit(raw).hostname
+    except ValueError:
+        return False
+    if name is None:  # bare host:port without a scheme
+        name = raw.split("/")[0].split(":")[0]
+    name = name.lower()
+    return name in _LOCAL_HOSTNAMES or name.startswith("127.")
 
 
 def _get_json(host: str, path: str, timeout: float = 1.5) -> dict:
