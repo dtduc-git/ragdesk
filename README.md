@@ -241,7 +241,7 @@ The same UI also runs in a browser for development:
 
 | Works | Not yet |
 |---|---|
-| Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme — **built from source** (no DMG release yet) | Packaged DMG + notarization (Apple Developer ID) when the project ships binaries |
+| Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme — packaged as a self-contained DMG (bundled runtime, no CLI install) | Notarization (Apple Developer ID) so a *downloaded* DMG opens without the Gatekeeper bypass |
 | Command palette (⌘K): jump to a conversation, switch tabs, search your sources and open a file — plus ⌘1-4 tabs, ? for the shortcut sheet | |
 | The catalog-drawer look: ruled ledger transcript with entry numbers, violet library ink for actions, amber for live/cited things, light + dark | |
 | Watch for changes: new and edited files in your folders are indexed automatically (Settings, default every minute; Off / 30s / 1m / 5m / 15m) | Connector auto-sync is hourly only (no per-connector interval yet) |
@@ -251,7 +251,7 @@ The same UI also runs in a browser for development:
 | Idle unload: models leave RAM after a quiet stretch (Settings, default 15 min) | |
 | Quiet indexing (Settings, off by default): caps the ONNX embedding threads — measured on this repo, 651 chunks index in 97s at ~580% CPU, or 136s at ~390% with 4 threads; `--embed-threads N` goes lower (2 threads: 256s at ~200%) | |
 | Metadata: a `--- key: value ---` front-matter header is parsed, stored per document and filterable — no YAML dependency; `authority:`/`status:` tags give a small rank nudge (canonical up, draft down) | |
-| Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML), email (mbox / IMAP) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images; sidecar bundling in the DMG |
+| Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML), email (mbox / IMAP) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) | Eval badge automation per release |
 | Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | |

@@ -363,7 +363,12 @@ uv run ragdesk --embedder hash --db /tmp/eval.db eval --golden fixtures/golden.j
 # NB: the golden scopes with folder:dtduc-git/ragdesk, so index an absolute path
 uv run ragdesk --embedder hash --db /tmp/eval-repo.db index "$PWD"
 uv run ragdesk --embedder hash --db /tmp/eval-repo.db eval --golden fixtures/golden_repo.jsonl
-# desktop shell
+# desktop shell (bundles a self-contained Python runtime — scripts/build_sidecar.sh
+# runs automatically as beforeBuildCommand: standalone CPython + ragdesk[onnx,mlx,vision]
+# into desktop/src-tauri/sidecar/, ~470MB, gitignored. The shell prefers
+# <Resources>/python/bin/python3 -m ragdesk over PATH; module invocation on
+# purpose — a console-script shebang bakes in build-machine paths. Verify a
+# build with: env -i HOME=$HOME PATH=/usr/bin:/bin <app>/Contents/Resources/python/bin/python3 -m ragdesk --db /tmp/t.db serve --port 8770)
 cd desktop && npm install && npm run tauri build
 # macOS: sign with a stable identity so the Documents/Desktop/Downloads TCC
 # grant survives rebuilds — an ad-hoc build gets a new identity every time and
@@ -389,7 +394,7 @@ uv run python -m ragdesk.buildenv && uv build
 ## Roadmap order
 
 sources (Notion → GitLab → OneDrive/SharePoint → S3) → multilingual reranker →
-MCP server → release v0.1.0 (sidecar bundling + DMG release workflow + PyPI
+MCP server → release v0.1.0 (DMG notarization + release workflow + PyPI
 trusted publisher) → eval badge automation → Windows/Linux builds.
 
 ## Notes

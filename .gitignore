@@ -12,3 +12,6 @@ build/
 # local build credentials (never commit)
 .env
 src/ragdesk/_build_env.py
+
+# bundled runtime (scripts/build_sidecar.sh regenerates it)
+desktop/src-tauri/sidecar/

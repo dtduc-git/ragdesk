@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && bash ../scripts/build_sidecar.sh",
     "frontendDist": "../dist"
   },
   "app": {
@@ -33,6 +33,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "sidecar/python": "python"
+    }
   }
 }

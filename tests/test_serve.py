@@ -64,6 +64,22 @@ def request(url: str, payload: dict | None = None) -> tuple[int, dict]:
         return response.status, json.loads(response.read())
 
 
+def test_system_runtime_reports_bundled_when_inside_the_app(monkeypatch, tmp_path: Path):
+    """The wizard tells users whether the engine is inside the app or a system install."""
+    from ragdesk import serve
+
+    fake = tmp_path / "ragdesk.app/Contents/Resources/python/bin/python3"
+    fake.parent.mkdir(parents=True)
+    fake.touch()
+    monkeypatch.setattr(serve.sys, "executable", str(fake))
+    info = serve.system_info()
+    assert info["runtime"] == "bundled"
+    assert info["runtime_path"] == str(fake)
+
+    monkeypatch.setattr(serve.sys, "executable", str(tmp_path / "python3"))
+    assert serve.system_info()["runtime"] == "system"
+
+
 def test_status(base_url: str):
     status, payload = request(f"{base_url}/api/status")
     assert status == 200

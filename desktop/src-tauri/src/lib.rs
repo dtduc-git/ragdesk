@@ -3,6 +3,7 @@
 
 use std::fs::OpenOptions;
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -33,7 +34,7 @@ fn server_log() -> Stdio {
         .unwrap_or_else(|_| Stdio::null())
 }
 
-fn spawn_server() -> Option<Child> {
+fn spawn_server(resources: Option<PathBuf>) -> Option<Child> {
     // Global flags first, then the subcommand: `ragdesk --db <path> serve ...`
     let mut base: Vec<String> = Vec::new();
     if let Ok(home) = std::env::var("HOME") {
@@ -55,6 +56,20 @@ fn spawn_server() -> Option<Child> {
     }
     let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
 
+    // Bundled runtime first: the DMG ships its own CPython + ragdesk, so the
+    // app works on a machine that never ran `uv tool install`. Module
+    // invocation on purpose: a console-script shebang would point at the
+    // build machine's paths.
+    if let Some(dir) = resources {
+        let python = dir.join("python").join("bin").join("python3");
+        if python.exists() {
+            let args = std::iter::once("-m".to_string())
+                .chain(std::iter::once("ragdesk".to_string()))
+                .chain(base.iter().cloned())
+                .collect();
+            candidates.push((python.to_string_lossy().into_owned(), args));
+        }
+    }
     if let Ok(bin) = std::env::var("RAGDESK_BIN") {
         candidates.push((bin, base.clone()));
     }
@@ -95,7 +110,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::Manager;
-            let shared = Arc::new(Mutex::new(spawn_server()));
+            let resources = app.path().resource_dir().ok();
+            let shared = Arc::new(Mutex::new(spawn_server(resources.clone())));
             app.manage(ServerChild(shared.clone()));
             // Watchdog: if the Python server dies, bring it back (unless another
             // instance already owns the port), so the UI never talks to a corpse.
@@ -111,7 +127,7 @@ pub fn run() {
                     }
                 };
                 if exited && !port_open() {
-                    let fresh = spawn_server();
+                    let fresh = spawn_server(resources.clone());
                     if let Ok(mut guard) = shared.lock() {
                         *guard = fresh;
                     }

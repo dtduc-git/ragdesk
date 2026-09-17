@@ -67,6 +67,8 @@ type Status = {
     platform: string;
     suggested_preset: string;
     screenshot_dirs: string[];
+    runtime: string;
+    runtime_path: string;
   };
   llm_setup: {
     ollama_model: string;
@@ -3174,6 +3176,11 @@ function wizardIndex(): string {
     <ul class="wizard-list">
       <li>${selectedPaths.length} folder${selectedPaths.length === 1 ? "" : "s"} chosen</li>
       <li>preset <strong>${escapeHtml(status?.preset ?? "light")}</strong> · engine <strong>${escapeHtml(llmLabel(status as Status))}</strong></li>
+      <li>${
+        status?.system.runtime === "bundled"
+          ? "engine bundled inside the app — nothing else to install"
+          : "engine runs from your system install of ragdesk"
+      }</li>
       <li id="wizard-index-counts">${status?.documents ?? 0} documents indexed so far</li>
     </ul>
     <div class="button-row">

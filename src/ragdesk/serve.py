@@ -2467,11 +2467,17 @@ def system_info() -> dict[str, Any]:
         )
         if candidate.is_dir()
     ]
+    executable = Path(sys.executable)
+    bundled = any(
+        part.endswith(".app") or part == "Resources" for part in executable.parts
+    )
     return {
         "ram_gb": ram_gb,
         "platform": sys.platform,
         "suggested_preset": suggested,
         "screenshot_dirs": screenshots,
+        "runtime": "bundled" if bundled else "system",
+        "runtime_path": str(executable),
     }
 
 
