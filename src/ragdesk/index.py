@@ -17,18 +17,58 @@ from ragdesk.store import Store, matches_any
 from ragdesk.vision import IMAGE_EXTENSIONS
 
 TEXT_EXTENSIONS = {
-    ".md", ".markdown", ".rst", ".txt",
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb",
-    ".sh", ".bash", ".zsh",
-    ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg",
-    ".tf", ".hcl", ".sql", ".html", ".css", ".xml", ".csv", ".tmpl", ".tpl",
+    ".md",
+    ".markdown",
+    ".rst",
+    ".txt",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".rb",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".tf",
+    ".hcl",
+    ".sql",
+    ".html",
+    ".css",
+    ".xml",
+    ".csv",
+    ".tmpl",
+    ".tpl",
 }
 TEXT_FILENAMES = {"Dockerfile", "Makefile", "README", "LICENSE", "CHANGELOG", "CONTRIBUTING"}
 SKIP_DIRS = {
-    ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__",
-    ".ragdesk", "dist", "build", "target", ".terraform",
-    ".mypy_cache", ".ruff_cache", ".pytest_cache",
-    ".obsidian", ".trash",  # an Obsidian vault's config and deleted notes
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".ragdesk",
+    "dist",
+    "build",
+    "target",
+    "sidecar",
+    ".terraform",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    ".obsidian",
+    ".trash",  # an Obsidian vault's config and deleted notes
 }
 MAX_FILE_BYTES = 1_000_000
 MAX_DOCUMENT_BYTES = 25_000_000  # PDFs and office files are legitimately large
@@ -193,9 +233,7 @@ def group_parents(texts: list[str], max_chars: int = 4000) -> tuple[list[str], l
     return parents, assignment
 
 
-def _embed_with_cache(
-    store: Store, embedder: Embedder, texts: list[str]
-) -> list[list[float]]:
+def _embed_with_cache(store: Store, embedder: Embedder, texts: list[str]) -> list[list[float]]:
     """Embed only what changed: identical chunk text reuses its stored vector.
 
     Chunk text + embedder identity is the cache key, so a one-line edit in a
@@ -284,9 +322,7 @@ def index_paths(
 
         values = app_settings.load()
         chunk_chars = chunk_chars or int(values.get("chunk_chars") or DEFAULT_MAX_CHARS)
-        chunk_overlap = chunk_overlap or int(
-            values.get("chunk_overlap") or DEFAULT_OVERLAP
-        )
+        chunk_overlap = chunk_overlap or int(values.get("chunk_overlap") or DEFAULT_OVERLAP)
     stats = IndexStats()
     patterns = never_index_patterns()
     vaults = vault_roots()

@@ -9,7 +9,9 @@ claims.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
+from pathlib import Path
 from typing import Protocol
 
 from ragdesk.ollama import DEFAULT_HOST, post_json
@@ -18,6 +20,42 @@ DEFAULT_OLLAMA_MODEL = "embeddinggemma:300m"
 DEFAULT_ONNX_REPO = "onnx-community/embeddinggemma-300m-ONNX"
 ONNX_QUERY_PROMPT = "task: search result | query: "
 ONNX_DOC_PROMPT = "title: none | text: "
+ONNX_MAX_TOKENS = 2048  # what a chunk is truncated to when a model allows more
+
+# Each family expects its own prefixes, and the wrong ones quietly cost recall.
+_ONNX_PROMPTS: tuple[tuple[str, str, str], ...] = (
+    ("embeddinggemma", ONNX_QUERY_PROMPT, ONNX_DOC_PROMPT),
+    ("multilingual-e5", "query: ", "passage: "),
+    ("multilingual-gte", "", ""),
+    ("bge-m3", "", ""),
+)
+
+
+def position_limit(config: dict) -> int:
+    """Tokenizer truncation cap: what the model's position table can hold.
+
+    BERT-family exports learned positions for 512 tokens; feeding them a longer
+    sequence is a hard failure, not a quiet truncation.
+    """
+    try:
+        raw = int(config.get("max_position_embeddings") or ONNX_MAX_TOKENS)
+    except (TypeError, ValueError):
+        return ONNX_MAX_TOKENS
+    return max(64, min(ONNX_MAX_TOKENS, raw))
+
+
+def onnx_prompts(repo: str) -> tuple[str, str]:
+    """The (query, document) prefixes a model was trained with — "" when none.
+
+    An unrecognised repo gets no prefixes: guessing another family's prompts
+    silently costs recall, and a wrong prefix is worse than none.
+    """
+    lowered = repo.lower()
+    for marker, query, doc in _ONNX_PROMPTS:
+        if marker in lowered:
+            return query, doc
+    return "", ""
+
 
 # Toy-embedder stopwords only: without this, stopword overlap between unrelated
 # documents dominates the hashing vector (and signed hashing can cancel to 0).
@@ -164,10 +202,20 @@ class OnnxEmbedder:
         self.name = f"onnx:{repo}:{variant}"
         self.repo = repo
         self.variant = variant
-        self.dim = 768
+        self._query_prompt, self._doc_prompt = onnx_prompts(repo)
         self._tokenizer = None
         self._session = None
         self._output_index = 0
+        self._pool = False
+        self._dim: int | None = None
+
+    @property
+    def dim(self) -> int:
+        """Read off the model itself — exports differ (384 / 768 / 1024)."""
+        self._load()
+        if self._dim is None:  # symbolic axis in the graph: ask the model
+            self._dim = len(self._embed_prefixed(["dimension probe"], "")[0])
+        return self._dim
 
     def _load(self) -> None:
         if self._session is not None:
@@ -184,16 +232,12 @@ class OnnxEmbedder:
             ) from exc
 
         tokenizer = Tokenizer.from_file(hf_hub_download(self.repo, "tokenizer.json"))
-        tokenizer.enable_truncation(max_length=2048)
+        tokenizer.enable_truncation(max_length=self._max_tokens())
         tokenizer.enable_padding()
 
-        model_path = hf_hub_download(
-            self.repo, f"model_{self.variant}.onnx", subfolder="onnx"
-        )
+        model_path = hf_hub_download(self.repo, f"model_{self.variant}.onnx", subfolder="onnx")
         try:
-            hf_hub_download(
-                self.repo, f"model_{self.variant}.onnx_data", subfolder="onnx"
-            )
+            hf_hub_download(self.repo, f"model_{self.variant}.onnx_data", subfolder="onnx")
         except Exception:  # noqa: BLE001 - external data file exists for some variants only
             pass
 
@@ -203,7 +247,23 @@ class OnnxEmbedder:
             providers=["CPUExecutionProvider"],
             sess_options=session_options(configured_threads()),
         )
-        self._output_index = self._find_sentence_embedding()
+        names = [output.name for output in self._session.get_outputs()]
+        if "sentence_embedding" in names:
+            self._output_index = names.index("sentence_embedding")
+        else:
+            self._output_index = self._find_token_output()
+            self._pool = True
+        hidden = self._session.get_outputs()[self._output_index].shape[-1]
+        self._dim = int(hidden) if isinstance(hidden, int) and hidden > 0 else None
+
+    def _max_tokens(self) -> int:
+        try:
+            from huggingface_hub import hf_hub_download  # noqa: PLC0415 - optional extra
+
+            config = json.loads(Path(hf_hub_download(self.repo, "config.json")).read_text())
+        except Exception:  # noqa: BLE001 - a missing config just means the default
+            return ONNX_MAX_TOKENS
+        return position_limit(config)
 
     @property
     def loaded(self) -> bool:
@@ -219,17 +279,14 @@ class OnnxEmbedder:
         self._session = None
         self._tokenizer = None
 
-    def _find_sentence_embedding(self) -> int:
+    def _find_token_output(self) -> int:
+        """Fall back to a per-token output (batch, tokens, dim) for mean pooling."""
         outputs = self._session.get_outputs()
-        names = [output.name for output in outputs]
-        if "sentence_embedding" in names:
-            return names.index("sentence_embedding")
         for index, output in enumerate(outputs):
-            if len(output.shape) == 2:
+            if len(output.shape) == 3:
                 return index
-        raise RuntimeError(
-            f"ONNX model exposes no sentence embedding output (outputs: {names})"
-        )
+        names = [output.name for output in outputs]
+        raise RuntimeError(f"ONNX model exposes no usable embedding output (outputs: {names})")
 
     def _embed_prefixed(self, texts: list[str], prefix: str) -> list[list[float]]:
         self._load()
@@ -238,20 +295,34 @@ class OnnxEmbedder:
         encodings = self._tokenizer.encode_batch([prefix + text for text in texts])
         input_ids = np.array([enc.ids for enc in encodings], dtype=np.int64)
         attention_mask = np.array([enc.attention_mask for enc in encodings], dtype=np.int64)
-        outputs = self._session.run(
-            None, {"input_ids": input_ids, "attention_mask": attention_mask}
-        )
+        # Feed exactly what the export declares: BERT-family conversions also
+        # want token_type_ids, some text-embedding exports want input_ids only.
+        feed: dict[str, np.ndarray] = {}
+        for model_input in self._session.get_inputs():
+            if model_input.name == "input_ids":
+                feed["input_ids"] = input_ids
+            elif model_input.name == "attention_mask":
+                feed["attention_mask"] = attention_mask
+            elif model_input.name == "token_type_ids":
+                feed["token_type_ids"] = np.zeros_like(input_ids)
+        outputs = self._session.run(None, feed)
+        array = outputs[self._output_index]
+        if self._pool:
+            # Mean-pool over real tokens only, then normalise below — the
+            # sentence-transformers recipe for exports without a pooled output.
+            mask = attention_mask[:, :, None].astype("float32")
+            array = (array * mask).sum(axis=1) / np.clip(mask.sum(axis=1), 1.0, None)
         vectors: list[list[float]] = []
-        for vec in outputs[self._output_index].tolist():
+        for vec in array.tolist():
             norm = math.sqrt(sum(v * v for v in vec)) or 1.0
             vectors.append([v / norm for v in vec])
         return vectors
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_prefixed(texts, ONNX_DOC_PROMPT)
+        return self._embed_prefixed(texts, self._doc_prompt)
 
     def embed_query(self, text: str) -> list[float]:
-        return self._embed_prefixed([text], ONNX_QUERY_PROMPT)[0]
+        return self._embed_prefixed([text], self._query_prompt)[0]
 
 
 def get_embedder(spec: str) -> Embedder:

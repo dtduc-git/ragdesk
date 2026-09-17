@@ -303,6 +303,12 @@ this repository's own docs and source.
 | follow-ups (5 queries, `fixtures/golden_multiturn.jsonl`) raw | 1.000 | 0.926 | 0.900 |
 | follow-ups (5 queries) / `--rewrite` (Qwen3.5-4B MLX) | 1.000 | **1.000** | **1.000** |
 
+**Which embedder, and why it is the one it is:** [docs/embedder-comparison.md](docs/embedder-comparison.md)
+measures four multilingual candidates on the repo golden set — Gemma keeps the
+default because it leads nDCG@10 (the column that matters without a reranker);
+`multilingual-e5-small` is the documented speed-and-size option (2.4x smaller,
+2.6x faster to index, recall within noise of Gemma).
+
 The follow-up set is deliberately vague ("how long do they last?") — the raw
 question finds the right *documents* but not at the top; the rewrite moves them
 to rank 1 on all five. The same harness scores it with

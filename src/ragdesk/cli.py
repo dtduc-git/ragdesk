@@ -211,9 +211,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_gl.add_argument("project", help="group/name")
     p_gl.add_argument("--ref", default="", help="branch/tag/sha (default: repo default branch)")
     p_gl.add_argument("--subdir", default="", help="index only a subtree")
-    p_gl.add_argument(
-        "--token", default=None, help="default: GITLAB_TOKEN env or saved connection"
-    )
+    p_gl.add_argument("--token", default=None, help="default: GITLAB_TOKEN env or saved connection")
     p_gl.add_argument("--base-url", default="https://gitlab.com", help="self-hosted GitLab URL")
     p_gl.add_argument("--json", action="store_true", help="machine-readable output")
 
@@ -385,8 +383,7 @@ def _imap_password(user: str) -> str:
 def _standalone_rewrite(llm, question: str, history: list[tuple[str, str]]) -> str:
     """The same rewrite ``serve`` does before searching; ``eval --rewrite`` scores it."""
     convo = "\n".join(
-        f"{'User' if role == 'user' else 'ragdesk'}: {text[:300]}"
-        for role, text in history[-4:]
+        f"{'User' if role == 'user' else 'ragdesk'}: {text[:300]}" for role, text in history[-4:]
     )
     raw = llm.generate(
         SMART_RETRIEVAL_PROMPT.format(history=convo or "(none)", question=question),
@@ -452,9 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         except (LLMUnavailable, OllamaUnavailable) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-        return run_screen(
-            db=args.db, embedder=embedder, llm=tui_llm, reranker=reranker
-        )
+        return run_screen(db=args.db, embedder=embedder, llm=tui_llm, reranker=reranker)
 
     if args.command == "serve":
         state = AppState(
@@ -493,9 +488,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
 
                 def progress(detail: str, done: int, total: int) -> None:
-                    state.activity.update(
-                        {"detail": detail, "done": done, "total": total}
-                    )
+                    state.activity.update({"detail": detail, "done": done, "total": total})
 
                 state.activity = {
                     "running": True,
@@ -529,9 +522,7 @@ def main(argv: list[str] | None = None) -> int:
                     if released:
                         print(f"idle-release: {released}", flush=True)
                 except Exception as exc:  # noqa: BLE001 - never let the timer die
-                    print(
-                        f"auto-index failed: {type(exc).__name__}: {exc}", flush=True
-                    )
+                    print(f"auto-index failed: {type(exc).__name__}: {exc}", flush=True)
 
         threading.Thread(target=auto_index_loop, daemon=True).start()
         threading.Thread(target=watch_loop, daemon=True).start()
@@ -563,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "index":
             stats = index_paths(store, embedder, args.paths)
-            emit_stats(stats, getattr(args, 'json', False))
+            emit_stats(stats, getattr(args, "json", False))
             return 0
 
         if args.command == "github":
@@ -599,7 +590,7 @@ def main(argv: list[str] | None = None) -> int:
             except ConfluenceError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            emit_stats(stats, getattr(args, 'json', False))
+            emit_stats(stats, getattr(args, "json", False))
             return 0
 
         if args.command == "gdrive":
@@ -615,7 +606,7 @@ def main(argv: list[str] | None = None) -> int:
             except GdriveError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            emit_stats(stats, getattr(args, 'json', False))
+            emit_stats(stats, getattr(args, "json", False))
             return 0
 
         if args.command == "gitlab":
@@ -632,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
             except GitLabError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            emit_stats(stats, getattr(args, 'json', False))
+            emit_stats(stats, getattr(args, "json", False))
             return 0
 
         if args.command == "msgraph":
@@ -664,7 +655,7 @@ def main(argv: list[str] | None = None) -> int:
             except MsGraphError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            emit_stats(stats, getattr(args, 'json', False))
+            emit_stats(stats, getattr(args, "json", False))
             return 0
 
         if args.command == "notion":
@@ -673,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
             except NotionError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            emit_stats(stats, getattr(args, 'json', False))
+            emit_stats(stats, getattr(args, "json", False))
             return 0
 
         if args.command == "s3":
@@ -707,7 +698,7 @@ def main(argv: list[str] | None = None) -> int:
             except WebError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 2
-            emit_stats(stats, getattr(args, 'json', False))
+            emit_stats(stats, getattr(args, "json", False))
             return 0
 
         if args.command == "export":
@@ -765,9 +756,7 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
             vaults = [
-                entry
-                for entry in app_settings.load().get("vaults") or []
-                if entry != str(vault)
+                entry for entry in app_settings.load().get("vaults") or [] if entry != str(vault)
             ]
             app_settings.save({"vaults": [*vaults, str(vault)]})
             stats = index_paths(store, embedder, [vault])
@@ -786,9 +775,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "email":
             try:
                 if args.mbox:
-                    stats = index_mbox(
-                        store, embedder, args.mbox, limit=args.limit
-                    )
+                    stats = index_mbox(store, embedder, args.mbox, limit=args.limit)
                     extra = {"mbox": str(args.mbox)}
                 else:
                     password = args.password or _imap_password(args.user)
@@ -903,12 +890,14 @@ def main(argv: list[str] | None = None) -> int:
                 except LLMUnavailable:
                     hyde_llm = None
                 if hyde_llm is not None:
-                    hyde_for = lambda text: str(  # noqa: E731 - tiny adapter
-                        hyde_llm.generate(
+
+                    def hyde_for(text: str) -> str:  # tiny adapter over the LLM
+                        draft = hyde_llm.generate(
                             HYDE_PROMPT.format(question=text),
                             {"num_predict": 120, "temperature": 0.3},
                         )
-                    ).strip()[:1200]
+                        return str(draft).strip()[:1200]
+
             rewrite_for = None
             if args.rewrite:
                 try:
@@ -916,9 +905,10 @@ def main(argv: list[str] | None = None) -> int:
                 except LLMUnavailable as exc:
                     print(f"--rewrite needs a local model: {exc}", file=sys.stderr)
                     return 2
-                rewrite_for = lambda question, history: _standalone_rewrite(  # noqa: E731
-                    rewrite_llm, question, history
-                )
+
+                def rewrite_for(question: str, history: list) -> str:
+                    return _standalone_rewrite(rewrite_llm, question, history)
+
             baseline = None
             if rewrite_for is not None:
                 baseline, _baseline_rows = evaluate(
@@ -955,18 +945,15 @@ def main(argv: list[str] | None = None) -> int:
                         row["judge"] = jury
                         if jury.get("judged"):
                             judged.append(jury)
-                metrics["grounded_ratio"] = (
-                    sum(item["grounded_ratio"] for item in grounded) / (len(grounded) or 1)
+                metrics["grounded_ratio"] = sum(item["grounded_ratio"] for item in grounded) / (
+                    len(grounded) or 1
                 )
-                metrics["citation_valid"] = (
-                    sum(1.0 for item in grounded if item["citation_valid"])
-                    / (len(grounded) or 1)
-                )
+                metrics["citation_valid"] = sum(
+                    1.0 for item in grounded if item["citation_valid"]
+                ) / (len(grounded) or 1)
                 if args.judge:
                     metrics["judge_ratio"] = (
-                        sum(item["ratio"] for item in judged) / len(judged)
-                        if judged
-                        else 0.0
+                        sum(item["ratio"] for item in judged) / len(judged) if judged else 0.0
                     )
                     metrics["judge_coverage"] = len(judged) / (len(per_query) or 1)
             if args.json:

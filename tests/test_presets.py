@@ -35,8 +35,8 @@ def test_default_preset_is_the_lightest_tier():
     """Fresh installs (empty saved setting) must start on the cheapest setup."""
     from ragdesk import settings as settings_mod
 
-    assert settings_mod.DEFAULTS["preset"] == ""          # nothing pinned at install
-    assert DEFAULT_PRESET == "light"                       # …so this is what runs
-    assert PRESETS["light"]["rerank"] == "none"            # lightest: no reranker
-    assert PRESETS["balanced"]["rerank"] != "none"         # upgrades add weight
+    assert settings_mod.DEFAULTS["preset"] == ""  # nothing pinned at install
+    assert DEFAULT_PRESET == "light"  # …so this is what runs
+    assert PRESETS["light"]["rerank"] == "none"  # lightest: no reranker
+    assert PRESETS["balanced"]["rerank"] != "none"  # upgrades add weight
     assert PRESETS[DEFAULT_PRESET]["note"].startswith("8GB")
