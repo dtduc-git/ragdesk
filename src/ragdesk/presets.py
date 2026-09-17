@@ -5,29 +5,31 @@ from __future__ import annotations
 PRESETS: dict[str, dict[str, str]] = {
     "light": {
         "embedder": "onnx",
-        "rerank": "none",
+        # mmarco-mMiniLMv2 (mMARCO includes Vietnamese): measured 2026-09-17 on
+        # 15 real-document questions, recall@5 0.933 -> 1.000, nDCG@10
+        # 0.871 -> 0.937, for +34MB resident and ~0.8s per question. Cheap
+        # enough that even the 8GB preset reranks; the session unloads when idle.
+        "rerank": "onnx:cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
         "llm": "qwen3.5:4b",
         "llm_mlx": "mlx-community/Qwen3.5-4B-MLX-4bit",
-        "note": "8GB machines: EmbeddingGemma int8 on CPU, no reranker, 4B LLM",
+        "note": "8GB machines: int8 embedder, the small multilingual reranker, 4B LLM",
     },
     "balanced": {
         "embedder": "onnx",
-        # The multilingual gte cross-encoder on purpose: an English-only
-        # cross-encoder dropped recall on a Vietnamese+code corpus. Re-measured
-        # 2026-09-17 at the shipped pool: recall@5 0.833 -> 0.917, nDCG@10
-        # 0.671 -> 0.736, for ~2.2s and ~1.3GB while a question is in flight
-        # (batched, and the session unloads when idle).
-        "rerank": "onnx",
+        "rerank": "onnx:cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
         "llm": "qwen3.5:4b",
         "llm_mlx": "mlx-community/Qwen3.5-4B-MLX-4bit",
-        "note": "16GB machines: adds the multilingual reranker",
+        "note": "16GB machines: same reranker, room for the bigger model later",
     },
     "quality": {
         "embedder": "onnx",
-        "rerank": "onnx",
+        # The heavy option: gte-multilingual scored a perfect 1.000/1.000/1.000
+        # on the real-document golden (2026-09-17), at 341MB on disk and ~1.5GB
+        # resident — the reason it is not the default anywhere else.
+        "rerank": "onnx:onnx-community/gte-multilingual-reranker-base",
         "llm": "qwen3.5:9b",
         "llm_mlx": "mlx-community/Qwen3.5-9B-4bit",
-        "note": "32GB / GPU: larger LLM plus the multilingual ONNX reranker (gte)",
+        "note": "32GB / GPU: the strongest reranker (gte) plus a 9B LLM",
     },
 }
 DEFAULT_PRESET = "light"

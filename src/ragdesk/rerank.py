@@ -22,6 +22,23 @@ from ragdesk.search import Hit
 
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-base"
 DEFAULT_ONNX_RERANK_REPO = "onnx-community/gte-multilingual-reranker-base"
+MMARCO_RERANK_REPO = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+# Preset cards and the wizard show this instead of a full spec.
+_RERANK_LABELS = {
+    "": "off",
+    "none": "off",
+    "lexical": "lexical",
+    MMARCO_RERANK_REPO: "mmarco-mMiniLMv2",
+    DEFAULT_ONNX_RERANK_REPO: "gte-multilingual",
+}
+
+
+def rerank_label(spec: str) -> str:
+    """Short human name for a rerank spec (the UI shows it next to the preset)."""
+    repo = spec.split(":", 1)[1] if spec.startswith("onnx:") else spec
+    return _RERANK_LABELS.get(repo, repo.rsplit("/", 1)[-1])
+
+
 # Pairs per forward pass. All 50 at once padded to 512 tokens balloons the ONNX
 # arena: measured peak RSS 6.2GB vs 3.4GB at 8 — and 13% slower, all padding.
 RERANK_BATCH = 8
@@ -119,10 +136,14 @@ class OnnxReranker:
         tokenizer.enable_truncation(max_length=self.max_length)
         tokenizer.enable_padding()
 
+        # Exports name their int8 builds inconsistently; try the cheap ones
+        # first and let missing files fall through to fp32.
+        machine = platform.machine()
         variants = ["onnx/model_quantized.onnx"]
-        if platform.machine() in ("arm64", "aarch64"):
-            # some exports ship a platform-specific int8 build instead
+        if machine in ("arm64", "aarch64"):
             variants.insert(0, "onnx/model_qint8_arm64.onnx")
+        elif machine in ("x86_64", "AMD64"):
+            variants[:0] = ["onnx/model_qint8_avx512_vnni.onnx", "onnx/model_quint8_avx2.onnx"]
         variants.append("onnx/model.onnx")
         model_path = None
         for candidate in variants:

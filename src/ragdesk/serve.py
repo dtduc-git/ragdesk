@@ -81,7 +81,7 @@ from ragdesk.notion import resolve_token as notion_resolve_token
 from ragdesk.notion import whoami as notion_whoami
 from ragdesk.ollama import DEFAULT_HOST, OllamaUnavailable, post_stream
 from ragdesk.presets import PRESETS
-from ragdesk.rerank import get_reranker
+from ragdesk.rerank import get_reranker, rerank_label
 from ragdesk.s3 import DEFAULT_REGION as S3_DEFAULT_REGION
 from ragdesk.s3 import S3Error, probe, resolve_credentials, sync_s3
 from ragdesk.search import Hit, hit_to_dict, parse_filters, retrieve
@@ -300,6 +300,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "name": name,
                                 "note": str(entry["note"]),
                                 "rerank": str(entry["rerank"]),
+                                "rerank_label": rerank_label(str(entry["rerank"])),
                                 "llm": str(entry["llm"]),
                             }
                             for name, entry in PRESETS.items()

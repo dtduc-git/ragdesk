@@ -282,7 +282,7 @@ The same UI also runs in a browser for development:
 | Topic map picture: `scripts/topic_map.py` projects the corpus to 2D (PCA) and writes a self-contained HTML — clusters coloured, hover for paths | |
 | Eval: per-category metrics + category gates, `--answers` faithfulness (overlap proxy), `--judge` (asks the local model to grade each answer sentence by sentence) and `--rewrite` follow-up scoring | |
 | MCP server for Claude Code / Cursor (`ragdesk mcp`) | |
-| RAM presets (`light` / `balanced` / `quality`) — switchable in Settings, applied live; per-flag overrides still work | |
+| RAM presets (`light` / `balanced` / `quality`) — switchable in Settings, applied live; per-flag overrides still work. Every preset reranks: `light`/`balanced` with the small multilingual mmarco-mMiniLMv2 (+34MB, ~0.8s/question — measured below), `quality` with the heavy gte | |
 | Eval harness + CI gates on the fixtures and repo golden sets | |
 
 ## Eval

@@ -1201,7 +1201,7 @@ def test_preset_setting_applies_without_restart(base_url: str):
 
     _, after = request(f"{base_url}/api/status")
     assert after["preset"] == "balanced"
-    assert after["rerank"] == "onnx"  # multilingual reranker applied live
+    assert "mmarco" in after["rerank"]  # the preset's reranker applied live
     assert after["llm_model"] == "qwen3.5:4b"
 
     with pytest.raises(urllib.error.HTTPError) as excinfo:

@@ -64,9 +64,17 @@ def main() -> int:
     store = Store(args.db)
     embedder = get_embedder("onnx")
     # Warm the embedder first: it is the same for every candidate, and paying
-    # for it inside the first row would make that row look heavier.
-    evaluate(store, embedder, golden, top_k=10, reranker=None)
+    # for it inside the first row would make that row look heavier. The same
+    # pass is the no-reranker baseline the candidates have to beat.
+    started = time.monotonic()
+    base_metrics, _ = evaluate(store, embedder, golden, top_k=10, reranker=None)
+    base_seconds = (time.monotonic() - started) / len(golden)
     baseline = rss_mb()
+    print(
+        f"| *(no reranker)* | - | {base_metrics['recall@5']:.3f} | {base_metrics['ndcg@10']:.3f} "
+        f"| {base_metrics['mrr@10']:.3f} | {base_seconds:.2f}s | - |",
+        flush=True,
+    )
     print(f"# pool {args.pool} · {len(golden)} queries · process baseline {baseline} MB\n")
     print("| reranker | weights | recall@5 | ndcg@10 | mrr@10 | per question | loaded RAM |")
     print("|---|---|---|---|---|---|---|")

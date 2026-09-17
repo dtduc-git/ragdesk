@@ -53,7 +53,7 @@ type Status = {
     total: number;
     started: number;
   };
-  presets: Array<{ name: string; note: string; rerank: string; llm: string }>;
+  presets: Array<{ name: string; note: string; rerank: string; rerank_label: string; llm: string }>;
   llm: { kind: string; model: string; note: string };
   llm_setting: {
     preference: string;
@@ -417,7 +417,7 @@ function renderStatus(): void {
   const presetName = status.preset;
   const activePreset = (status.presets ?? []).find((entry) => entry.name === presetName);
   $("preset-note").textContent = activePreset
-    ? `${activePreset.note} · rerank ${activePreset.rerank}`
+    ? `${activePreset.note} · rerank ${activePreset.rerank_label ?? activePreset.rerank}`
     : "";
   const repoShort = status.llm_setup.mlx_repo.split("/").pop() ?? "";
   const needsDownload =
