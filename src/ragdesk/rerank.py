@@ -14,6 +14,7 @@ qdrant/fastembed#494); the default FastEmbed model here is
 
 from __future__ import annotations
 
+import platform
 from typing import Protocol
 
 from ragdesk.embed import configured_threads, session_options, tokenize
@@ -118,8 +119,13 @@ class OnnxReranker:
         tokenizer.enable_truncation(max_length=self.max_length)
         tokenizer.enable_padding()
 
+        variants = ["onnx/model_quantized.onnx"]
+        if platform.machine() in ("arm64", "aarch64"):
+            # some exports ship a platform-specific int8 build instead
+            variants.insert(0, "onnx/model_qint8_arm64.onnx")
+        variants.append("onnx/model.onnx")
         model_path = None
-        for candidate in ("onnx/model_quantized.onnx", "onnx/model.onnx"):
+        for candidate in variants:
             try:
                 model_path = hf_hub_download(self.repo, candidate)
                 break

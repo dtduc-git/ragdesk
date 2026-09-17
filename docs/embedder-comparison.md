@@ -15,8 +15,8 @@ Each run indexes the corpus into a fresh database under a scratch config dir
 (never your own settings), then runs `ragdesk eval --golden` with `--rerank none`.
 
 - **Corpus `repo`** — this repository, 2.8k chunks, `fixtures/golden_repo.jsonl`
-  (24 questions about real files, scoped to the checkout). This is the
-  discriminating set: hand-written fixtures saturate at 1.000 for every model.
+  (12 hand-written questions about real files, scoped to the checkout). This is
+  the discriminating set: hand-written fixtures saturate at 1.000 for every model.
 - **Corpus `fixtures`** — `fixtures/docs`, 3 documents, `fixtures/golden.jsonl`
   (7 questions). Too small to separate models; kept as a smoke row.
 - **Quality** — recall@5 / nDCG@10 / MRR@10 from the golden set.
@@ -56,8 +56,8 @@ kept only to prove the harness end-to-end.
 
 ## What the numbers say
 
-- **Recall is a tie within noise; ordering is not.** 24 questions make one query
-  worth ~0.04 recall, so Gemma's 0.833 vs e5-small's 0.917 is two questions —
+- **Recall is a tie within noise; ordering is not.** 12 questions make one query
+  worth ~0.083 recall, so Gemma's 0.833 vs e5-small's 0.917 is one question —
   suggestive, not settled. Gemma leads nDCG@10 (0.671) and is the reason the
   `light` preset (no reranker) keeps it: with no reranker, ranking order is the
   embedder's job, and that is the column it wins.
@@ -79,8 +79,8 @@ kept only to prove the harness end-to-end.
 
 ## Caveats
 
-24 questions: one query is worth ~0.04 recall, so treat differences below ~0.05
-as noise, and ties as ties. All models ran int8 "quantized" exports, CPU-only,
+12 questions: one query is worth ~0.083 recall, so treat differences of one
+question as noise, and ties as ties. All models ran int8 "quantized" exports, CPU-only,
 `--rerank none`, text chunking.
 
 Two findings came out of the first pass and both are now fixed in

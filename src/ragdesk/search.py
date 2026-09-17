@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 RRF_K = 60
 # Chunks the deep stage re-scores per question. Swept 2026-09-17 on the repo
-# golden (24 queries, 2.8k chunks, scripts/rerank_pool_sweep.py): pool 20 ->
+# golden (12 queries, 2.8k chunks, scripts/rerank_pool_sweep.py): pool 20 ->
 # recall@5 0.917 / ndcg 0.736, pool 30 -> 0.750 / 0.758, pool 50 -> 0.750 /
 # 0.695, pool 10 -> 0.833 / 0.717. Deeper pools gave the cross-encoder more
 # chances to demote a relevant chunk; 30 was measured when the corpus was a
