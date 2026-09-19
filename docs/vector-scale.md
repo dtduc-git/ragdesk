@@ -84,10 +84,10 @@ Notes that keep the table honest:
 
 - **numpy matrix is the default** (`vectors.NumpyMatrix`, exact cosine, rows
   L2-normalized). It wins latency at every size we measured, is exact, adds no
-  dependency (numpy already arrives with `fastembed`), and fits a personal
+  extra dependency (numpy is a core dependency of ragdesk), and fits a personal
   corpus in RAM: the real index (~14k chunks) costs ~45 MB.
-- **Python scan is the fallback** when numpy is absent (core install, exotic
-  platforms). Exact, slow, never wrong.
+- **Python scan is the fallback** only for a platform where numpy is missing:
+  a correctness backstop, ~1000× slower, never a mode to run deliberately.
 - **usearch is opt-in**, for people who accept approximate recall in exchange
   for millisecond searches (`--vector-backend usearch`, or the setting/API).
   It is not a default: it lost on recall *and* on RSS against numpy at 1M (7.9

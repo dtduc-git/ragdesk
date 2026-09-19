@@ -1281,6 +1281,8 @@ wheels = [
 name = "ragdesk"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pypdf" },
 ]
 
@@ -1311,6 +1313,7 @@ dev = [
 requires-dist = [
     { name = "fastembed", marker = "extra == 'onnx'", specifier = ">=0.8.0" },
     { name = "mlx-lm", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mlx'", specifier = ">=0.31" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "pyobjc-framework-vision", marker = "sys_platform == 'darwin' and extra == 'vision'", specifier = ">=10.0" },
     { name = "pypdf", specifier = ">=5.0" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.80" },

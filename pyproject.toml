@@ -27,6 +27,7 @@ classifiers = [
   "Topic :: Text Processing :: Indexing",
 ]
 dependencies = [
+    "numpy>=1.26",
     "pypdf>=5.0",
 ]
 
