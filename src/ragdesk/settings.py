@@ -22,6 +22,7 @@ DEFAULTS: dict = {
     "chunk_chars": 1000,
     "chunk_overlap": 150,
     "embed_threads": 4,
+    "vector_backend": "",
     "never_index": [],
     "vaults": [],
 }

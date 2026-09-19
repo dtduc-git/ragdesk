@@ -99,6 +99,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="embedder spec: onnx[:repo], ollama[:model] or hash[:dim] (default: from preset)",
     )
     parser.add_argument(
+        "--vector-backend",
+        choices=("auto", "python", "numpy", "usearch"),
+        default=None,
+        help="dense search backend (default: auto — numpy matrix when available)",
+    )
+    parser.add_argument(
         "--rerank",
         default=None,
         help="reranker spec: none | lexical | fastembed[:model] (default: from preset)",
@@ -532,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
         return 0
 
-    with Store(args.db) as store:
+    with Store(args.db, vector_backend=args.vector_backend or "") as store:
         if args.command == "stats":
             stats = store.stats()
             embedder_name = store.get_meta("embedder.name")

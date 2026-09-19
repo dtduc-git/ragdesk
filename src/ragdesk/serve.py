@@ -274,6 +274,7 @@ class Handler(BaseHTTPRequestHandler):
                         "hyde": bool(settings.load()["hyde"]),
                         "answer_length": str(settings.load()["answer_length"]),
                         "embed_threads": int(settings.load().get("embed_threads") or 0),
+                        "vector_backend": str(settings.load().get("vector_backend") or ""),
                         "llm_setting": {
                             "preference": str(settings.load().get("llm_preference") or ""),
                             "openai_host": str(settings.load().get("openai_host") or ""),
@@ -676,8 +677,16 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 self._send(400, {"error": "embed_threads must be a number (0 = all cores)"})
                 return
-            threads = max(0, min(threads, 64))
             updates["embed_threads"] = threads
+        if "vector_backend" in body:
+            backend = str(body["vector_backend"])
+            if backend not in ("", "auto", "python", "numpy", "usearch"):
+                self._send(
+                    400,
+                    {"error": "vector_backend must be '', 'auto', 'python', 'numpy' or 'usearch'"},
+                )
+                return
+            updates["vector_backend"] = backend
             # the pool size is fixed when a session is built: drop the models so
             # the next question or index run picks the new value up
             for model in (self.state.embedder, self.state.reranker):

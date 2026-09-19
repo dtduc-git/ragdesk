@@ -211,6 +211,23 @@ def test_settings_accepts_embed_threads(base_url: str):
     assert excinfo.value.code == 400
 
 
+def test_settings_accepts_vector_backend(base_url: str):
+    from ragdesk import settings
+
+    status, _payload = request(f"{base_url}/api/settings", {"vector_backend": "numpy"})
+    assert status == 200
+    assert settings.load()["vector_backend"] == "numpy"
+    _, status_payload = request(f"{base_url}/api/status")
+    assert status_payload["vector_backend"] == "numpy"
+
+    request(f"{base_url}/api/settings", {"vector_backend": "auto"})
+    assert settings.load()["vector_backend"] == "auto"
+
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/settings", {"vector_backend": "hnsw"})
+    assert excinfo.value.code == 400
+
+
 def test_health_endpoint_reports_the_index_state(base_url: str):
     status, payload = request(f"{base_url}/api/health")
     assert status == 200

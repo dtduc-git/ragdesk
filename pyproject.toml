@@ -51,6 +51,9 @@ vision = [
 tui = [
     "textual>=0.80",
 ]
+vec = [
+    "usearch>=2.26",
+]
 
 [build-system]
 requires = ["hatchling"]
