@@ -71,12 +71,14 @@ Notes that keep the table honest:
 - usearch was run at `expansion_search=256`. At its default 64 it "recalled"
   0.55–0.65 — it is a search-effort knob, not a backend property; even at 256
   it loses ~15–35% of top-5 quality on this data.
-- sqlite-vec only runs under an interpreter with loadable SQLite extensions.
-  It is exact and disk-friendly, but it was measured here with Homebrew Python:
-  **the bundled app runtime cannot load it.** uv-managed CPython has no
-  `sqlite3.Connection.enable_load_extension`, and `pysqlite3-binary` ships no
-  macOS arm64 wheel for CPython 3.12. Verify on any interpreter with:
+- sqlite-vec needs an interpreter built with loadable SQLite extensions, and
+  that varies by Python build: uv's current managed 3.12 and Homebrew 3.13
+  both have it (verified with a live `vec0` table), older uv standalone builds
+  and some system Pythons do not. Check any interpreter with
   `python -c "import sqlite3; print(hasattr(sqlite3.connect(':memory:'), 'enable_load_extension'))"`.
+  Even where it loads, it is ~9× slower than numpy at 1M plus a shadow `vec0`
+  table (roughly the corpus size on disk) and a native extension dependency —
+  so it stays benchmark-only on performance grounds, not availability.
 
 ## Decision
 
@@ -91,9 +93,9 @@ Notes that keep the table honest:
   It is not a default: it lost on recall *and* on RSS against numpy at 1M (7.9
   vs 5.9 GB), because HNSW keeps the vectors too plus the graph, and building
   it took 4.5–8 minutes at 1M against numpy's 5 seconds.
-- **sqlite-vec is not shipped.** Blocked by the app's own runtime (above), and
-  even where it runs it is ~9× slower than numpy at 1M. It stays in the
-  benchmark so the claim has a number.
+- **sqlite-vec is not shipped.** It is exact but ~9× slower than numpy at 1M
+  on the same machine, and it needs a native extension plus a shadow `vec0`
+  table to maintain. It stays in the benchmark so the claim has a number.
 - Indexes are cached per database path and invalidated through a long-lived
   guard connection watching `PRAGMA data_version`, so any writer (watcher
   thread, CLI, a second app instance) is picked up without re-opening the app.

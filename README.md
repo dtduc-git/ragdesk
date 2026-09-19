@@ -253,7 +253,7 @@ The same UI also runs in a browser for development:
 | Metadata: a `--- key: value ---` front-matter header is parsed, stored per document and filterable — no YAML dependency; `authority:`/`status:` tags give a small rank nudge (canonical up, draft down) | |
 | Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML), email (mbox / IMAP) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
-| Dense search at scale: exact numpy matrix by default — measured 0.8 ms/query at 10k chunks, 6.3 ms at 100k, 61 ms at 1M ([numbers](docs/vector-scale.md)); `--vector-backend python\|numpy\|usearch` | Approximate ANN as a default — `usearch` lost recall *and* RAM against numpy; sqlite-vec cannot load in the bundled runtime |
+| Dense search at scale: exact numpy matrix by default — measured 0.8 ms/query at 10k chunks, 6.3 ms at 100k, 61 ms at 1M ([numbers](docs/vector-scale.md)); `--vector-backend python\|numpy\|usearch` | Approximate ANN as a default — `usearch` lost recall *and* RAM against numpy; sqlite-vec is exact but ~9× slower at 1M (benchmark-only) |
 | Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) — batched, idle-unloaded, pool swept on the golden (docs above) | Eval badge automation per release |
 | Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | |
 | Chat history: conversations in SQLite, multi-turn context, a history popover (open/delete), resume or start fresh | |
@@ -313,8 +313,8 @@ default because it leads nDCG@10 (the column that matters without a reranker);
 **Dense search at scale:** [docs/vector-scale.md](docs/vector-scale.md) measures
 five vector backends from 10k to 1M chunks — the exact numpy matrix ships by
 default (61 ms/query at 1M), the Python scan is the no-dependency fallback,
-`usearch` is opt-in, and sqlite-vec is benchmark-only because the app's bundled
-Python cannot load SQLite extensions.
+`usearch` is opt-in, and sqlite-vec is benchmark-only because it was ~9× slower
+than numpy on the same machine.
 
 The follow-up set is deliberately vague ("how long do they last?") — the raw
 question finds the right *documents* but not at the top; the rewrite moves them

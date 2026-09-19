@@ -4,10 +4,11 @@ from a real index, so latency/RAM/recall numbers describe the shipped code.
     uv run --extra onnx python scripts/vector_scale_bench.py --source /tmp/chk.db \
         --sizes 10000,100000,500000 --queries 30
 
-    # sqlite-vec needs an interpreter with loadable SQLite extensions
-    # (uv-managed CPython does not have them; Homebrew Python does):
-    uv run --python /opt/homebrew/bin/python3.13 --with sqlite-vec --with numpy \
-        --with usearch python scripts/vector_scale_bench.py --source /tmp/chk.db \
+    # sqlite-vec needs an interpreter with loadable SQLite extensions (the
+    # current uv-managed 3.12 and Homebrew 3.13 both have them; verify with
+    # hasattr(sqlite3.connect(':memory:'), 'enable_load_extension')):
+    uv run --extra onnx --with sqlite-vec --with numpy --with usearch \
+        python scripts/vector_scale_bench.py --source /tmp/chk.db \
         --sizes 10000,100000 --queries 30
 
 Each backend runs in its own child process so RSS numbers are per backend.
