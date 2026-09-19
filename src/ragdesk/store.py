@@ -14,6 +14,9 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
+from ragdesk import settings as app_settings
+from ragdesk import vectors
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -114,9 +117,10 @@ class EmbedderMismatch(RuntimeError):
 class Store:
     """One SQLite file holds documents, chunks, the BM25 index and the vectors."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, vector_backend: str = "") -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.vector_backend = vector_backend
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -1044,45 +1048,40 @@ class Store:
     def dense_search(
         self, query_vec: list[float], limit: int, filters: Any = None
     ) -> list[dict[str, Any]]:
-        # ponytail: brute-force cosine over all chunks. Fine to ~100k chunks for a
-        # personal index; swap in sqlite-vec / a cached numpy matrix when it grows.
+        if limit <= 0:
+            return []
         scope, params = self._filter_sql(filters)
+        prefer = self.vector_backend or str(app_settings.load().get("vector_backend") or "")
+        backend = vectors.cached_backend(self.path, self.conn, prefer=prefer)
+        if backend.name == "usearch" and scope:
+            # HNSW cannot filter; a scoped query scans only the matching chunks,
+            # so the exact Python scan stays proportional to the scope subset.
+            backend = vectors.PythonScan(self.conn)
+        candidates = backend.search(self.conn, query_vec, limit, scope, params)
+        return self._payloads(candidates)
+
+    def _payloads(self, candidates: list[tuple[int, float]]) -> list[dict[str, Any]]:
+        """Fetch display fields for the winning chunk ids, best score first."""
+        if not candidates:
+            return []
+        placeholders = ",".join("?" * len(candidates))
         rows = self.conn.execute(
             f"""
-            SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source, c.embedding,
-                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime,
-                   d.metadata
+            SELECT c.id, c.doc_id, c.ordinal, c.text, d.path, d.source,
+                   COALESCE(p.text, '') AS parent_text, c.line_start, d.mtime, d.metadata
             FROM chunks c JOIN documents d ON d.id = c.doc_id
             LEFT JOIN parents p ON p.doc_id = d.id AND p.ordinal = c.parent_ordinal
-            WHERE 1=1{scope}
+            WHERE c.id IN ({placeholders})
             """,
-            params,
+            [chunk_id for chunk_id, _score in candidates],
         ).fetchall()
-        q_norm = math.sqrt(sum(v * v for v in query_vec)) or 1.0
-        scored: list[tuple[float, dict[str, Any]]] = []
-        for row in rows:
-            vec = array.array("f")
-            vec.frombytes(row["embedding"])
-            dot = sum(a * b for a, b in zip(query_vec, vec, strict=True))
-            norm = math.sqrt(sum(v * v for v in vec)) or 1.0
-            score = dot / (q_norm * norm)
-            scored.append(
-                (
-                    score,
-                    {
-                        "id": row["id"],
-                        "doc_id": row["doc_id"],
-                        "ordinal": row["ordinal"],
-                        "text": row["text"],
-                        "path": row["path"],
-                        "source": row["source"],
-                        "parent_text": row["parent_text"],
-                        "line_start": row["line_start"],
-                        "mtime": row["mtime"],
-                        "metadata": json.loads(row["metadata"] or "{}"),
-                        "score": score,
-                    },
-                )
-            )
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [payload for _, payload in scored[:limit]]
+        by_id = {int(row["id"]): dict(row) for row in rows}
+        out: list[dict[str, Any]] = []
+        for chunk_id, score in candidates:
+            row = by_id.get(chunk_id)
+            if row is None:
+                continue
+            row["metadata"] = json.loads(row["metadata"] or "{}")
+            row["score"] = score
+            out.append(row)
+        return out
