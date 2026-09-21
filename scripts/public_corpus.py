@@ -132,16 +132,18 @@ def index(repos_dir: Path, db: Path, files_per_repo: int) -> None:
             files = pick_files(root, files_per_repo)
             keep.update(str(path) for path in files)
             stats = index_paths(store, embedder, files)
+            # Prefix match, not a path-segment LIKE: '/react/' also matches a
+            # vscode subdirectory and inflates another repo's count.
             chunks = int(
                 store.conn.execute(
                     "SELECT COUNT(*) FROM chunks c JOIN documents d ON d.id = c.doc_id "
                     "WHERE d.path LIKE ?",
-                    (f"%/{root.name}/%",),
+                    (f"{root}/%",),
                 ).fetchone()[0]
             )
             docs = len(
                 store.conn.execute(
-                    "SELECT id FROM documents WHERE path LIKE ?", (f"%/{root.name}/%",)
+                    "SELECT id FROM documents WHERE path LIKE ?", (f"{root}/%",)
                 ).fetchall()
             )
             row = {

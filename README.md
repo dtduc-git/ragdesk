@@ -325,6 +325,12 @@ default because it leads nDCG@10 (the column that matters without a reranker);
 `multilingual-e5-small` is the documented speed-and-size option (2.4x smaller,
 2.6x faster to index, recall within noise of Gemma).
 
+**On other people's code:** [docs/public-corpus.md](docs/public-corpus.md) is a
+second, independent eval — 12 famous public repositories (kubernetes, django,
+react, go, vscode, cpython, …), 34,800 chunks, 101 locally generated questions.
+With the shipped reranker: recall@5 0.960 / nDCG@10 0.891; without it, 0.901 /
+0.830.
+
 **Dense search at scale:** [docs/vector-scale.md](docs/vector-scale.md) measures
 five vector backends from 10k to 1M chunks — the exact numpy matrix ships by
 default (61 ms/query at 1M), the Python scan is the no-dependency fallback,
