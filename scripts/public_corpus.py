@@ -28,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from ragdesk.embed import get_embedder  # noqa: E402
-from ragdesk.index import index_paths  # noqa: E402
+from ragdesk.index import index_paths, is_indexable  # noqa: E402
 from ragdesk.store import Store  # noqa: E402
 
 # Big, famous, and different from each other: a systems language, a web
@@ -48,6 +48,8 @@ REPOS = [
     "python/cpython",
 ]
 
+# Extra noise on top of ragdesk's own SKIP_DIRS: vendored copies and fixtures
+# generate questions about generated code, not about the project.
 SKIP_DIRS = {
     ".git",
     ".github",  # workflows are boilerplate for questions; docs and code carry the signal
@@ -64,31 +66,7 @@ SKIP_DIRS = {
     "out",
     "bin",
 }
-TEXT_SUFFIXES = {
-    ".md",
-    ".mdx",
-    ".rst",
-    ".txt",
-    ".py",
-    ".go",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".rs",
-    ".c",
-    ".h",
-    ".cpp",
-    ".hpp",
-    ".java",
-    ".rb",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".sh",
-}
 MIN_BYTES = 400
-MAX_BYTES = 300_000
 
 
 def repo_name(slug: str) -> str:
@@ -99,19 +77,19 @@ def pick_files(root: Path, limit: int) -> list[Path]:
     """Deterministic subset: hash order, bounded size, no vendor trees.
 
     Deterministic matters more than "best" files: the corpus must rebuild
-    identically on another machine so the numbers are comparable.
+    identically on another machine so the numbers are comparable. The
+    extension/size rules are ragdesk's own (``is_indexable``), so the corpus
+    reflects what the product would index.
     """
     candidates: list[Path] = []
     for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
-            continue
-        if any(part in SKIP_DIRS for part in path.parts):
+        if not path.is_file() or any(part in SKIP_DIRS for part in path.parts):
             continue
         try:
             size = path.stat().st_size
         except OSError:
             continue
-        if not (MIN_BYTES <= size <= MAX_BYTES):
+        if size < MIN_BYTES or not is_indexable(path, size):
             continue
         candidates.append(path)
     candidates.sort(key=lambda path: hashlib.sha256(str(path).encode()).hexdigest())
@@ -144,6 +122,7 @@ def index(repos_dir: Path, db: Path, files_per_repo: int) -> None:
     db.parent.mkdir(parents=True, exist_ok=True)
     embedder = get_embedder("onnx")
     report: list[dict] = []
+    keep: set[str] = set()
     with Store(db) as store:
         for slug in REPOS:
             root = repos_dir / repo_name(slug)
@@ -151,6 +130,7 @@ def index(repos_dir: Path, db: Path, files_per_repo: int) -> None:
                 print(f"  {slug}: not cloned, skipping", file=sys.stderr)
                 continue
             files = pick_files(root, files_per_repo)
+            keep.update(str(path) for path in files)
             stats = index_paths(store, embedder, files)
             chunks = int(
                 store.conn.execute(
@@ -175,10 +155,31 @@ def index(repos_dir: Path, db: Path, files_per_repo: int) -> None:
             }
             report.append(row)
             print("  " + json.dumps(row), flush=True)
+        prune(store, keep, repos_dir)
     print(json.dumps({"repos": len(report), "chunks": sum(r["chunks"] for r in report)}))
     target = db.with_suffix(".corpus.json")
     target.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {target}")
+
+
+def prune(store: Store, keep: set[str], repos_dir: Path) -> int:
+    """Drop documents a previous selection rule left behind: the corpus is a set.
+
+    The selection is a hash cut over the candidates, so widening the admission
+    rules (new extensions) reorders it. Re-indexing then adds the new pick;
+    without this the stale half of the old pick would inflate the corpus.
+    """
+    prefix = str(repos_dir) + "/"
+    removed = 0
+    for row in store.conn.execute("SELECT path FROM documents").fetchall():
+        path = str(row["path"])
+        if path in keep or not path.startswith(prefix):
+            continue
+        store.delete_documents_matching([path])
+        removed += 1
+    if removed:
+        print(f"  pruned {removed} documents outside the current selection")
+    return removed
 
 
 def main() -> int:

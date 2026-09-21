@@ -65,6 +65,19 @@ def test_index_skips_heavy_dirs(tmp_path: Path):
         assert store.local_paths()[0]["path"] == str(tmp_path)
 
 
+def test_index_accepts_the_common_code_extensions(tmp_path: Path):
+    """A code retrieval tool must index C/C++ and friends, not only its own stack."""
+    from ragdesk.index import is_indexable
+
+    for name in ("main.cpp", "util.c", "api.h", "bindings.mm", "App.kt", "schema.proto"):
+        path = tmp_path / name
+        path.write_text("int main() { return 0; }")
+        assert is_indexable(path, path.stat().st_size), name
+    secret = tmp_path / ".env"
+    secret.write_text("API_KEY=do-not-index-me")
+    assert not is_indexable(secret, secret.stat().st_size)
+
+
 def test_index_and_search_end_to_end(tmp_path: Path):
     docs = tmp_path / "docs"
     docs.mkdir()
