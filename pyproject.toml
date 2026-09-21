@@ -66,6 +66,16 @@ path = "src/ragdesk/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/ragdesk"]
 
+[tool.hatch.build.targets.sdist]
+# Without this the sdist is the whole working tree: 1 GB of Rust target and
+# bundled sidecar that PyPI neither wants nor needs.
+exclude = [
+  "desktop",
+  "docs/screenshots",
+  ".ragdesk",
+  "dist",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8.0",
