@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 
@@ -33,17 +34,17 @@ def write_private(target: Path, text: str) -> None:
     """Write a file that must never be world-readable, atomically.
 
     ``write_text`` + ``chmod`` leaves a window at the umask mode and truncates
-    on a crash; the temp file is created 0600 and renamed into place.
+    on a crash; a 0600 temp file (unique per writer — ``mkstemp``) is renamed
+    into place, so concurrent writers can never publish one another's bytes.
     """
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temp = target.with_name(target.name + ".tmp")
-    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, temp_name = tempfile.mkstemp(dir=target.parent, prefix=target.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as handle:
             handle.write(text)
-        os.replace(temp, target)
+        os.replace(temp_name, target)
     except BaseException:
-        temp.unlink(missing_ok=True)
+        Path(temp_name).unlink(missing_ok=True)
         raise
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from ragdesk.credentials import credentials_file, write_private
@@ -45,8 +46,14 @@ def load(path: Path | None = None) -> dict:
     return values
 
 
+_save_lock = threading.Lock()
+
+
 def save(values: dict, path: Path | None = None) -> None:
     target = path or settings_file()
-    merged = load(target)
-    merged.update(values)
-    write_private(target, json.dumps(merged, indent=2))
+    # read-modify-write: the auto-index timer, a request handler and a sync job
+    # all save; without the lock the last writer silently drops the others' keys.
+    with _save_lock:
+        merged = load(target)
+        merged.update(values)
+        write_private(target, json.dumps(merged, indent=2))

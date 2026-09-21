@@ -162,13 +162,26 @@ def test_matrix_build_is_a_consistent_snapshot(tmp_path):
 
 def test_backend_override_reaches_stores_opened_without_a_preference(tmp_path, monkeypatch):
     """serve/mcp/tui open their own Store: --vector-backend must still apply."""
-    store, embedder = make_store(tmp_path)
     monkeypatch.setattr(
         "ragdesk.store.app_settings.load", lambda path=None: {"vector_backend": "numpy"}
     )
     vectors.set_backend_override("python")
+    store, embedder = make_store(tmp_path)  # no explicit backend
     store.dense_search(embedder.embed_query("alpha"), 2)
     assert vectors._cache[str(store.path)][1].name == "python"
+
+
+def test_eviction_does_not_close_a_guard_another_thread_may_hold(tmp_path):
+    """Closing an evicted guard under a thread reading its revision used to raise."""
+    first, embedder = make_store(tmp_path / "db0")
+    first.dense_search(embedder.embed_query("alpha"), 1)
+    first_path = str(first.path)
+    held = vectors._guards[first_path]  # captured before the eviction below
+    for index in range(1, vectors.MAX_CACHE + 1):
+        store, other = make_store(tmp_path / f"db{index}")
+        store.dense_search(other.embed_query("alpha"), 1)
+    assert first_path not in vectors._guards  # evicted from the cache bookkeeping
+    assert held.execute("SELECT 1").fetchone()[0] == 1  # but the handle still works
 
 
 def test_dense_search_keeps_the_payload_contract(tmp_path):

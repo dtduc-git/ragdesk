@@ -327,19 +327,25 @@ def cached_backend(
         if entry is not None and entry[0] == token:
             return entry[1]
         backend = build_backend(conn, backend_name)
+        # Re-inserting a key must move it to the end, or the first database seen
+        # is always the one evicted, however hot it is.
+        _cache.pop(key, None)
         _cache[key] = (token, backend)
         _evict_locked()
         return backend
 
 
 def _evict_locked() -> None:
-    """Keep the cache bounded (insertion order): stale databases must not pin GBs."""
+    """Drop the oldest entries; guards are dropped, never closed.
+
+    Another thread may be reading a revision through one of these connections
+    at this moment, and closing it under them raises "Cannot operate on a
+    closed database". The last reference finalizes the connection.
+    """
     while len(_cache) > MAX_CACHE:
         oldest = next(iter(_cache))
         _cache.pop(oldest, None)
-        old_guard = _guards.pop(oldest, None)
-        if old_guard is not None:
-            old_guard.close()
+        _guards.pop(oldest, None)
 
 
 def clear_cache() -> None:

@@ -120,7 +120,14 @@ class Store:
     def __init__(self, path: str | Path, *, vector_backend: str = "") -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.vector_backend = vector_backend
+        # Resolved once per open: settings.load() reads the disk and this is the
+        # search hot path (one call per lane, 1-4 per query). serve opens a
+        # fresh Store per request, so a settings change applies to the next one.
+        self.vector_backend = (
+            vector_backend
+            or vectors.backend_override()
+            or str(app_settings.load().get("vector_backend") or "")
+        )
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -1066,12 +1073,7 @@ class Store:
         if limit <= 0:
             return []
         scope, params = self._filter_sql(filters)
-        prefer = (
-            self.vector_backend
-            or vectors.backend_override()
-            or str(app_settings.load().get("vector_backend") or "")
-        )
-        backend = vectors.cached_backend(self.path, self.conn, prefer=prefer)
+        backend = vectors.cached_backend(self.path, self.conn, prefer=self.vector_backend)
         if backend.name == "usearch" and scope:
             # HNSW cannot filter; a scoped query scans only the matching chunks,
             # so the exact Python scan stays proportional to the scope subset.
