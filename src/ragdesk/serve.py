@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from ragdesk import __version__, credentials, settings
+from ragdesk import __version__, credentials, settings, vectors
 from ragdesk.answer import REFUSAL, answer, answer_stream, wants_diagram
 from ragdesk.confluence import (
     ConfluenceError,
@@ -91,11 +91,20 @@ from ragdesk.symbols import find_symbol, parse_symbol_question, symbol_answer
 from ragdesk.topics import topic_map
 from ragdesk.web import WebError, crawl_site, save_page
 
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-}
+# The Tauri webview is a different origin from the loopback API, so CORS is
+# required — but a wildcard would let any website the user has open read the
+# whole index (documents, chats, connector params). Only the app's own origins
+# and this server's own origin (browser dev mode) are allowed, and the Host
+# header must be loopback (DNS-rebinding guard).
+APP_ORIGINS = frozenset(
+    {
+        "tauri://localhost",  # macOS/Linux webview
+        "http://tauri.localhost",  # Windows webview
+        "https://tauri.localhost",
+        "http://localhost:1420",  # vite dev server
+    }
+)
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 MEMORY_MIN_COSINE = 0.35
 MEMORY_LIMIT = 3
@@ -209,12 +218,54 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- plumbing -----------------------------------------------------------
 
+    def _origin_allowed(self, origin: str) -> bool:
+        if origin in APP_ORIGINS:
+            return True
+        parsed = urllib.parse.urlparse(origin)
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        self_port = self.server.server_address[1]
+        return parsed.hostname in LOOPBACK_HOSTS and port == self_port
+
+    def _host_ok(self) -> bool:
+        host = (self.headers.get("Host") or "").strip()
+        if host.startswith("["):  # [::1]:8765
+            host = host[1:].split("]", 1)[0]
+        elif host.count(":") == 1:
+            host = host.split(":", 1)[0]
+        return host in LOOPBACK_HOSTS
+
+    def _caller_ok(self) -> bool:
+        """A browser from another site must not read the index, a CLI may.
+
+        Requests without an Origin are not browsers (curl, ``ragdesk chat
+        --server``, the MCP bridge); requests with one must belong to the app,
+        browser dev mode, or this same loopback port.
+        """
+        origin = self.headers.get("Origin") or ""
+        if origin and not self._origin_allowed(origin):
+            return False
+        return self._host_ok()
+
+    def _cors_headers(self) -> dict[str, str]:
+        origin = self.headers.get("Origin") or ""
+        if not origin or not self._origin_allowed(origin):
+            return {}
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Vary": "Origin",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        }
+
     def _send(self, status: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        for key, value in CORS_HEADERS.items():
+        for key, value in self._cors_headers().items():
             self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
@@ -226,9 +277,15 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or b"{}")
 
     def do_OPTIONS(self) -> None:
+        if not self._caller_ok():
+            self._send(403, {"error": "forbidden"})
+            return
         self._send(200, {})
 
     def do_GET(self) -> None:
+        if not self._caller_ok():
+            self._send(403, {"error": "forbidden"})
+            return
         if self.path == "/api/status":
             with Store(self.state.db) as store:
                 stats = store.stats()
@@ -455,7 +512,7 @@ class Handler(BaseHTTPRequestHandler):
         request_path = urllib.parse.urlparse(self.path).path
         relative = "index.html" if request_path in ("", "/") else request_path.lstrip("/")
         candidate = (ui_dir / relative).resolve()
-        if not str(candidate).startswith(str(ui_dir.resolve())) or not candidate.is_file():
+        if not candidate.is_relative_to(ui_dir.resolve()) or not candidate.is_file():
             # SPA fallback: unknown non-asset paths get the app shell
             if "." in Path(relative).name:
                 return False
@@ -467,13 +524,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        for key, value in CORS_HEADERS.items():
+        for key, value in self._cors_headers().items():
             self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
         return True
 
     def do_POST(self) -> None:
+        if not self._caller_ok():
+            self._send(403, {"error": "forbidden"})
+            return
         self.state.touch()
         try:
             body = self._read_json()
@@ -677,7 +737,13 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 self._send(400, {"error": "embed_threads must be a number (0 = all cores)"})
                 return
-            updates["embed_threads"] = threads
+            updates["embed_threads"] = max(0, min(threads, 64))
+            # The pool size is fixed when a session is built: drop the models so
+            # the next question or index run picks the new value up.
+            for model in (self.state.embedder, self.state.reranker):
+                unload = getattr(model, "unload", None)
+                if callable(unload):
+                    unload()
         if "vector_backend" in body:
             backend = str(body["vector_backend"])
             if backend not in ("", "auto", "python", "numpy", "usearch"):
@@ -686,13 +752,16 @@ class Handler(BaseHTTPRequestHandler):
                     {"error": "vector_backend must be '', 'auto', 'python', 'numpy' or 'usearch'"},
                 )
                 return
+            if backend == "usearch" and not vectors.available("usearch"):
+                self._send(
+                    400,
+                    {
+                        "error": "usearch is not installed in this build "
+                        "(pip install 'ragdesk[vec]' or use numpy)"
+                    },
+                )
+                return
             updates["vector_backend"] = backend
-            # the pool size is fixed when a session is built: drop the models so
-            # the next question or index run picks the new value up
-            for model in (self.state.embedder, self.state.reranker):
-                unload = getattr(model, "unload", None)
-                if callable(unload):
-                    unload()
         if "answer_length" in body:
             length = str(body["answer_length"])
             if length not in ("short", "medium", "long"):
@@ -1664,7 +1733,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.send_header("Connection", "close")
-        for key, value in CORS_HEADERS.items():
+        for key, value in self._cors_headers().items():
             self.send_header(key, value)
         self.end_headers()
         self.close_connection = True

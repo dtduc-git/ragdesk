@@ -64,6 +64,81 @@ def request(url: str, payload: dict | None = None) -> tuple[int, dict]:
         return response.status, json.loads(response.read())
 
 
+def raw_request(
+    base_url: str,
+    path: str,
+    *,
+    method: str = "GET",
+    origin: str = "",
+    host: str = "",
+    payload: dict | None = None,
+) -> tuple[int, dict[str, str]]:
+    """Send a request with explicit Origin/Host headers (urllib cannot set Host)."""
+    parsed = urllib.parse.urlparse(base_url)
+    body = json.dumps(payload).encode() if payload is not None else None
+    conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+    conn.putrequest(method, path, skip_host=bool(host))
+    if host:
+        conn.putheader("Host", host)
+    if origin:
+        conn.putheader("Origin", origin)
+    if body is not None:
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(len(body)))
+    conn.endheaders(body)
+    response = conn.getresponse()
+    response.read()
+    headers = {key.lower(): value for key, value in response.getheaders()}
+    conn.close()
+    return response.status, headers
+
+
+def test_another_website_cannot_read_the_index(base_url: str):
+    """A wildcard ACAO would hand every open tab the documents and chats."""
+    from ragdesk import settings
+
+    status, headers = raw_request(base_url, "/api/status", origin="https://evil.example")
+    assert status == 403
+    assert "access-control-allow-origin" not in headers
+
+    status, _headers = raw_request(
+        base_url,
+        "/api/settings",
+        method="POST",
+        origin="https://evil.example",
+        payload={"watch_seconds": 0},
+    )
+    assert status == 403
+    assert settings.load()["watch_seconds"] == 60  # untouched
+
+
+def test_app_and_same_origin_browsers_are_allowed(base_url: str):
+    status, headers = raw_request(base_url, "/api/status", origin="tauri://localhost")
+    assert status == 200
+    assert headers["access-control-allow-origin"] == "tauri://localhost"
+    assert headers["vary"] == "Origin"
+
+    # Browser dev mode is served from this same loopback port.
+    port = urllib.parse.urlparse(base_url).port
+    status, headers = raw_request(
+        base_url,
+        "/api/settings",
+        method="POST",
+        origin=f"http://127.0.0.1:{port}",
+        payload={"watch_seconds": 120},
+    )
+    assert status == 200
+    assert headers["access-control-allow-origin"] == f"http://127.0.0.1:{port}"
+
+
+def test_non_loopback_host_header_is_rejected(base_url: str):
+    """DNS rebinding: a name that resolves to 127.0.0.1 must not be trusted."""
+    status, _headers = raw_request(base_url, "/api/status", host="evil.example")
+    assert status == 403
+    status, _headers = raw_request(base_url, "/api/status")
+    assert status == 200  # the normal loopback Host passes
+
+
 def test_system_runtime_reports_bundled_when_inside_the_app(monkeypatch, tmp_path: Path):
     """The wizard tells users whether the engine is inside the app or a system install."""
     from ragdesk import serve
@@ -226,6 +301,52 @@ def test_settings_accepts_vector_backend(base_url: str):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/settings", {"vector_backend": "hnsw"})
     assert excinfo.value.code == 400
+
+
+def test_usearch_setting_is_rejected_when_the_extra_is_missing(base_url: str):
+    from ragdesk import vectors
+
+    if vectors.available("usearch"):
+        pytest.skip("usearch is installed in this environment")
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        request(f"{base_url}/api/settings", {"vector_backend": "usearch"})
+    assert excinfo.value.code == 400
+    assert "not installed" in json.loads(excinfo.value.read())["error"]
+
+
+def test_thread_clamp_and_unload_stay_on_the_right_setting(tmp_path: Path, monkeypatch):
+    """Regression: the clamp and the model unload were pasted into the wrong branch."""
+    from ragdesk import serve, settings
+
+    monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config"))
+
+    class Model:
+        def __init__(self) -> None:
+            self.unloads = 0
+
+        def unload(self) -> None:
+            self.unloads += 1
+
+    state = serve.AppState(db=str(tmp_path / "index.db"), embedder=Model(), rerank="none")
+    state.reranker = Model()
+
+    class Fake(serve.Handler):
+        def __init__(self) -> None:
+            self.state = state
+            self.sent: list[tuple[int, dict]] = []
+
+        def _send(self, status: int, payload: dict) -> None:
+            self.sent.append((status, payload))
+
+    handler = Fake()
+    handler._handle_settings({"embed_threads": 999})
+    assert handler.sent[-1][0] == 200
+    assert settings.load()["embed_threads"] == 64  # clamped, not passed raw to ONNX
+    assert state.embedder.unloads == 1 and state.reranker.unloads == 1
+
+    handler._handle_settings({"vector_backend": "numpy"})
+    assert settings.load()["vector_backend"] == "numpy"
+    assert state.embedder.unloads == 1, "an unrelated setting must not drop the models"
 
 
 def test_health_endpoint_reports_the_index_state(base_url: str):
