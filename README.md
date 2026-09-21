@@ -31,6 +31,17 @@ numbers.</p>
 
 ---
 
+My wife watched me build an enterprise RAG system at work and asked for the
+same thing for her own documents. The same thing means a server, an ingest
+pipeline, a vector database and someone to keep them running — the right shape
+for a company, the wrong one for a single person with a folder of PDFs. She is
+not technical, so whatever she gets has to feel like a folder picker and a
+question box, not a deployment.
+
+So I built her the small version instead: a desktop app over one SQLite file,
+light by default, answering in plain language with citations from her own
+files.
+
 ragdesk is an open-source, vendor-neutral retrieval desk for people who keep
 their knowledge in files: engineers with runbooks and repositories, analysts
 with spreadsheets and PDFs, anyone with a documents folder that has outgrown
