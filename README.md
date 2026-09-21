@@ -57,8 +57,10 @@ table is in [Eval](#eval); the tuning levers that lost are documented next to
 the ones that won.
 
 > **Status: pre-alpha (0.1.0).** Retrieval core, eval harness, email/web/repo
-> connectors, CLI + TUI + MCP server and the Tauri desktop app are in. Not on
-> PyPI yet — run from source.
+> connectors, CLI + TUI + MCP server and the Tauri desktop app are in. On PyPI
+> as `ragdesk`; a DMG is attached to each
+> [release](https://github.com/dtduc-git/ragdesk/releases) (unsigned — build
+> from source if Gatekeeper complains).
 
 ## Why another personal RAG?
 
@@ -123,10 +125,11 @@ Ollama, MLX in-process, or an OpenAI-compatible endpoint you point at.
 ## Quickstart
 
 ```bash
-# 1. install ([onnx] for CPU embeddings; [mlx] on Apple Silicon to run the
-#    answer model in-process; [vision] for image OCR; [tui] for the full-screen
-#    terminal app — all optional)
-uv tool install 'ragdesk[onnx,mlx,vision,tui] @ git+https://github.com/dtduc-git/ragdesk'
+# 1. install from PyPI ([onnx] for CPU embeddings; [mlx] on Apple Silicon to run
+#    the answer model in-process; [vision] for image OCR; [tui] for the
+#    full-screen terminal app — all optional). Plain `pip install ragdesk`
+#    gives the core: indexing + search + eval.
+uv tool install 'ragdesk[onnx,mlx,vision,tui]'
 
 # 2. index your stuff (incremental, read-only)
 ragdesk index ~/notes ~/repos/myrepo
