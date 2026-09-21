@@ -48,3 +48,38 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  desktop:
+    # The DMG is attached to the GitHub Release for people who want the app
+    # without a toolchain. It is NOT notarized (that needs a paid Apple
+    # Developer account), so Gatekeeper will warn on first open — the release
+    # notes say so, and building from source stays the supported path.
+    needs: test
+    runs-on: macos-14
+    permissions:
+      contents: write
+    env:
+      # Ad-hoc signing in CI: no developer certificate lives in the repo.
+      APPLE_SIGNING_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: npm ci
+        working-directory: desktop
+      - run: npm run tauri build
+        working-directory: desktop
+      - name: Attach the DMG to the release
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" --title "$tag" --generate-notes
+          gh release upload "$tag" \
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
