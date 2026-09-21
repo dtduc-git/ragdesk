@@ -57,9 +57,26 @@ def fold_name_tokens(path: str) -> set[str]:
     return tokens | {stem}
 
 
-def scope_prefix(path: str) -> str:
+def repos_groups(repos_dir: Path) -> dict[str, tuple[str, str, bool]]:
+    """One group per cloned repo, scoped to ``<dir>/<repo>`` (see public_corpus.py)."""
+    anchor = repos_dir.name
+    groups: dict[str, tuple[str, str, bool]] = {}
+    for sub in sorted(path for path in repos_dir.iterdir() if path.is_dir()):
+        groups[sub.name] = (
+            f"d.path LIKE '%/{anchor}/{sub.name}/%'",
+            f"{anchor}/{sub.name}",
+            True,
+        )
+    return groups
+
+
+def scope_prefix(path: str, anchor: str = "") -> str:
     """Keep repo-mixed queries honest: scope them to the repo the answer lives in."""
     parts = path.split("/")
+    if anchor and anchor in parts:
+        index = parts.index(anchor)
+        if index + 1 < len(parts):
+            return f"folder:{anchor}/{parts[index + 1]} "
     if "dtduc-git" in parts:
         index = parts.index("dtduc-git")
         if index + 1 < len(parts):
@@ -101,6 +118,12 @@ def main() -> int:
     parser.add_argument("--out", default="fixtures/golden_corpus.jsonl")
     parser.add_argument("--per-group", type=int, default=10)
     parser.add_argument("--only", default="", help="comma separated group names")
+    parser.add_argument(
+        "--repos-dir",
+        type=Path,
+        default=None,
+        help="treat each subdirectory as one group (public corpus; see public_corpus.py)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="print without writing")
     args = parser.parse_args()
 
@@ -110,10 +133,12 @@ def main() -> int:
         print(f"no local model available: {exc}", file=sys.stderr)
         return 2
 
-    wanted = {name for name in args.only.split(",") if name.strip()} or set(GROUPS)
+    groups = repos_groups(args.repos_dir) if args.repos_dir else GROUPS
+    anchor = args.repos_dir.name if args.repos_dir else ""
+    wanted = {name for name in args.only.split(",") if name.strip()} or set(groups)
     out_rows: list[dict] = []
     with Store(args.db) as store:
-        for group, (where, _label, _scope) in GROUPS.items():
+        for group, (where, _label, _scope) in groups.items():
             if group not in wanted:
                 continue
             for sample in sample_chunks(store, where, args.per_group):
@@ -143,7 +168,7 @@ def main() -> int:
 
     rows = [
         {
-            "query": scope_prefix(row["relevant"][0]) + row["query"],
+            "query": scope_prefix(row["relevant"][0], anchor) + row["query"],
             "relevant": row["relevant"],
             "category": row["category"],
         }
