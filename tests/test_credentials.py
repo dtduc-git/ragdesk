@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from ragdesk import credentials
 
 
@@ -39,3 +41,17 @@ def test_config_dir_env_override(tmp_path: Path, monkeypatch):
     credentials.set_provider("confluence", {"email": "a@b.c"})
     saved = json.loads((tmp_path / "credentials.json").read_text())
     assert saved["confluence"]["email"] == "a@b.c"
+
+
+def test_failed_save_keeps_the_previous_file_and_no_temp_litter(tmp_path, monkeypatch):
+    path = tmp_path / "credentials.json"
+    credentials.set_provider("github", {"token": "first"}, path)
+
+    def broken_replace(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(credentials.os, "replace", broken_replace)
+    with pytest.raises(OSError):
+        credentials.set_provider("github", {"token": "second"}, path)
+    assert credentials.get("github", path)["token"] == "first"
+    assert list(tmp_path.glob("*.tmp")) == []

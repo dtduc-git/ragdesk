@@ -418,6 +418,11 @@ def main(argv: list[str] | None = None) -> int:
         from ragdesk import embed as embed_module
 
         embed_module.set_thread_override(max(0, args.embed_threads))
+    if args.vector_backend:
+        from ragdesk import vectors as vectors_module
+
+        # serve/mcp/tui open their own Store per request: the flag must reach them.
+        vectors_module.set_backend_override(args.vector_backend)
     if args.command == "tui":
         # The full-screen app draws its own status; keep startup errors terse.
         try:

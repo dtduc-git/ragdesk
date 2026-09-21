@@ -97,8 +97,11 @@ Notes that keep the table honest:
   on the same machine, and it needs a native extension plus a shadow `vec0`
   table to maintain. It stays in the benchmark so the claim has a number.
 - Indexes are cached per database path and invalidated through a long-lived
-  guard connection watching `PRAGMA data_version`, so any writer (watcher
-  thread, CLI, a second app instance) is picked up without re-opening the app.
+  guard connection watching the `chunks_revision` counter bumped by every chunk
+  write, so the watcher thread, a CLI run or a second app instance is picked up
+  without rebuilding the matrix on unrelated commits (chat messages, answer
+  cache). An unknown or uninstalled backend setting falls back to auto with a
+  warning instead of breaking retrieval.
   A scoped query (`folder:`/`source:`) falls back to the exact Python scan over
   the matching subset — HNSW cannot filter, and a subset scan is proportional
   to the scope, not the corpus.

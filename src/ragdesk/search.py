@@ -285,7 +285,9 @@ def retrieve(
         store,
         embedder,
         query,
-        top_k=top_k,
+        # A pool, not just top_k: diversify must see the candidates it caps, or
+        # it silently backfills the same chunks it was meant to spread out.
+        top_k=max(top_k, pool),
         query_vec=query_vec,
         hyde_vec=hyde_vec,
         filters=filters,

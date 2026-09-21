@@ -125,6 +125,12 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA busy_timeout = 5000")
+        try:
+            # WAL: readers (search) never block on the writer (watcher, another
+            # process). A locked file from an older instance just keeps its mode.
+            self.conn.execute("PRAGMA journal_mode = WAL")
+        except sqlite3.OperationalError:
+            pass
         self.conn.executescript(SCHEMA)
         self._migrate()
 
@@ -265,6 +271,13 @@ class Store:
         ).fetchone()
         return row["content_hash"] if row else None
 
+    def _bump_chunks_revision(self) -> None:
+        """Signal cached dense indexes that the vectors changed (see vectors.py)."""
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('chunks_revision', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)"
+        )
+
     def _delete_doc(self, doc_id: int) -> None:
         rows = self.conn.execute(
             "SELECT id, text FROM chunks WHERE doc_id = ?", (doc_id,)
@@ -276,6 +289,7 @@ class Store:
             )
         self.conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
         self.conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+        self._bump_chunks_revision()
 
     def upsert_document(
         self,
@@ -336,6 +350,7 @@ class Store:
                     "INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)",
                     (chunk.lastrowid, fold_text(text)),
                 )
+            self._bump_chunks_revision()
 
     def documents(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -1051,7 +1066,11 @@ class Store:
         if limit <= 0:
             return []
         scope, params = self._filter_sql(filters)
-        prefer = self.vector_backend or str(app_settings.load().get("vector_backend") or "")
+        prefer = (
+            self.vector_backend
+            or vectors.backend_override()
+            or str(app_settings.load().get("vector_backend") or "")
+        )
         backend = vectors.cached_backend(self.path, self.conn, prefer=prefer)
         if backend.name == "usearch" and scope:
             # HNSW cannot filter; a scoped query scans only the matching chunks,

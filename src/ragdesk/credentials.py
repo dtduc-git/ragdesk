@@ -29,11 +29,27 @@ def load(path: Path | None = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def write_private(target: Path, text: str) -> None:
+    """Write a file that must never be world-readable, atomically.
+
+    ``write_text`` + ``chmod`` leaves a window at the umask mode and truncates
+    on a crash; the temp file is created 0600 and renamed into place.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temp = target.with_name(target.name + ".tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        os.replace(temp, target)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+
+
 def save(data: dict, path: Path | None = None) -> None:
     target = path or credentials_file()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(data, indent=2))
-    target.chmod(0o600)
+    write_private(target, json.dumps(data, indent=2))
 
 
 def get(provider: str, path: Path | None = None) -> dict:

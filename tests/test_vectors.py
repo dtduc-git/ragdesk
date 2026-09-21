@@ -19,9 +19,12 @@ DOCS = {
 
 
 @pytest.fixture(autouse=True)
-def fresh_cache():
+def fresh_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config"))
+    vectors.set_backend_override(None)
     vectors.clear_cache()
     yield
+    vectors.set_backend_override(None)
     vectors.clear_cache()
 
 
@@ -92,12 +95,80 @@ def test_policy_prefers_explicit_then_numpy(tmp_path):
     store, _ = make_store(tmp_path)
     assert vectors.pick_backend(store.conn, "python") == "python"
     assert vectors.pick_backend(store.conn, "numpy") == "numpy"
-    assert vectors.pick_backend(store.conn, "usearch") == "usearch"
     default = "numpy" if vectors._numpy() is not None else "python"
     assert vectors.pick_backend(store.conn) == default
     assert vectors.pick_backend(store.conn, "auto") == default
-    with pytest.raises(ValueError):
-        vectors.pick_backend(store.conn, "bogus")
+    expected_usearch = "usearch" if vectors._usearch() is not None else default
+    assert vectors.pick_backend(store.conn, "usearch") == expected_usearch
+
+
+def test_policy_falls_back_on_a_hand_edited_setting(tmp_path, capsys):
+    """settings.json is user-editable: a bad value must not brick retrieval."""
+    store, _ = make_store(tmp_path)
+    default = "numpy" if vectors._numpy() is not None else "python"
+    assert vectors.pick_backend(store.conn, "hnsw") == default
+    assert "unknown vector backend" in capsys.readouterr().err
+
+
+def test_numpy_handles_more_chunks_than_the_limit(tmp_path):
+    """limit < chunk count takes the argpartition branch, not the arange one."""
+    store = Store(tmp_path / "index.db", vector_backend="python")
+    embedder = HashingEmbedder(dim=64)
+    for index in range(12):
+        index_document(
+            store,
+            embedder,
+            source="local",
+            path=f"notes/{index}.md",
+            content=f"topic {index} " + "alpha beta gamma " * index,
+        )
+    numpy_store = Store(tmp_path / "index.db", vector_backend="numpy")
+    for query in ["alpha", "topic 7", "gamma delta"]:
+        vec = embedder.embed_query(query)
+        assert ranked_paths(numpy_store, vec, 3) == ranked_paths(store, vec, 3)
+
+
+def test_matrix_build_is_a_consistent_snapshot(tmp_path):
+    """A watcher write between COUNT and the row stream used to overflow the matrix."""
+    store, embedder = make_store(tmp_path)
+    vec = embedder.embed_query("zebra")
+
+    class InsertingConn:
+        def __init__(self, conn, db):
+            self._conn = conn
+            self._db = db
+
+        def execute(self, sql, *params):
+            cursor = self._conn.execute(sql, *params)
+            if sql.lstrip().upper().startswith("SELECT COUNT(*) FROM CHUNKS"):
+                with Store(self._db) as writer:
+                    index_document(
+                        writer,
+                        embedder,
+                        source="local",
+                        path="late.md",
+                        content="zebra stripes",
+                    )
+            return cursor
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    matrix = vectors.NumpyMatrix(InsertingConn(store.conn, store.path))
+    assert matrix.ids.size == 4  # the snapshot, not a partially filled buffer
+    # The write bumped chunks_revision, so the next search rebuilds and finds it.
+    assert ranked_paths(store, vec, 3)[0] == "late.md"
+
+
+def test_backend_override_reaches_stores_opened_without_a_preference(tmp_path, monkeypatch):
+    """serve/mcp/tui open their own Store: --vector-backend must still apply."""
+    store, embedder = make_store(tmp_path)
+    monkeypatch.setattr(
+        "ragdesk.store.app_settings.load", lambda path=None: {"vector_backend": "numpy"}
+    )
+    vectors.set_backend_override("python")
+    store.dense_search(embedder.embed_query("alpha"), 2)
+    assert vectors._cache[str(store.path)][1].name == "python"
 
 
 def test_dense_search_keeps_the_payload_contract(tmp_path):

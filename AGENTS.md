@@ -1,7 +1,8 @@
 # ragdesk — agent notes
 
-Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
-(retrieval + eval); models are reached through a local Ollama server.
+Personal, local-first RAG over your own sources. Core is **plain Python** with
+two runtime dependencies (numpy, pypdf); models are reached through a local
+Ollama server.
 
 ## Layout
 
@@ -21,7 +22,7 @@ Personal, local-first RAG over your own sources. Core is **stdlib-only Python**
   front-matter; one bad file becomes a skip with the reason, never a dead
   watcher), `office` (PDF/DOCX/PPTX/XLSX text extraction: docx/pptx/xlsx via
   zip+XML with zero deps — sheets keep `r<row>` refs, shared + inline strings;
-  PDFs via pypdf, the only runtime dependency; XML with a DTD is refused;
+  PDFs via pypdf (one of the two runtime dependencies); XML with a DTD is refused;
   scanned PDFs return empty and are skipped, no OCR), `vision` (image OCR through Apple's
   on-device Vision framework via the `vision` extra: `en-US` + `vi-VT`, images
   upscaled 2× before recognition, header carries file name + Spotlight capture

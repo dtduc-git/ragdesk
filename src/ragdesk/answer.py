@@ -7,6 +7,7 @@ eval harness instead of trusting the default.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -76,11 +77,12 @@ DIAGRAM_WORDS = (
     "biểu đồ",
     "vẽ",
 )
+_DIAGRAM_RE = re.compile(r"\b(?:" + "|".join(re.escape(word) for word in DIAGRAM_WORDS) + r")\b")
 
 
 def wants_diagram(question: str) -> bool:
-    lowered = question.lower()
-    return any(word in lowered for word in DIAGRAM_WORDS)
+    # Word boundaries: "graph" must not match "paragraph", "draw" not "drawback".
+    return bool(_DIAGRAM_RE.search(question.lower()))
 
 
 def _answer_length() -> str:

@@ -339,6 +339,10 @@ def test_wants_diagram_detection():
     assert wants_diagram("vẽ sơ đồ kiến trúc ragdesk")
     assert wants_diagram("show me a flowchart of the auth flow")
     assert not wants_diagram("what does the grounding gate do?")
+    # Word boundaries: these substrings used to hijack the answer into Mermaid mode.
+    assert not wants_diagram("summarize this paragraph about rrf")
+    assert not wants_diagram("what is the drawback of a bigger corpus?")
+    assert not wants_diagram("we are charting the roadmap")
 
 
 def test_prompt_includes_diagram_rules_only_when_asked(tmp_path: Path):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ragdesk.credentials import credentials_file
+from ragdesk.credentials import credentials_file, write_private
 
 DEFAULTS: dict = {
     "auto_index_hours": 1,
@@ -49,6 +49,4 @@ def save(values: dict, path: Path | None = None) -> None:
     target = path or settings_file()
     merged = load(target)
     merged.update(values)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(merged, indent=2))
-    target.chmod(0o600)
+    write_private(target, json.dumps(merged, indent=2))

@@ -64,7 +64,8 @@ work at three levels:
   chunking, lane weights, a graph lane — were dropped and written down.
 - **Everything is inspectable and local.** One SQLite file holds the documents,
   the FTS index, the vectors, the chats and the answer cache. The core is
-  stdlib-only Python; the HTTP API binds loopback; sources stay read-only.
+  stdlib-only Python apart from two runtime dependencies (numpy for the dense
+  lane, pypdf for PDFs); the HTTP API binds loopback; sources stay read-only.
 
 ## Screenshots
 
@@ -412,7 +413,7 @@ uv run ragdesk --embedder onnx --db /tmp/eval-mt.db eval --golden fixtures/golde
 ## Development
 
 ```bash
-uv sync --all-groups
+uv sync --all-groups --extra onnx   # onnx: the retrieval tests use the ONNX reranker
 uv run pytest
 uv run ruff check .
 uv run --extra tui pytest     # includes the full-screen TUI tests

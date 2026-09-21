@@ -8,9 +8,11 @@ in RAM); usearch adds an approximate HNSW index as an explicit opt-in
 payload-fetch and one ranking pipeline.
 
 Indexes are cached per database path at module level because the desktop
-server opens a fresh ``Store`` per request. A long-lived guard connection
-watches ``PRAGMA data_version``, so any commit from any connection (watcher
-thread, CLI, a second app instance) invalidates the cached index.
+server opens a fresh ``Store`` per request. The guard connection watches the
+``chunks_revision`` meta counter that every chunk write bumps, so an index is
+rebuilt only when the vectors actually changed — not on every chat message
+commit (``PRAGMA data_version`` would invalidate on any write, including the
+answer cache, making every question pay a full matrix rebuild).
 """
 
 from __future__ import annotations
@@ -18,14 +20,37 @@ from __future__ import annotations
 import array
 import math
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 from typing import Any
 
 BACKENDS = ("python", "numpy", "usearch")
+# Keep only the most recently built indexes: a couple of databases (say the app
+# plus a CLI run) must not pin several multi-GB matrices for the process life.
+MAX_CACHE = 4
 _cache: dict[str, tuple[tuple[Any, ...], Any]] = {}
 _guards: dict[str, sqlite3.Connection] = {}
 _lock = threading.Lock()
+_override: str | None = None
+
+
+def set_backend_override(name: str | None) -> None:
+    """Process-wide preference for stores opened without an explicit one.
+
+    ``serve``/``mcp``/``tui`` create their own ``Store`` per request, so the
+    CLI flag reaches them here — same pattern as ``embed.set_thread_override``.
+    """
+    global _override
+    _override = name or None
+
+
+def backend_override() -> str:
+    return _override or ""
+
+
+def _warn(message: str) -> None:
+    print(f"ragdesk: {message}", file=sys.stderr)
 
 
 def _numpy():
@@ -44,9 +69,58 @@ def _usearch():
     return Index
 
 
+def available(name: str) -> bool:
+    """Whether this install can run the backend (extras differ per install)."""
+    if name == "usearch":
+        return _usearch() is not None
+    if name == "numpy":
+        return _numpy() is not None
+    return name == "python"
+
+
 def _dim(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT length(embedding) FROM chunks LIMIT 1").fetchone()
     return (int(row[0]) // 4) if row and row[0] else 0
+
+
+def _revision(conn: sqlite3.Connection) -> str:
+    """Chunk-write counter: bumped inside every transaction that changes chunks."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'chunks_revision'").fetchone()
+    return str(row[0]) if row else "0"
+
+
+def _load_matrix(conn: sqlite3.Connection) -> tuple[Any, Any]:
+    """Every ``(id, embedding)`` under one read snapshot.
+
+    The count and the row stream used to be separate statements: a watcher pass
+    inserting between them overflowed the preallocated matrix (IndexError). The
+    deferred transaction pins one snapshot, so a concurrent writer waits (WAL:
+    proceeds) and the build stays consistent.
+    """
+    np = _numpy()
+    if np is None:
+        raise RuntimeError("numpy is not installed")
+    owns_txn = not conn.in_transaction
+    if owns_txn:
+        conn.execute("BEGIN")
+    try:
+        total = int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+        ids = np.empty(total, dtype=np.int64)
+        matrix = np.empty((total, _dim(conn)), dtype=np.float32)
+        # Stream rows: fetchall() would hold every blob in Python memory next
+        # to the matrix, doubling the peak at large corpora.
+        index = 0
+        for row in conn.execute("SELECT id, embedding FROM chunks ORDER BY id"):
+            ids[index] = row[0]
+            matrix[index] = np.frombuffer(row[1], dtype=np.float32)
+            index += 1
+    except BaseException:
+        if owns_txn:
+            conn.execute("ROLLBACK")
+        raise
+    if owns_txn:
+        conn.execute("COMMIT")
+    return ids[:index], matrix[:index]
 
 
 def _scope_ids(conn: sqlite3.Connection, scope_sql: str, scope_params: Any) -> list[int]:
@@ -100,19 +174,8 @@ class NumpyMatrix:
         if np is None:
             raise RuntimeError("numpy is not installed")
         self.np = np
-        total = int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
-        self.ids = np.empty(total, dtype=np.int64)
-        self.matrix = np.empty((total, _dim(conn)), dtype=np.float32)
-        # Stream rows: fetchall() would hold every blob in Python memory next
-        # to the matrix, doubling the peak at large corpora.
-        index = 0
-        for row in conn.execute("SELECT id, embedding FROM chunks ORDER BY id"):
-            self.ids[index] = row[0]
-            self.matrix[index] = np.frombuffer(row[1], dtype=np.float32)
-            index += 1
-        self.ids = self.ids[:index]
-        self.matrix = self.matrix[:index]
-        if index:
+        self.ids, self.matrix = _load_matrix(conn)
+        if self.ids.size:
             norms = np.linalg.norm(self.matrix, axis=1)
             norms[norms == 0] = 1.0
             self.matrix /= norms[:, None]
@@ -170,14 +233,11 @@ class UsearchIndex:
         if np is None:
             raise RuntimeError("numpy is required for the usearch backend")
         self.np = np
-        rows = conn.execute("SELECT id, embedding FROM chunks ORDER BY id").fetchall()
-        self.dim = len(rows[0][1]) // 4 if rows else 0
-        self.ids = np.array([int(row[0]) for row in rows], dtype=np.uint64)
+        ids, matrix = _load_matrix(conn)
+        self.dim = int(matrix.shape[1]) if matrix.size else 0
+        self.ids = ids.astype(np.uint64)
         self.index = None
-        if rows:
-            vectors = np.empty((len(rows), self.dim), dtype=np.float32)
-            for index, row in enumerate(rows):
-                vectors[index] = np.frombuffer(row[1], dtype=np.float32)
+        if matrix.size:
             self.index = Index(
                 ndim=self.dim,
                 metric="cos",
@@ -186,7 +246,7 @@ class UsearchIndex:
                 expansion_add=expansion_add,
                 expansion_search=expansion_search,
             )
-            self.index.add(self.ids, vectors)
+            self.index.add(self.ids, matrix)
 
     def search(
         self,
@@ -209,18 +269,22 @@ class UsearchIndex:
 def pick_backend(conn: sqlite3.Connection, prefer: str = "") -> str:
     """Backend name for this corpus: explicit preference, else numpy when available.
 
-    The benchmark (docs/vector-scale.md) showed the numpy matrix is exact,
-    faster than sqlite-vec and smaller than usearch at every measured size, so
-    it is the automatic choice; usearch stays opt-in for special cases and
-    ``python`` is the dependency-free fallback.
+    The preference comes from user-editable settings, so an unknown or
+    unavailable value falls back to auto with a warning instead of bricking
+    retrieval. The benchmark (docs/vector-scale.md) showed the numpy matrix is
+    exact, faster than sqlite-vec and smaller than usearch at every measured
+    size, so it is the automatic choice; usearch stays opt-in for special cases
+    and ``python`` is the dependency-free fallback.
     """
-    if prefer in BACKENDS:
-        return prefer
-    if prefer not in ("", "auto"):
-        raise ValueError(
-            f"unknown vector backend {prefer!r} (expected one of {BACKENDS} or 'auto')"
-        )
-    return "numpy" if _numpy() is not None else "python"
+    if prefer in ("", "auto"):
+        return "numpy" if available("numpy") else "python"
+    if prefer not in BACKENDS:
+        _warn(f"unknown vector backend {prefer!r}; using auto")
+        return pick_backend(conn)
+    if not available(prefer):
+        _warn(f"vector backend {prefer!r} is not installed; using auto")
+        return pick_backend(conn)
+    return prefer
 
 
 def build_backend(conn: sqlite3.Connection, name: str, *, dtype: str = "f16"):
@@ -249,9 +313,12 @@ def cached_backend(
         with _lock:
             guard = _guards.get(key)
             if guard is None:
-                guard = sqlite3.connect(key, check_same_thread=False)
+                # timeout= is the busy timeout: without it a search during a
+                # watcher write raises "database is locked" instead of waiting.
+                guard = sqlite3.connect(key, check_same_thread=False, timeout=5)
                 _guards[key] = guard
-    token = (guard.execute("PRAGMA data_version").fetchone()[0], _dim(conn), prefer)
+    backend_name = pick_backend(conn, prefer)
+    token = (_revision(guard), _dim(conn), backend_name)
     entry = _cache.get(key)
     if entry is not None and entry[0] == token:
         return entry[1]
@@ -259,9 +326,20 @@ def cached_backend(
         entry = _cache.get(key)
         if entry is not None and entry[0] == token:
             return entry[1]
-        backend = build_backend(conn, pick_backend(conn, prefer))
+        backend = build_backend(conn, backend_name)
         _cache[key] = (token, backend)
+        _evict_locked()
         return backend
+
+
+def _evict_locked() -> None:
+    """Keep the cache bounded (insertion order): stale databases must not pin GBs."""
+    while len(_cache) > MAX_CACHE:
+        oldest = next(iter(_cache))
+        _cache.pop(oldest, None)
+        old_guard = _guards.pop(oldest, None)
+        if old_guard is not None:
+            old_guard.close()
 
 
 def clear_cache() -> None:

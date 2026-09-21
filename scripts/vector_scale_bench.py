@@ -34,6 +34,10 @@ def _numpy():
     return numpy
 
 
+# One pool drawn once: query i is the same vector no matter how many the caller asks for.
+QUERY_POOL = 64
+
+
 class TextPool:
     """Real vectors and texts from a source index — the synthetic corpus base."""
 
@@ -55,12 +59,17 @@ class TextPool:
 
     def queries(self, count: int, seed: int):
         np = _numpy()
+        # Draw the whole pool before slicing: the RNG state must not depend on
+        # ``count``, or the slow backends (3 queries) would be scored against a
+        # ground truth built from different query vectors.
         rng = np.random.default_rng(seed + 1000)
-        picked = rng.integers(0, len(self.vectors), count)
-        noise = rng.normal(0, 0.08, (count, self.dim)).astype(np.float32)
+        picked = rng.integers(0, len(self.vectors), QUERY_POOL)
+        noise = rng.normal(0, 0.08, (QUERY_POOL, self.dim)).astype(np.float32)
         vecs = self.vectors[picked] + noise
         vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
-        return vecs
+        if count > QUERY_POOL:
+            raise SystemExit(f"--queries must be <= {QUERY_POOL}")
+        return vecs[:count]
 
 
 def build_synthetic(dest: Path, pool: TextPool, size: int, seed: int) -> None:
@@ -392,7 +401,14 @@ def main() -> int:
         result = spawn(
             db, args.source, size, "numpy", args.queries, args.seed, None, args.usearch_ef
         )
-        ground_truth = result.pop("floors")
+        if result.get("error"):
+            # The ground truth is missing: report the row instead of a KeyError.
+            rows.append(result)
+            print(" ", json.dumps(result), flush=True)
+            if not args.keep:
+                db.unlink(missing_ok=True)
+            continue
+        ground_truth = result.pop("floors", None)
         gt_path.write_text(json.dumps(ground_truth), encoding="utf-8")
         rows.append(result)
         print(" ", json.dumps(result), flush=True)
