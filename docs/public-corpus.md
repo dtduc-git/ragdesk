@@ -45,17 +45,17 @@ reranker changes:
 
 | rerank | recall@5 | nDCG@10 | MRR@10 |
 |---|---|---|---|
-| none | 0.901 | 0.830 | 0.806 |
-| mmarco-mMiniLMv2 (light / balanced default) | **0.960** | 0.891 | 0.867 |
-| gte-multilingual (quality preset) | 0.950 | **0.926** | **0.917** |
+| none | 0.921 | 0.849 | 0.815 |
+| mmarco-mMiniLMv2 (light / balanced default) | **0.960** | 0.895 | 0.869 |
+| gte-multilingual (quality preset) | 0.950 | **0.930** | **0.919** |
 
 What it says:
 
-- The reranker earns its keep on a corpus it has never seen: +0.059 recall@5
+- The reranker earns its keep on a corpus it has never seen: +0.039 recall@5
   for the small multilingual model that ships in the two light presets.
 - gte ranks slightly better (nDCG/MRR) but recovers fewer documents in the top
   five — the same trade the repo golden showed, now on foreign code.
-- 0.901 with no reranker at all means the hybrid lane (BM25 + dense + path,
+- 0.921 with no reranker at all means the hybrid lane (BM25 + dense + path,
   RRF-fused) is doing the heavy lifting, not the reranker.
 
 Per-repository scores are deliberately not published — only the aggregate
@@ -75,9 +75,14 @@ uv run --extra onnx --extra mlx python scripts/make_golden.py \
     --per-group 12 --out fixtures/golden_public.jsonl
 
 # score all three rerank configurations
-uv run --extra onnx python scripts/bench.py \
-    --db /tmp/ragdesk-public/public.db --golden fixtures/golden_public.jsonl \
-    --reranks "none,onnx:cross-encoder/mmarco-mMiniLMv2-L12-H384-v1,onnx:onnx-community/gte-multilingual-reranker-base"
+uv run --extra onnx ragdesk --db /tmp/ragdesk-public/public.db eval \
+    --golden fixtures/golden_public.jsonl                              # no reranker
+uv run --extra onnx ragdesk --db /tmp/ragdesk-public/public.db \
+    --rerank onnx:cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 eval \
+    --golden fixtures/golden_public.jsonl                              # light/balanced
+uv run --extra onnx ragdesk --db /tmp/ragdesk-public/public.db \
+    --rerank onnx:onnx-community/gte-multilingual-reranker-base eval \
+    --golden fixtures/golden_public.jsonl                              # quality
 ```
 
 The clones and the scratch index are throwaway: delete `/tmp/ragdesk-public`
