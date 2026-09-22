@@ -56,7 +56,7 @@ day one and gates `recall@5 >= 0.8` in CI, so regressions fail the build. The
 table is in [Eval](#eval); the tuning levers that lost are documented next to
 the ones that won.
 
-> **Status: pre-alpha (0.1.1).** Retrieval core, eval harness, email/web/repo
+> **Status: pre-alpha (0.1.2).** Retrieval core, eval harness, email/web/repo
 > connectors, CLI + TUI + MCP server and the Tauri desktop app are in. On PyPI
 > as `ragdesk`; a DMG is attached to each
 > [release](https://github.com/dtduc-git/ragdesk/releases) (unsigned — build

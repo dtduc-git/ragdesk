@@ -72,6 +72,16 @@ jobs:
           python-version: "3.12"
       - run: npm ci
         working-directory: desktop
+      - name: Stamp the desktop version from the tag
+        # The DMG filename and the bundle's Info.plist come from these two
+        # files: without this they keep whatever version was committed last,
+        # and v0.1.1 shipped a DMG called ragdesk_0.1.0_*.dmg.
+        working-directory: desktop
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          npm version "$version" --no-git-tag-version
+          jq --arg v "$version" '.version = $v' src-tauri/tauri.conf.json > /tmp/tauri.conf.json
+          mv /tmp/tauri.conf.json src-tauri/tauri.conf.json
       - run: npm run tauri build
         working-directory: desktop
       - name: Attach the DMG to the release
