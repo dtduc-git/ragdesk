@@ -314,7 +314,7 @@ this repository's own docs and source.
 | repo (12 queries, `folder:`-scoped) / EmbeddingGemma int8, text chunking | **0.917** | **0.874** | **0.833** |
 | repo (12 queries) / + smart retrieval (rewrite + HyDE + sub-queries, one call) | 0.917 | 0.832 | 0.778 |
 <!-- eval-ci:start -->
-| repo docs+source subset (the CI run) / EmbeddingGemma int8 | 0.917 | 0.792 | 0.725 |
+| repo docs+source subset (the CI run) / EmbeddingGemma int8 | 1.000 | 0.795 | 0.728 |
 <!-- eval-ci:end -->
 | follow-ups (5 queries, `fixtures/golden_multiturn.jsonl`) raw | 1.000 | 0.926 | 0.900 |
 | follow-ups (5 queries) / `--rewrite` (Qwen3.5-4B MLX) | 1.000 | **1.000** | **1.000** |
