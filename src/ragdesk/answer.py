@@ -77,11 +77,13 @@ DIAGRAM_WORDS = (
     "biểu đồ",
     "vẽ",
 )
-_DIAGRAM_RE = re.compile(r"\b(?:" + "|".join(re.escape(word) for word in DIAGRAM_WORDS) + r")\b")
+_DIAGRAM_RE = re.compile(r"\b(?:" + "|".join(re.escape(word) for word in DIAGRAM_WORDS) + r")s?\b")
 
 
 def wants_diagram(question: str) -> bool:
     # Word boundaries: "graph" must not match "paragraph", "draw" not "drawback".
+    # The optional "s" keeps the plural — "draw the sequence diagrams" is the
+    # most common way to ask for one.
     return bool(_DIAGRAM_RE.search(question.lower()))
 
 

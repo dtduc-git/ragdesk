@@ -32,6 +32,7 @@ MAX_CACHE = 4
 _cache: dict[str, tuple[tuple[Any, ...], Any]] = {}
 _guards: dict[str, sqlite3.Connection] = {}
 _lock = threading.Lock()
+_warned: set[str] = set()
 _override: str | None = None
 
 
@@ -50,6 +51,11 @@ def backend_override() -> str:
 
 
 def _warn(message: str) -> None:
+    """Print once per message: the same bad setting hits every lane of every query."""
+    with _lock:
+        if message in _warned:
+            return
+        _warned.add(message)
     print(f"ragdesk: {message}", file=sys.stderr)
 
 
@@ -321,6 +327,10 @@ def cached_backend(
     token = (_revision(guard), _dim(conn), backend_name)
     entry = _cache.get(key)
     if entry is not None and entry[0] == token:
+        # A hit is a use: keep hot databases away from the eviction end.
+        with _lock:
+            if key in _cache:
+                _cache[key] = _cache.pop(key)  # reinsert moves it to the end
         return entry[1]
     with _lock:
         entry = _cache.get(key)

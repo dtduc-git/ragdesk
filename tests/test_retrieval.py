@@ -343,6 +343,10 @@ def test_wants_diagram_detection():
     assert not wants_diagram("summarize this paragraph about rrf")
     assert not wants_diagram("what is the drawback of a bigger corpus?")
     assert not wants_diagram("we are charting the roadmap")
+    # Plurals are the most common phrasing for the feature itself.
+    assert wants_diagram("draw the sequence diagrams")
+    assert wants_diagram("show me the charts")
+    assert wants_diagram("can you make a flowchart")
 
 
 def test_prompt_includes_diagram_rules_only_when_asked(tmp_path: Path):

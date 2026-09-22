@@ -56,7 +56,7 @@ day one and gates `recall@5 >= 0.8` in CI, so regressions fail the build. The
 table is in [Eval](#eval); the tuning levers that lost are documented next to
 the ones that won.
 
-> **Status: pre-alpha (0.1.4).** Retrieval core, eval harness, email/web/repo
+> **Status: pre-alpha (0.1.5).** Retrieval core, eval harness, email/web/repo
 > connectors, CLI + TUI + MCP server and the Tauri desktop app are in. On PyPI
 > as `ragdesk`; a DMG is attached to each
 > [release](https://github.com/dtduc-git/ragdesk/releases) (unsigned — build
@@ -305,7 +305,9 @@ The same UI also runs in a browser for development:
 
 Every number below is reproducible from the repo. `fixtures/` is a tiny
 7-query smoke corpus; `fixtures/golden_repo.jsonl` is a 12-query golden set over
-this repository's own docs and source.
+this repository's own docs and source. Rows without the CI marker are
+historical (measured on the chunker of their day); re-run the harness to
+reproduce them on the current one.
 
 | corpus / preset | recall@5 | nDCG@10 | MRR@10 |
 |---|---|---|---|
@@ -351,7 +353,9 @@ Per-category breakdown (the `[eval]` row is the honest weak spot):
 ```
 
 Measured 2026-09-15 on the repo tree (824-document corpus including a synced
-repo, hence the `folder:` scoping in the golden set).
+repo, hence the `folder:` scoping in the golden set). Chunk-boundary numbers
+predate the 0.1.4 chunker (sentence/word boundaries), so re-run
+`scripts/bench.py` before comparing against them.
 
 Tuning measured with `scripts/bench.py` (fresh index per chunking config, the
 same 12 scoped queries):

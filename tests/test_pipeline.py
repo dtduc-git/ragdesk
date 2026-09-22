@@ -100,6 +100,38 @@ def test_index_rechunks_when_the_chunking_config_changes(tmp_path: Path):
         assert changed.chunks > first.chunks
 
 
+def test_index_rechunks_documents_from_an_older_chunker(tmp_path: Path):
+    """An index built before the chunk stamp existed must upgrade itself."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "note.md").write_text("access tokens expire after 60 minutes. " * 40)
+    embedder = HashingEmbedder()
+    with Store(tmp_path / "index.db") as store:
+        index_paths(store, embedder, [docs], chunk_chars=1000, chunk_overlap=150)
+        store.conn.execute("UPDATE documents SET chunk_config = ''")  # pre-upgrade row
+        store.conn.commit()
+        again = index_paths(store, embedder, [docs], chunk_chars=1000, chunk_overlap=150)
+        assert again.indexed == 1, "an unstamped document must be re-chunked once"
+
+
+def test_partial_index_leaves_other_roots_untouched(tmp_path: Path):
+    """Indexing one vault must not mark the rest of the corpus as re-chunked."""
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    for folder in (first_dir, second_dir):
+        folder.mkdir()
+        (folder / "note.md").write_text("access tokens expire after 60 minutes. " * 40)
+    embedder = HashingEmbedder()
+    with Store(tmp_path / "index.db") as store:
+        index_paths(store, embedder, [first_dir, second_dir], chunk_chars=1000, chunk_overlap=150)
+
+        one = index_paths(store, embedder, [first_dir], chunk_chars=300, chunk_overlap=50)
+        assert one.indexed == 1
+        # The other folder is still on the old chunker: visiting it re-chunks.
+        two = index_paths(store, embedder, [second_dir], chunk_chars=300, chunk_overlap=50)
+        assert two.indexed == 1
+
+
 def test_index_accepts_the_common_code_extensions(tmp_path: Path):
     """A code retrieval tool must index C/C++ and friends, not only its own stack."""
     from ragdesk.index import is_indexable

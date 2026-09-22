@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ragdesk.chunk import DEFAULT_MAX_CHARS, DEFAULT_OVERLAP, chunk_text
+from ragdesk.chunk import DEFAULT_MAX_CHARS, DEFAULT_OVERLAP, chunk_config, chunk_text
 from ragdesk.embed import Embedder
 from ragdesk.office import DOCUMENT_EXTENSIONS
 from ragdesk.store import Store, matches_any
@@ -315,23 +315,24 @@ def index_document(
     chunk_chars: int = 0,
     chunk_overlap: int = 0,
     metadata: dict[str, str] | None = None,
-    force: bool = False,
 ) -> int:
     """Embed + upsert one document. Returns the chunk count, or 0 if unchanged."""
     parsed: dict[str, str] = {}
     if Path(path).suffix.lower() in {".md", ".markdown", ".txt", ""}:
         parsed, content = parse_front_matter(content)
     metadata = {**(metadata or {}), **parsed}
+    max_chars = chunk_chars or DEFAULT_MAX_CHARS
+    overlap = chunk_overlap or DEFAULT_OVERLAP
+    config = chunk_config(max_chars, overlap)
     digest = hashlib.sha256(content.encode()).hexdigest()
-    if not force and store.doc_hash(path) == digest:
+    # A different chunker means the stored chunks are stale even when the text
+    # is identical: re-chunk. The stamp is per document, so a partial run (one
+    # vault, one folder) never marks the rest of the index as up to date.
+    if store.doc_hash(path) == digest and store.doc_chunk_config(path) == config:
         if mtime:
             store.touch_document(path, mtime)
         return 0
-    chunks = chunk_text(
-        content,
-        max_chars=chunk_chars or DEFAULT_MAX_CHARS,
-        overlap=chunk_overlap or DEFAULT_OVERLAP,
-    )
+    chunks = chunk_text(content, max_chars=max_chars, overlap=overlap)
     texts = [chunk.text for chunk in chunks]
     embeddings = _embed_with_cache(store, embedder, texts)
     parents, assignment = group_parents(texts)
@@ -346,6 +347,7 @@ def index_document(
         parents=parents,
         parent_index=assignment,
         line_starts=[chunk.line_start for chunk in chunks],
+        chunk_config=config,
     )
     return len(chunks)
 
@@ -368,10 +370,7 @@ def index_paths(
     stats = IndexStats()
     patterns = never_index_patterns()
     vaults = vault_roots()
-    # Changing chunking must re-chunk existing files: the mtime fast path would
-    # otherwise keep the old chunks forever, and the setting would look broken.
-    config = f"{chunk_chars}/{chunk_overlap}"
-    config_changed = store.get_meta("chunk.config") not in (None, config)
+    config = chunk_config(chunk_chars, chunk_overlap)
     for file in iter_files(paths):
         stats.files_scanned += 1
         if progress is not None:
@@ -385,9 +384,14 @@ def index_paths(
             stats.skip(file, "unreadable")
             continue
         # Fast path: an unchanged mtime means we did not touch the file at all,
-        # so a 60s watcher pass costs a stat per file and nothing else.
+        # so a 60s watcher pass costs a stat per file and nothing else. A stale
+        # chunk stamp (upgrade, changed chunk size) must fall through instead.
         stored = store.doc_mtime(str(file))
-        if not config_changed and stored is not None and abs(stored - info.st_mtime) < 1e-6:
+        if (
+            stored is not None
+            and abs(stored - info.st_mtime) < 1e-6
+            and store.doc_chunk_config(str(file)) == config
+        ):
             stats.unchanged += 1
             continue
         if not is_indexable(file, info.st_size):
@@ -420,7 +424,6 @@ def index_paths(
                 chunk_chars=chunk_chars,
                 chunk_overlap=chunk_overlap,
                 metadata=metadata,
-                force=config_changed,
             )
         except Exception as exc:  # noqa: BLE001 - report and keep indexing
             stats.skip(file, f"error: {type(exc).__name__}: {exc}")
@@ -431,7 +434,6 @@ def index_paths(
         else:
             stats.unchanged += 1
     store.set_local_roots([str(path) for path in paths if path.exists()])
-    store.set_meta("chunk.config", config)
     store.record_index_report(
         {
             "at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),

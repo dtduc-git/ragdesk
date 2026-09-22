@@ -79,6 +79,16 @@ def test_search_tool_returns_one_block_per_section(tmp_path: Path):
     assert text.count("] long.md") == 1
 
 
+def test_clip_cuts_at_a_sentence_boundary():
+    from ragdesk.mcp import _clip
+
+    text = "Câu này đủ dài để vượt qua giới hạn cắt. " * 20
+    clipped = _clip(text, limit=120)
+    assert len(clipped) <= 120
+    assert clipped.rstrip().endswith(".")
+    assert _clip("short", limit=120) == "short"
+
+
 def test_search_tool_requires_query(server: McpServer):
     response = server.handle(
         {
