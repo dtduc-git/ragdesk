@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS documents (
     content_hash TEXT NOT NULL,
     mtime REAL NOT NULL,
     metadata TEXT NOT NULL DEFAULT '{}',
+    chunk_config TEXT NOT NULL DEFAULT '',
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS chunks (
@@ -149,7 +150,10 @@ class Store:
                 "line_start": "INTEGER NOT NULL DEFAULT 1",
             },
             "messages": {"feedback": "INTEGER NOT NULL DEFAULT 0"},
-            "documents": {"metadata": "TEXT NOT NULL DEFAULT '{}'"},
+            "documents": {
+                "metadata": "TEXT NOT NULL DEFAULT '{}'",
+                "chunk_config": "TEXT NOT NULL DEFAULT ''",
+            },
             "answer_cache": {
                 "fingerprint": "TEXT NOT NULL DEFAULT ''",
                 "embedding": "BLOB",
@@ -311,6 +315,7 @@ class Store:
         parents: list[str] | None = None,
         parent_index: list[int] | None = None,
         line_starts: list[int] | None = None,
+        chunk_config: str = "",
     ) -> None:
         if len(texts) != len(embeddings):
             raise ValueError("texts and embeddings must have the same length")
@@ -319,9 +324,9 @@ class Store:
             if row:
                 self._delete_doc(row["id"])
             cursor = self.conn.execute(
-                "INSERT INTO documents (source, path, content_hash, mtime, metadata) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (source, path, content_hash, mtime, json.dumps(metadata or {})),
+                "INSERT INTO documents (source, path, content_hash, mtime, metadata, chunk_config) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (source, path, content_hash, mtime, json.dumps(metadata or {}), chunk_config),
             )
             doc_id = cursor.lastrowid
             for ordinal, text in enumerate(parents or []):
@@ -443,6 +448,13 @@ class Store:
     def doc_mtime(self, path: str) -> float | None:
         row = self.conn.execute("SELECT mtime FROM documents WHERE path = ?", (path,)).fetchone()
         return float(row["mtime"]) if row else None
+
+    def doc_chunk_config(self, path: str) -> str:
+        """Which chunker produced this document's chunks ('' = before tracking)."""
+        row = self.conn.execute(
+            "SELECT chunk_config FROM documents WHERE path = ?", (path,)
+        ).fetchone()
+        return str(row["chunk_config"]) if row else ""
 
     def stats(self) -> dict[str, int]:
         docs = self.conn.execute("SELECT COUNT(*) AS n FROM documents").fetchone()["n"]

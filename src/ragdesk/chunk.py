@@ -20,6 +20,14 @@ SYMBOL_RE = re.compile(
 
 DEFAULT_MAX_CHARS = 1000
 DEFAULT_OVERLAP = 150
+# Bump when the chunker's behaviour changes: every document stamps this, so an
+# upgrade re-chunks existing files exactly once (see index.index_document).
+CHUNKER_VERSION = 2
+
+
+def chunk_config(max_chars: int = DEFAULT_MAX_CHARS, overlap: int = DEFAULT_OVERLAP) -> str:
+    return f"v{CHUNKER_VERSION}:{max_chars}/{overlap}"
+
 
 # A hard split prefers a sentence end, then a word boundary: a chunk that
 # starts mid-word ("phí bả…") reads as broken and forces another search.
@@ -116,7 +124,10 @@ def chunk_text(
         tail = buf[-overlap:]
         space = tail.find(" ")
         if space != -1:
-            tail = tail[space + 1 :]  # never resume inside a word
+            # Resume at a word start — but only when the text has word breaks
+            # at all: minified JSON/base64 has none, and dropping the tail there
+            # would silently kill the overlap.
+            tail = tail[space + 1 :]
         joined = f"{tail}\n\n{piece}" if tail else piece
         if len(joined) <= max_chars:
             buf = joined

@@ -33,11 +33,16 @@ def models_dir() -> Path:
 def _materialize(source: Path, dest: Path) -> None:
     if dest.exists():
         return
+    dest.parent.mkdir(parents=True, exist_ok=True)
     real = source.resolve()
     try:
         os.link(real, dest)  # hardlink: same inode, no extra disk
+        return
     except OSError:  # different filesystem (or no hardlink support): copy
-        shutil.copy2(real, dest)
+        pass
+    temp = dest.with_name(dest.name + ".tmp")
+    shutil.copy2(real, temp)  # a crash must not leave a truncated model in place
+    os.replace(temp, dest)
 
 
 def local_model_file(repo: str, filename: str, subfolder: str = "") -> Path:
@@ -48,15 +53,16 @@ def local_model_file(repo: str, filename: str, subfolder: str = "") -> Path:
     ``.onnx_data`` into *different* blob folders (sharded caches put each blob
     in its own subdirectory), which onnxruntime rejects with "External data
     path escapes model directory" — a fresh install cannot index anything.
-    Hardlink the pair into one real directory under ``~/.ragdesk/models``.
+    Hardlink the pair into one real directory under ``~/.ragdesk/models``,
+    keyed by the model blob's hash so a re-published model is picked up.
     """
     from huggingface_hub import hf_hub_download  # noqa: PLC0415 - optional extra
 
     source = Path(hf_hub_download(repo, filename, subfolder=subfolder or None))
     if not source.is_symlink():
         return source
-    dest = models_dir() / repo.replace("/", "--") / subfolder / filename
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    revision = source.resolve().name  # HF blob name: the file's content hash
+    dest = models_dir() / repo.replace("/", "--") / revision / subfolder / filename
     _materialize(source, dest)
     try:
         data = Path(hf_hub_download(repo, filename + "_data", subfolder=subfolder or None))

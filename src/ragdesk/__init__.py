@@ -1,3 +1,3 @@
 """ragdesk — personal, local-first RAG over your own sources."""
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"

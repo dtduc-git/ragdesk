@@ -97,6 +97,22 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+MCP_BLOCK_CHARS = 4000  # the parent-section limit: clipping is for top_k=50, not the norm
+
+
+def _clip(text: str, limit: int = MCP_BLOCK_CHARS) -> str:
+    """Cut a section at a sentence (or word) boundary, never mid-sentence."""
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "), window.rfind("\n"))
+    if cut < limit // 2:
+        cut = window.rfind(" ")
+    if cut <= 0:
+        return window
+    return window[: cut + 1].rstrip()
+
+
 class McpServer:
     def __init__(self, *, db: str, embedder: Embedder, reranker: Any = None) -> None:
         self.db = db
@@ -166,7 +182,7 @@ class McpServer:
                 return self._tool_text("no matches in the local index")
             blocks: list[str] = []
             seen: set[tuple[str, str]] = set()
-            for index, hit in enumerate(hits, start=1):
+            for hit in hits:
                 # The parent section when one was stored: a 1000-char window cut
                 # at 600 loses the sentence that answers the question. Overlapping
                 # chunks of the same section are one block, not a duplicate.
@@ -175,8 +191,8 @@ class McpServer:
                     continue
                 seen.add((hit.path, text))
                 blocks.append(
-                    f"[{index}] {hit.path} (score {hit.score:.4f}, lanes {hit.lanes})\n"
-                    f"{text[:2000]}"
+                    f"[{len(blocks) + 1}] {hit.path} (score {hit.score:.4f}, lanes {hit.lanes})\n"
+                    f"{_clip(text)}"
                 )
             return self._tool_text("\n\n".join(blocks))
 
