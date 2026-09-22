@@ -67,9 +67,13 @@ jobs:
         with:
           node-version: "20"
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
+          enable-cache: true
       - run: npm ci
         working-directory: desktop
       - name: Stamp the desktop version from the tag
@@ -79,7 +83,7 @@ jobs:
         working-directory: desktop
         run: |
           version="${GITHUB_REF_NAME#v}"
-          npm version "$version" --no-git-tag-version
+          npm version "$version" --no-git-tag-version --allow-same-version
           jq --arg v "$version" '.version = $v' src-tauri/tauri.conf.json > /tmp/tauri.conf.json
           mv /tmp/tauri.conf.json src-tauri/tauri.conf.json
       - run: npm run tauri build
