@@ -17,7 +17,7 @@ from __future__ import annotations
 import platform
 from typing import Protocol
 
-from ragdesk.embed import configured_threads, session_options, tokenize
+from ragdesk.embed import configured_threads, local_model_file, session_options, tokenize
 from ragdesk.search import Hit
 
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-base"
@@ -148,7 +148,7 @@ class OnnxReranker:
         model_path = None
         for candidate in variants:
             try:
-                model_path = hf_hub_download(self.repo, candidate)
+                model_path = local_model_file(self.repo, candidate)
                 break
             except Exception:  # noqa: BLE001 - try the next variant
                 continue

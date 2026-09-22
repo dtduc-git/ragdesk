@@ -96,3 +96,58 @@ def test_position_limit_respects_the_model():
     assert position_limit({}) == 2048
     assert position_limit({"max_position_embeddings": "nonsense"}) == 2048
     assert position_limit({"max_position_embeddings": 8}) == 64  # never degenerate
+
+
+def _fake_cache(tmp_path, *, symlink: bool):
+    """A sharded HF cache: model and its external data in different blob dirs."""
+    blobs = tmp_path / "blobs"
+    (blobs / "aa").mkdir(parents=True)
+    (blobs / "bb").mkdir(parents=True)
+    (blobs / "aa" / "weights").write_bytes(b"weights")
+    (blobs / "bb" / "external").write_bytes(b"external data")
+    snapshot = tmp_path / "snapshots" / "rev" / "onnx"
+    snapshot.mkdir(parents=True)
+    model = snapshot / "model_quantized.onnx"
+    data = snapshot / "model_quantized.onnx_data"
+    if symlink:
+        model.symlink_to(blobs / "aa" / "weights")
+        data.symlink_to(blobs / "bb" / "external")
+    else:
+        model.write_bytes(b"weights")
+        data.write_bytes(b"external data")
+    return snapshot
+
+
+def test_local_model_file_materializes_a_symlinked_cache(tmp_path, monkeypatch):
+    """onnxruntime rejects external data that resolves outside the model's dir."""
+    from ragdesk import embed
+
+    snapshot = _fake_cache(tmp_path, symlink=True)
+
+    def fake_download(repo, filename, subfolder=None):
+        return str(snapshot / filename)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    monkeypatch.setattr(embed, "models_dir", lambda: tmp_path / "models")
+
+    path = embed.local_model_file("org/repo", "model_quantized.onnx", "onnx")
+    assert not path.is_symlink()
+    assert path.read_bytes() == b"weights"
+    # The pair must live in the same directory, or onnxruntime refuses to load.
+    assert path.parent == (path.parent / "model_quantized.onnx_data").parent
+    assert (path.parent / "model_quantized.onnx_data").read_bytes() == b"external data"
+
+
+def test_local_model_file_leaves_real_files_alone(tmp_path, monkeypatch):
+    from ragdesk import embed
+
+    snapshot = _fake_cache(tmp_path, symlink=False)
+    monkeypatch.setattr(
+        "huggingface_hub.hf_hub_download",
+        lambda repo, filename, subfolder=None: str(snapshot / filename),
+    )
+    monkeypatch.setattr(embed, "models_dir", lambda: tmp_path / "models")
+
+    path = embed.local_model_file("org/repo", "model_quantized.onnx", "onnx")
+    assert path == snapshot / "model_quantized.onnx"
+    assert not (tmp_path / "models").exists()

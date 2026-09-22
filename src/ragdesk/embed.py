@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import shutil
 from pathlib import Path
 from typing import Protocol
 
@@ -21,6 +23,48 @@ DEFAULT_ONNX_REPO = "onnx-community/embeddinggemma-300m-ONNX"
 ONNX_QUERY_PROMPT = "task: search result | query: "
 ONNX_DOC_PROMPT = "title: none | text: "
 ONNX_MAX_TOKENS = 2048  # what a chunk is truncated to when a model allows more
+
+
+def models_dir() -> Path:
+    """Where materialized ONNX files live (real files, not cache symlinks)."""
+    return Path.home() / ".ragdesk" / "models"
+
+
+def _materialize(source: Path, dest: Path) -> None:
+    if dest.exists():
+        return
+    real = source.resolve()
+    try:
+        os.link(real, dest)  # hardlink: same inode, no extra disk
+    except OSError:  # different filesystem (or no hardlink support): copy
+        shutil.copy2(real, dest)
+
+
+def local_model_file(repo: str, filename: str, subfolder: str = "") -> Path:
+    """A real ONNX file sitting next to its external data.
+
+    onnxruntime validates that a model's external-data file lives inside the
+    model's own directory. The HuggingFace cache symlinks the model and its
+    ``.onnx_data`` into *different* blob folders (sharded caches put each blob
+    in its own subdirectory), which onnxruntime rejects with "External data
+    path escapes model directory" — a fresh install cannot index anything.
+    Hardlink the pair into one real directory under ``~/.ragdesk/models``.
+    """
+    from huggingface_hub import hf_hub_download  # noqa: PLC0415 - optional extra
+
+    source = Path(hf_hub_download(repo, filename, subfolder=subfolder or None))
+    if not source.is_symlink():
+        return source
+    dest = models_dir() / repo.replace("/", "--") / subfolder / filename
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _materialize(source, dest)
+    try:
+        data = Path(hf_hub_download(repo, filename + "_data", subfolder=subfolder or None))
+    except Exception:  # noqa: BLE001 - most models keep everything in one file
+        return dest
+    _materialize(data, dest.with_name(dest.name + "_data"))
+    return dest
+
 
 # Each family expects its own prefixes, and the wrong ones quietly cost recall.
 _ONNX_PROMPTS: tuple[tuple[str, str, str], ...] = (
@@ -235,11 +279,7 @@ class OnnxEmbedder:
         tokenizer.enable_truncation(max_length=self._max_tokens())
         tokenizer.enable_padding()
 
-        model_path = hf_hub_download(self.repo, f"model_{self.variant}.onnx", subfolder="onnx")
-        try:
-            hf_hub_download(self.repo, f"model_{self.variant}.onnx_data", subfolder="onnx")
-        except Exception:  # noqa: BLE001 - external data file exists for some variants only
-            pass
+        model_path = local_model_file(self.repo, f"model_{self.variant}.onnx", "onnx")
 
         self._tokenizer = tokenizer
         self._session = ort.InferenceSession(
