@@ -129,6 +129,13 @@ class McpServer:
         return self._error(msg_id, -32601, f"method not found: {method}")
 
     def serve(self) -> int:
+        # stderr is the MCP log channel: "silence is the enemy" applies here too.
+        label = getattr(self.reranker, "name", None) or "none"
+        print(
+            f"ragdesk mcp: embedder={self.embedder.name} rerank={label}",
+            file=sys.stderr,
+            flush=True,
+        )
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -157,10 +164,20 @@ class McpServer:
                 hits = retrieve(store, self.embedder, query, top_k=top_k, reranker=self.reranker)
             if not hits:
                 return self._tool_text("no matches in the local index")
-            blocks = [
-                f"[{index}] {hit.path} (score {hit.score:.4f}, lanes {hit.lanes})\n{hit.text[:600]}"
-                for index, hit in enumerate(hits, start=1)
-            ]
+            blocks: list[str] = []
+            seen: set[tuple[str, str]] = set()
+            for index, hit in enumerate(hits, start=1):
+                # The parent section when one was stored: a 1000-char window cut
+                # at 600 loses the sentence that answers the question. Overlapping
+                # chunks of the same section are one block, not a duplicate.
+                text = hit.context
+                if (hit.path, text) in seen:
+                    continue
+                seen.add((hit.path, text))
+                blocks.append(
+                    f"[{index}] {hit.path} (score {hit.score:.4f}, lanes {hit.lanes})\n"
+                    f"{text[:2000]}"
+                )
             return self._tool_text("\n\n".join(blocks))
 
         if name == "ragdesk_document":

@@ -21,6 +21,36 @@ SYMBOL_RE = re.compile(
 DEFAULT_MAX_CHARS = 1000
 DEFAULT_OVERLAP = 150
 
+# A hard split prefers a sentence end, then a word boundary: a chunk that
+# starts mid-word ("phí bả…") reads as broken and forces another search.
+SENTENCE_END_RE = re.compile(r"[.!?…][\"')\]]?\s")
+
+
+def _cut_point(text: str, start: int, max_chars: int) -> int:
+    """End of the next piece: the last sentence end in the window, else a space."""
+    limit = min(start + max_chars, len(text))
+    window = text[start:limit]
+    floor = max_chars // 2
+    cut = -1
+    for match in SENTENCE_END_RE.finditer(window):
+        if match.end() >= floor:
+            cut = match.end()
+    if cut > 0:
+        return start + cut
+    space = window.rfind(" ")
+    if space >= floor:
+        return start + space + 1
+    return limit
+
+
+def _resume(text: str, end: int, overlap: int) -> int:
+    """Where the next piece starts: overlap back, snapped forward to a word."""
+    start = max(0, end - overlap)
+    space = text.find(" ", start, end)
+    if space != -1:
+        start = space + 1
+    return start if start < end else end
+
 
 @dataclass(frozen=True)
 class Chunk:
@@ -62,8 +92,13 @@ def chunk_text(
         if len(para) <= max_chars:
             pieces.append((offset, para))
         else:
-            step = max_chars - overlap
-            pieces.extend((offset + i, para[i : i + max_chars]) for i in range(0, len(para), step))
+            start = 0
+            while start < len(para):
+                end = _cut_point(para, start, max_chars)
+                pieces.append((offset + start, para[start:end].strip()))
+                if end >= len(para):
+                    break
+                start = _resume(para, end, overlap)
 
     chunks: list[tuple[int, str]] = []
     buf = ""
@@ -79,7 +114,10 @@ def chunk_text(
             continue
         chunks.append((buf_offset, buf))
         tail = buf[-overlap:]
-        joined = f"{tail}\n\n{piece}"
+        space = tail.find(" ")
+        if space != -1:
+            tail = tail[space + 1 :]  # never resume inside a word
+        joined = f"{tail}\n\n{piece}" if tail else piece
         if len(joined) <= max_chars:
             buf = joined
         else:

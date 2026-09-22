@@ -315,6 +315,7 @@ def index_document(
     chunk_chars: int = 0,
     chunk_overlap: int = 0,
     metadata: dict[str, str] | None = None,
+    force: bool = False,
 ) -> int:
     """Embed + upsert one document. Returns the chunk count, or 0 if unchanged."""
     parsed: dict[str, str] = {}
@@ -322,7 +323,7 @@ def index_document(
         parsed, content = parse_front_matter(content)
     metadata = {**(metadata or {}), **parsed}
     digest = hashlib.sha256(content.encode()).hexdigest()
-    if store.doc_hash(path) == digest:
+    if not force and store.doc_hash(path) == digest:
         if mtime:
             store.touch_document(path, mtime)
         return 0
@@ -367,6 +368,10 @@ def index_paths(
     stats = IndexStats()
     patterns = never_index_patterns()
     vaults = vault_roots()
+    # Changing chunking must re-chunk existing files: the mtime fast path would
+    # otherwise keep the old chunks forever, and the setting would look broken.
+    config = f"{chunk_chars}/{chunk_overlap}"
+    config_changed = store.get_meta("chunk.config") not in (None, config)
     for file in iter_files(paths):
         stats.files_scanned += 1
         if progress is not None:
@@ -382,7 +387,7 @@ def index_paths(
         # Fast path: an unchanged mtime means we did not touch the file at all,
         # so a 60s watcher pass costs a stat per file and nothing else.
         stored = store.doc_mtime(str(file))
-        if stored is not None and abs(stored - info.st_mtime) < 1e-6:
+        if not config_changed and stored is not None and abs(stored - info.st_mtime) < 1e-6:
             stats.unchanged += 1
             continue
         if not is_indexable(file, info.st_size):
@@ -415,6 +420,7 @@ def index_paths(
                 chunk_chars=chunk_chars,
                 chunk_overlap=chunk_overlap,
                 metadata=metadata,
+                force=config_changed,
             )
         except Exception as exc:  # noqa: BLE001 - report and keep indexing
             stats.skip(file, f"error: {type(exc).__name__}: {exc}")
@@ -425,6 +431,7 @@ def index_paths(
         else:
             stats.unchanged += 1
     store.set_local_roots([str(path) for path in paths if path.exists()])
+    store.set_meta("chunk.config", config)
     store.record_index_report(
         {
             "at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),

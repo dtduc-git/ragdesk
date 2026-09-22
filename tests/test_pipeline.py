@@ -52,6 +52,24 @@ def test_chunking_rejects_bad_overlap():
         chunk_text("hello", max_chars=100, overlap=100)
 
 
+def test_long_paragraphs_split_on_word_boundaries():
+    """A chunk must never start mid-word — 'phí bả…' reads as broken."""
+    text = " ".join(f"word{index:03d}" for index in range(400))
+    chunks = chunk_text(text, max_chars=150, overlap=40)
+    assert len(chunks) > 3
+    for chunk in chunks:
+        first = chunk.text.split(" ", 1)[0]
+        assert first.startswith("word") and first[4:].isdigit(), chunk.text[:30]
+
+
+def test_long_paragraphs_prefer_sentence_ends():
+    sentence = "Đây là một câu tiếng Việt đủ dài để kiểm tra ranh giới câu. "
+    chunks = chunk_text(sentence * 60, max_chars=200, overlap=40)
+    assert len(chunks) > 3
+    for chunk in chunks[:-1]:
+        assert chunk.text.rstrip().endswith(".")
+
+
 def test_index_skips_heavy_dirs(tmp_path: Path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "note.md").write_text("kept")
@@ -63,6 +81,23 @@ def test_index_skips_heavy_dirs(tmp_path: Path):
         assert stats.indexed == 1
         assert [d["path"] for d in store.documents()] == [str(tmp_path / "docs" / "note.md")]
         assert store.local_paths()[0]["path"] == str(tmp_path)
+
+
+def test_index_rechunks_when_the_chunking_config_changes(tmp_path: Path):
+    """The mtime fast path must not freeze old chunks after a chunking change."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "note.md").write_text("access tokens expire after 60 minutes. " * 40)
+    embedder = HashingEmbedder()
+    with Store(tmp_path / "index.db") as store:
+        first = index_paths(store, embedder, [docs], chunk_chars=1000, chunk_overlap=150)
+        assert first.indexed == 1
+        same = index_paths(store, embedder, [docs], chunk_chars=1000, chunk_overlap=150)
+        assert same.unchanged == 1 and same.indexed == 0
+
+        changed = index_paths(store, embedder, [docs], chunk_chars=300, chunk_overlap=50)
+        assert changed.indexed == 1, "a new chunk size must re-chunk unchanged files"
+        assert changed.chunks > first.chunks
 
 
 def test_index_accepts_the_common_code_extensions(tmp_path: Path):

@@ -57,6 +57,28 @@ def test_search_tool(server: McpServer):
     assert "auth.md" in text
 
 
+def test_search_tool_returns_one_block_per_section(tmp_path: Path):
+    """Two overlapping chunks of one section are one result, not a duplicate."""
+    from ragdesk.index import index_document
+
+    db = tmp_path / "index.db"
+    embedder = HashingEmbedder()
+    body = "Access tokens expire after 60 minutes and refresh tokens renew them. " * 40
+    with Store(db) as store:
+        index_document(store, embedder, source="local", path="long.md", content=body)
+    server = McpServer(db=str(db), embedder=embedder)
+    response = server.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {"name": "ragdesk_search", "arguments": {"query": "access tokens expire"}},
+        }
+    )
+    text = response["result"]["content"][0]["text"]
+    assert text.count("] long.md") == 1
+
+
 def test_search_tool_requires_query(server: McpServer):
     response = server.handle(
         {
