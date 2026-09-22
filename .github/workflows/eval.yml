@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+# One badge writer at a time: two runs rebasing docs/eval.json at once conflict.
+concurrency:
+  group: eval-badge
+  cancel-in-progress: false
+
 jobs:
   badge:
     runs-on: ubuntu-latest
