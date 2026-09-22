@@ -40,4 +40,6 @@ jobs:
           git add docs/eval.json README.md
           git commit -m "eval: refresh the published retrieval numbers [skip ci]"
           # A tag push checks out a detached HEAD: name the branch explicitly.
+          # Rebase first: this badge run can overlap a normal push to main.
+          git pull --rebase origin main
           git push origin HEAD:main
