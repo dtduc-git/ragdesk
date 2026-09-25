@@ -38,3 +38,25 @@ def test_the_mcp_card_is_wired():
     assert 'id="mcp-state"' in html and 'id="mcp-dot"' in html
     for kind in ("claude_code", "claude_desktop", "codex"):
         assert f'data-mcp="{kind}"' in html
+
+
+SYNC_FORMS = [
+    "github-sync",
+    "gitlab-sync",
+    "confluence-sync",
+    "gdrive-sync",
+    "msgraph-sync",
+    "notion-sync",
+    "email-sync",
+    "web-sync",
+    "s3-sync",
+]
+
+
+def test_every_sync_form_offers_keep_in_sync():
+    """README promises the tick on every connector; four forms once lacked it."""
+    script = (DESKTOP / "src" / "main.ts").read_text()
+    for form in SYNC_FORMS:
+        match = re.search(rf'<form data-form="{form}"(.*?)</form>', script, re.DOTALL)
+        assert match, f"main.ts no longer renders the {form} form"
+        assert "keepToggle()" in match.group(1), f"{form} lost its Keep in sync toggle"

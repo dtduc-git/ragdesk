@@ -837,6 +837,7 @@ class Handler(BaseHTTPRequestHandler):
                 "scanned": stats.files_scanned,
                 "indexed": stats.indexed,
                 "unchanged": stats.unchanged,
+                "removed": stats.removed,
                 "skipped": stats.skipped,
                 "chunks": stats.chunks,
                 "skipped_samples": list(stats.skipped_samples),
@@ -1461,9 +1462,10 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         params = body.get("params")
-        if not isinstance(params, dict) or not params:
+        if not isinstance(params, dict):
             self._send(400, {"error": "params required (the same fields the sync used)"})
             return
+        # Empty is valid: Notion's sync has no parameters of its own.
         job = add_sync_job(provider, params)
         self._send(200, {"added": True, "job": job, "jobs": sync_jobs()})
 
@@ -2269,12 +2271,29 @@ class Handler(BaseHTTPRequestHandler):
 BACKUP_KEEP = 5
 
 
+def _backup_sort_key(path: Path) -> tuple[float, int]:
+    """Newest first: mtime, then the -N suffix as a number.
+
+    Names alone sort ``index-S.db`` *after* ``index-S-2.db`` (``.`` > ``-``)
+    and ``-10`` before ``-2``; on a filesystem with second-resolution mtimes
+    both mistakes make the prune pick the wrong copy.
+    """
+    head, _, tail = path.stem.rpartition("-")
+    suffix = int(tail) if tail.isdigit() and head.count("-") >= 2 else 1
+    return (path.stat().st_mtime, suffix)
+
+
 def backups_dir(db: str) -> Path:
     return Path(db).expanduser().resolve().parent / "backups"
 
 
-def run_backup(db: str) -> dict[str, Any]:
-    """Snapshot the live index (safe while it is in use) and prune old copies."""
+def run_backup(db: str, protect: str | Path | None = None) -> dict[str, Any]:
+    """Snapshot the live index (safe while it is in use) and prune old copies.
+
+    ``protect`` names a backup that must survive the prune: a restore takes a
+    safety snapshot first, and with five copies already on disk the prune would
+    otherwise delete the very file being restored before it is read.
+    """
     target_dir = backups_dir(db)
     target_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -2291,10 +2310,15 @@ def run_backup(db: str) -> dict[str, Any]:
             store.conn.backup(dest)
         finally:
             dest.close()
-    kept = sorted(target_dir.glob("index-*.db"), reverse=True)
-    for stale in kept[BACKUP_KEEP:]:
+    protected = Path(protect).resolve() if protect else None
+    found = sorted(target_dir.glob("index-*.db"), key=_backup_sort_key, reverse=True)
+    kept = found[:BACKUP_KEEP]
+    for stale in found[BACKUP_KEEP:]:
+        if protected is not None and stale.resolve() == protected:
+            kept.append(stale)  # six backups beat deleting the one being restored
+            continue
         stale.unlink(missing_ok=True)
-    return {"path": str(target), "bytes": target.stat().st_size, "kept": len(kept[:BACKUP_KEEP])}
+    return {"path": str(target), "bytes": target.stat().st_size, "kept": len(kept)}
 
 
 def list_backups(db: str) -> list[dict[str, Any]]:
@@ -2302,7 +2326,7 @@ def list_backups(db: str) -> list[dict[str, Any]]:
     if not target_dir.exists():
         return []
     out: list[dict[str, Any]] = []
-    for path in sorted(target_dir.glob("index-*.db"), reverse=True):
+    for path in sorted(target_dir.glob("index-*.db"), key=_backup_sort_key, reverse=True):
         stat = path.stat()
         out.append(
             {
@@ -2324,9 +2348,11 @@ def restore_backup(db: str, source: str) -> dict[str, Any]:
     path = Path(source).expanduser()
     if not path.is_file():
         raise ValueError(f"backup not found: {source}")
-    safety = run_backup(db)
+    # Open the source before the safety snapshot: the snapshot's prune must
+    # never be able to delete the file this restore is about to read.
     source_conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
+        safety = run_backup(db, protect=path)
         with Store(db) as store:
             source_conn.backup(store.conn)
     finally:
@@ -2481,38 +2507,88 @@ def parse_smart_retrieval(raw: str) -> dict[str, Any]:
     return out
 
 
+def cli_shim_path() -> Path:
+    """Where the MCP card's Install drops a `ragdesk` command."""
+    return Path.home() / ".local" / "bin" / "ragdesk"
+
+
 def mcp_setup_info(state: AppState) -> dict[str, Any]:
     """Everything the Settings card needs to wire ragdesk into Claude/Codex."""
     on_path = shutil.which("ragdesk")
+    command = on_path or str(cli_shim_path())
     return {
         "cli_on_path": bool(on_path),
-        "cli_path": on_path or "",
+        "cli_path": command,
         "db": state.db,
         "snippets": {
-            "claude_code": "claude mcp add ragdesk -- ragdesk mcp",
+            "claude_code": f"claude mcp add ragdesk -- {command} mcp",
             "claude_desktop": json.dumps(
-                {"mcpServers": {"ragdesk": {"command": "ragdesk", "args": ["mcp"]}}},
+                {"mcpServers": {"ragdesk": {"command": command, "args": ["mcp"]}}},
                 indent=2,
             ),
-            "codex": '[mcp_servers.ragdesk]\ncommand = "ragdesk"\nargs = ["mcp"]',
+            "codex": f'[mcp_servers.ragdesk]\ncommand = "{command}"\nargs = ["mcp"]',
         },
     }
 
 
+def _is_our_shim(path: Path) -> bool:
+    """A wrapper a previous Install wrote (safe to rewrite when it went stale)."""
+    try:
+        if path.stat().st_size > 4096:
+            return False
+        text = path.read_text(errors="replace")
+    except OSError:
+        return False
+    return "# written by the ragdesk app" in text
+
+
+def _stale_symlink(target: Path) -> bool:
+    """A symlink an old ragdesk build left: dangling, or pointing at source.
+
+    A live symlink to some other executable is how `uv tool install` and pipx
+    put commands on PATH — that one is never ours to replace.
+    """
+    if not target.is_symlink():
+        return False
+    if not target.exists():
+        return True
+    resolved = target.resolve()
+    return resolved.name == "__main__.py" or not os.access(resolved, os.X_OK)
+
+
 def install_cli_shim() -> dict[str, Any]:
-    """Make `ragdesk` reachable on PATH for MCP clients (macOS/Linux)."""
-    if shutil.which("ragdesk"):
-        return {"installed": False, "reason": "already on PATH", "path": shutil.which("ragdesk")}
-    target = Path.home() / ".local" / "bin" / "ragdesk"
-    source = Path(sys.argv[0]).resolve()
+    """Make `ragdesk` reachable on PATH for MCP clients (macOS/Linux).
+
+    Never replaces a foreign command, but does rewrite the two things ragdesk
+    itself left behind: a symlink from an older build (it points at a
+    non-executable `__main__.py` under `python3 -m ragdesk`) and its own
+    wrapper, so a changed `sys.executable` — an app updated or moved out of
+    translocation — heals on the next Install. A wrapper script, not a
+    symlink, works for both invocation styles.
+    """
+    on_path = shutil.which("ragdesk")
+    if on_path:
+        return {"installed": False, "reason": "already on PATH", "path": on_path}
+    target = cli_shim_path()
+    if target.is_symlink():
+        if not _stale_symlink(target):
+            return {"installed": False, "reason": f"already exists: {target}", "path": str(target)}
+    elif target.exists() and not _is_our_shim(target):
+        return {"installed": False, "reason": f"already exists: {target}", "path": str(target)}
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists() or target.is_symlink():
+        if target.is_symlink() or target.exists():
             target.unlink()
-        target.symlink_to(source)
+        target.write_text(
+            "#!/bin/sh\n"
+            "# written by the ragdesk app — safe to delete\n"
+            "export PYTHONDONTWRITEBYTECODE=1\n"
+            f'exec "{sys.executable}" -m ragdesk "$@"\n'
+        )
+        target.chmod(0o755)
     except OSError as exc:
         return {"installed": False, "reason": str(exc), "path": ""}
-    return {"installed": True, "reason": "linked", "path": str(target)}
+    return {"installed": True, "reason": "wrapper written", "path": str(target)}
 
 
 def system_info() -> dict[str, Any]:
@@ -2754,8 +2830,63 @@ def delete_sync_job(job_id: str) -> bool:
     return len(kept) != len(jobs)
 
 
-def _email_password() -> str:
-    return str(credentials.get("email").get("password") or "")
+def _auto_email_sync(store: Store, embedder: Embedder, p: dict[str, Any]) -> IndexStats:
+    """Email auto-sync: the job stores folder/limit only, the account is saved.
+
+    The manual endpoint resolves host/user/password the same way; an auto-sync
+    job must too, or it fails with a KeyError on every pass.
+    """
+    entry = credentials.get("email")
+    host = str(p.get("host") or entry.get("host") or "").strip()
+    user = str(p.get("user") or entry.get("user") or "").strip()
+    password = str(p.get("password") or entry.get("password") or "")
+    if not (host and user and password):
+        raise ValueError("no email connection: connect the account in the app first")
+    return email_sync_imap(
+        store,
+        embedder,
+        host=host,
+        user=user,
+        password=password,
+        port=int(p.get("port") or entry.get("port") or EMAIL_DEFAULT_PORT),
+        folder=str(p.get("folder") or entry.get("folder") or EMAIL_DEFAULT_FOLDER),
+        limit=int(p.get("limit") or EMAIL_DEFAULT_LIMIT),
+    )
+
+
+def _auto_confluence_sync(store: Store, embedder: Embedder, p: dict[str, Any]) -> IndexStats:
+    """Confluence auto-sync resolves the saved connection like the manual endpoint.
+
+    Without this, an OAuth-connected space (no base_url in the job params) fails
+    on every pass, and the job looks saved while doing nothing.
+    """
+    space = str(p.get("space") or "").strip()
+    if not space:
+        raise ValueError("space required")
+    oauth = resolve_oauth_credentials()
+    if oauth:
+        api_base, bearer = oauth
+        entry = credentials.get("confluence")
+        label_host = urllib.parse.urlparse(str(entry.get("site_url", ""))).netloc
+        return sync_confluence(
+            store, embedder, space=space, api_base=api_base, bearer=bearer, label_host=label_host
+        )
+    base_url = str(p.get("base_url", "")).strip() or str(
+        credentials.get("confluence").get("base_url", "")
+    )
+    if not base_url:
+        raise ValueError(
+            "no Confluence connection: connect with Atlassian OAuth, "
+            "or provide a site URL + API token"
+        )
+    return sync_confluence(
+        store,
+        embedder,
+        base_url=base_url,
+        space=space,
+        email=p.get("email") or None,
+        token=p.get("token") or None,
+    )
 
 
 SYNC_HANDLERS: dict[str, Callable[[Store, Embedder, dict], IndexStats]] = {
@@ -2770,15 +2901,7 @@ SYNC_HANDLERS: dict[str, Callable[[Store, Embedder, dict], IndexStats]] = {
         subdir=p.get("subdir", ""),
         base_url=p.get("base_url", "") or GITLAB_DEFAULT_BASE,
     ),
-    "confluence": lambda store, embedder, p: sync_confluence(
-        store,
-        embedder,
-        space=p["space"],
-        base_url=p.get("base_url", ""),
-        email=p.get("email") or None,
-        token=p.get("token") or None,
-        limit=int(p.get("limit") or 100),
-    ),
+    "confluence": _auto_confluence_sync,
     "gdrive": lambda store, embedder, p: sync_gdrive(
         store,
         embedder,
@@ -2795,16 +2918,7 @@ SYNC_HANDLERS: dict[str, Callable[[Store, Embedder, dict], IndexStats]] = {
         client_id=resolve_ms_client_id(),
     ),
     "notion": lambda store, embedder, p: sync_notion(store, embedder),
-    "email": lambda store, embedder, p: email_sync_imap(
-        store,
-        embedder,
-        host=p["host"],
-        user=p["user"],
-        password=p.get("password") or _email_password(),
-        port=int(p.get("port") or EMAIL_DEFAULT_PORT),
-        folder=p.get("folder") or EMAIL_DEFAULT_FOLDER,
-        limit=int(p.get("limit") or EMAIL_DEFAULT_LIMIT),
-    ),
+    "email": _auto_email_sync,
     "web": lambda store, embedder, p: crawl_site(
         store,
         embedder,
@@ -2861,40 +2975,51 @@ def run_auto_index(state: AppState) -> dict[str, Any]:
         if state.activity.get("owner") == token:
             state.activity.update({"detail": detail, "done": done, "total": total})
 
-    with state.lock, Store(state.db) as store:
-        roots = [
-            Path(entry["path"]) for entry in store.local_paths() if Path(entry["path"]).exists()
-        ]
-        stats = index_paths(store, state.embedder, roots, progress=progress) if roots else None
-    connectors: list[dict[str, Any]] = []
-    for job in sync_jobs():
-        progress(f"syncing {job.get('provider')}", 0, 0)
-        connectors.append(run_sync_job(state, job))
-    state.activity["running"] = False
-    settings.save({"auto_index_last": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")})
-    return {
-        "roots": [str(root) for root in roots],
-        "indexed": stats.indexed if stats else 0,
-        "unchanged": stats.unchanged if stats else 0,
-        "chunks": stats.chunks if stats else 0,
-        **({"connectors": connectors} if connectors else {}),
-    }
+    try:
+        with state.lock, Store(state.db) as store:
+            # No exists() filter: a chosen single file that was deleted must
+            # reach index_paths, or delete_missing_local can never prune it.
+            roots = [Path(entry["path"]) for entry in store.local_paths()]
+            stats = index_paths(store, state.embedder, roots, progress=progress) if roots else None
+        connectors: list[dict[str, Any]] = []
+        for job in sync_jobs():
+            progress(f"syncing {job.get('provider')}", 0, 0)
+            connectors.append(run_sync_job(state, job))
+        for entry in connectors:
+            if entry.get("error"):
+                # A connector that fails every pass must say so in serve.log —
+                # otherwise the UI's "keep in sync" tick looks like it works.
+                print(f"sync job {entry.get('provider')}: {entry['error']}", flush=True)
+        settings.save({"auto_index_last": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")})
+        return {
+            "roots": [str(root) for root in roots],
+            "indexed": stats.indexed if stats else 0,
+            "unchanged": stats.unchanged if stats else 0,
+            "removed": stats.removed if stats else 0,
+            "chunks": stats.chunks if stats else 0,
+            **({"connectors": connectors} if connectors else {}),
+        }
+    finally:
+        # A raised pass must not leave the activity flag on forever: the watch
+        # loop would keep skipping, and the UI would show work that is not there.
+        state.activity["running"] = False
 
 
 def watch_pass(state: AppState) -> dict[str, Any] | None:
     """Cheap freshness pass: index_paths skips unchanged mtimes without reading."""
     with state.lock, Store(state.db) as store:
-        roots = [
-            Path(entry["path"]) for entry in store.local_paths() if Path(entry["path"]).exists()
-        ]
+        # A missing root is still passed on: index_paths leaves its documents
+        # alone, but a chosen file that was deleted must be pruned here.
+        roots = [Path(entry["path"]) for entry in store.local_paths()]
         if not roots:
             return None
         stats = index_paths(store, state.embedder, roots)
-    if not (stats.indexed or stats.chunks):
+    if not (stats.indexed or stats.chunks or stats.removed):
         return None
     return {
         "indexed": stats.indexed,
         "unchanged": stats.unchanged,
+        "removed": stats.removed,
         "skipped": stats.skipped,
         "chunks": stats.chunks,
     }

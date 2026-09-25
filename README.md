@@ -59,8 +59,8 @@ the ones that won.
 > **Status: pre-alpha (0.1.5).** Retrieval core, eval harness, email/web/repo
 > connectors, CLI + TUI + MCP server and the Tauri desktop app are in. On PyPI
 > as `ragdesk`; a DMG is attached to each
-> [release](https://github.com/dtduc-git/ragdesk/releases) (unsigned — build
-> from source if Gatekeeper complains).
+> [release](https://github.com/dtduc-git/ragdesk/releases) (ad-hoc signed, not
+> notarized — build from source if Gatekeeper complains).
 
 ## Why another personal RAG?
 
@@ -125,10 +125,10 @@ Ollama, MLX in-process, or an OpenAI-compatible endpoint you point at.
 ## Quickstart
 
 ```bash
-# 1. install from PyPI ([onnx] for CPU embeddings; [mlx] on Apple Silicon to run
-#    the answer model in-process; [vision] for image OCR; [tui] for the
-#    full-screen terminal app — all optional). Plain `pip install ragdesk`
-#    gives the core: indexing + search + eval.
+# 1. install from PyPI. The [onnx] extra is what embeds and searches on CPU;
+#    without it the CLI says which extra to add. [mlx] runs the answer model
+#    in-process on Apple Silicon, [vision] adds image OCR, [tui] the
+#    full-screen terminal app.
 uv tool install 'ragdesk[onnx,mlx,vision,tui]'
 
 # 2. index your stuff (incremental, read-only)
@@ -218,7 +218,8 @@ and it never touches your sources). Pass the same `--embedder` you indexed with
 ## Desktop app (Tauri 2)
 
 ```bash
-# one-time: make the CLI visible to the packaged app
+# optional: a user-level CLI. The packaged app bundles its own runtime, so it
+# works without this; `tauri dev` falls back to `uv run` in this checkout.
 uv tool install '.[onnx,mlx,vision,tui]'
 
 cd desktop
@@ -259,7 +260,7 @@ The same UI also runs in a browser for development:
 | Desktop app (Tauri 2): chat with history + streaming status + stop, sources, indexed stats (per source and per chosen path), settings, dark theme — packaged as a self-contained DMG (bundled runtime, no CLI install) | Notarization (Apple Developer ID) so a *downloaded* DMG opens without the Gatekeeper bypass |
 | Command palette (⌘K): jump to a conversation, switch tabs, search your sources and open a file — plus ⌘1-4 tabs, ? for the shortcut sheet | |
 | The catalog-drawer look: ruled ledger transcript with entry numbers, violet library ink for actions, amber for live/cited things, light + dark | |
-| Watch for changes: new and edited files in your folders are indexed automatically (Settings, default every minute; Off / 30s / 1m / 5m / 15m) | Connector auto-sync is hourly only (no per-connector interval yet) |
+| Watch for changes: new and edited files in your folders are indexed automatically (Settings, default every minute; Off / 30s / 1m / 5m / 15m); deleted files leave the index on that same pass | Per-connector sync intervals — jobs run with the Auto re-index timer, which can be Off |
 | Connector auto-sync: tick "Keep in sync" on any connector's sync form and it re-runs with the auto re-index timer (GitHub, GitLab, Confluence, Drive, OneDrive, Notion, IMAP, web crawl, S3) | |
 | S3: paste an access key in the app once (or just point at a public bucket — no key, no extra tool), then sync a bucket prefix; AWS keys come from IAM, and **S3-compatible services** (Cloudflare R2, Backblaze B2, MinIO, Wasabi) work via a custom endpoint; PDF/Office/image/OCR handled like local files | Writing to S3 (read-only, by design) |
 | Auto re-index of the chosen local paths every N hours (Settings, default 1h, Off switch) — the safety net behind the watcher | |
@@ -269,7 +270,7 @@ The same UI also runs in a browser for development:
 | Indexing: local files (native picker), **PDF / DOCX / PPTX / XLSX text extraction** (sheets keep row refs; legacy `.xls` and scanned PDFs need converting), **image OCR** (screenshots, scans, photos with text — Apple Vision, on-device, no model download), GitHub repos (device code / gh / token), GitLab repos (token), Confluence spaces (connect + CQL), Google Drive (connect + doc export), Microsoft OneDrive/SharePoint (device flow), Notion (shared pages), website crawl (same-host, HTML), email (mbox / IMAP) | Legacy `.xls`, audio; OCR for scanned PDFs; VLM captions for text-free images |
 | Hybrid retrieval: FTS5 BM25 + EmbeddingGemma int8 (ONNX) + RRF | Windows / Linux builds |
 | Dense search at scale: exact numpy matrix by default — measured 0.8 ms/query at 10k chunks, 6.3 ms at 100k, 61 ms at 1M ([numbers](docs/vector-scale.md)); `--vector-backend python\|numpy\|usearch` | Approximate ANN as a default — `usearch` lost recall *and* RAM against numpy; sqlite-vec is exact but ~9× slower at 1M (benchmark-only) |
-| Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) — batched, idle-unloaded, pool swept on the golden (docs above) | Eval badge automation per release |
+| Reranking: `lexical` baseline, `fastembed` (English-first), `onnx` multilingual gte (70+ languages) — batched, idle-unloaded, pool swept on the golden (docs above) | |
 | Grounded cited answers with a backend ladder: reuses Ollama when the model is there, else MLX in-process; one-click model download in Settings (live progress) | |
 | Chat history: conversations in SQLite, multi-turn context, a history popover (open/delete), resume or start fresh | |
 | Live progress: phased status while answering (searching → thinking, elapsed seconds) with a Stop button; sync/index activity in the rail | |
@@ -345,16 +346,19 @@ to rank 1 on all five. The same harness scores it with
 `eval --golden fixtures/golden_multiturn.jsonl --rewrite`, which prints the raw
 baseline next to the rewritten run.
 
-Per-category breakdown (the `[eval]` row is the honest weak spot):
+Per-category breakdown from the same 12-query golden run (one honest miss):
 
 ```
 [answers] n=1 recall@5=1.000   [code] n=3 recall@5=1.000
-[eval]    n=2 recall@5=0.500   [general] n=3 recall@5=1.000
+[eval]    n=2 recall@5=1.000   [general] n=3 recall@5=1.000
+[indexing] n=3 recall@5=0.667
 ```
 
-Measured 2026-09-15 on the repo tree (824-document corpus including a synced
-repo, hence the `folder:` scoping in the golden set). Chunk-boundary numbers
-predate the 0.1.4 chunker (sentence/word boundaries), so re-run
+Measured 2026-09-25 on the subset `scripts/eval_ci.sh` indexes (README/AGENTS/
+SECURITY, `.github/`, `src/`, `fixtures`): the missed `[indexing]` query asks
+where the `onnx` extra is installed and expects `README.md`, which the run
+places outside the top 5. The earlier 2026-09-15 numbers were measured on an
+824-document repo tree and predate the 0.1.4 sentence/word chunker — re-run
 `scripts/bench.py` before comparing against them.
 
 Tuning measured with `scripts/bench.py` (fresh index per chunking config, the
@@ -420,12 +424,15 @@ uv run ragdesk --embedder onnx --db /tmp/eval-mt.db eval --golden fixtures/golde
 
 ## Roadmap
 
-1. Release v0.1.0: PyPI (trusted publishing) + desktop DMG on GitHub Releases
-2. Eval badge automation per release
-3. More sources, following the Bedrock Knowledge Base connector set as a reference:
-   S3 (bucket/prefix)
-4. Windows / Linux builds
-5. MCP-server expansion path for connectors
+Done: PyPI trusted publishing, the desktop DMG on GitHub Releases, the eval
+badge (`eval.yml` on tag/monthly/dispatch) and S3.
+
+1. Notarization (Apple Developer ID) so a *downloaded* DMG opens without the
+   Gatekeeper bypass
+2. Windows / Linux builds
+3. MCP-server expansion path for connectors
+4. More sources, following the Bedrock Knowledge Base connector set as a
+   reference
 
 ## Non-goals
 
@@ -445,10 +452,12 @@ uv run --extra tui pytest     # includes the full-screen TUI tests
 
 ## Security & privacy
 
-Local-first by default: the index is one SQLite file under `.ragdesk/`.
-Network calls happen only to your local Ollama server; adding cloud providers
-is opt-in and bring-your-own-key. Connection credentials live in
-`~/.config/ragdesk/credentials.json` (mode `0600`). See [SECURITY.md](SECURITY.md).
+Local-first by default: the index is one SQLite file under `~/.ragdesk/`.
+No telemetry. Network calls happen only for what you turn on: the first model
+download from Hugging Face, the connectors you connect, and — if you point it
+there instead of a local model — an OpenAI-compatible endpoint. Connection
+credentials live in `~/.config/ragdesk/credentials.json` (mode `0600`). See
+[SECURITY.md](SECURITY.md).
 
 ## License
 

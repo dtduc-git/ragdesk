@@ -1299,6 +1299,7 @@ function confluenceCard(conn: Connections["confluence"]): string {
     <form data-form="confluence-sync" class="stack">
       <input name="space" placeholder="space key, e.g. DOCS" required />
       <button class="btn btn-primary" type="submit">Sync space</button>
+      ${keepToggle()}
     </form>
     <p class="source-result" data-result="confluence"></p>
   </div>`;
@@ -1335,6 +1336,7 @@ function gdriveCard(conn: Connections["gdrive"]): string {
     <form data-form="gdrive-sync" class="stack">
       <input name="folder_id" placeholder="folder id (optional — all files by default)" />
       <button class="btn btn-primary" type="submit">Sync Drive</button>
+      ${keepToggle()}
     </form>
     <p class="source-result" data-result="gdrive"></p>
   </div>`;
@@ -1412,6 +1414,7 @@ function msgraphCard(conn: Connections["msgraph"]): string {
         <input name="site" placeholder="site hostname:/sites/x (optional)" />
       </div>
       <button class="btn btn-primary" type="submit">Sync Microsoft files</button>
+      ${keepToggle()}
     </form>
     <p class="source-result" data-result="msgraph"></p>
   </div>`;
@@ -1441,6 +1444,7 @@ function notionCard(conn: Connections["notion"]): string {
     </div>
     <form data-form="notion-sync" class="stack">
       <button class="btn btn-primary" type="submit">Sync pages</button>
+      ${keepToggle()}
     </form>
     <p class="source-result" data-result="notion"></p>
   </div>`;
@@ -1490,8 +1494,8 @@ function emailCard(conn: Connections["email"]): string {
 }
 
 function keepToggle(): string {
-  return `<label class="keep-toggle caption">
-    <input type="checkbox" name="keep" value="on" /> Keep in sync (hourly)
+  return `<label class="keep-toggle caption" title="Runs with the Auto re-index timer in Settings — if that is Off, this never runs">
+    <input type="checkbox" name="keep" value="on" /> Keep in sync with auto re-index
   </label>`;
 }
 
@@ -1969,8 +1973,9 @@ document.addEventListener("click", async (event) => {
       const info = await get<{ cli_on_path: boolean; snippets: Record<string, string> }>("/api/mcp");
       let snippet = info.snippets[mcp.dataset.mcp ?? ""] ?? "";
       if (!info.cli_on_path) {
+        // Install writes a wrapper at the path the snippet already names, so
+        // the copied command works even when PATH does not include ~/.local/bin.
         await post("/api/mcp/install", {});
-        snippet += "\n# or point the client at the ragdesk binary directly";
       }
       await navigator.clipboard.writeText(snippet);
       toast("MCP setup copied — paste it into your client");

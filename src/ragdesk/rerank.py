@@ -17,7 +17,13 @@ from __future__ import annotations
 import platform
 from typing import Protocol
 
-from ragdesk.embed import configured_threads, local_model_file, session_options, tokenize
+from ragdesk.embed import (
+    configured_threads,
+    local_model_file,
+    require_onnx,
+    session_options,
+    tokenize,
+)
 from ragdesk.search import Hit
 
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-base"
@@ -112,6 +118,7 @@ class OnnxReranker:
     """
 
     def __init__(self, repo: str = DEFAULT_ONNX_RERANK_REPO, *, max_length: int = 512) -> None:
+        require_onnx()
         self.name = f"onnx:{repo}"
         self.repo = repo
         self.max_length = max_length
@@ -122,15 +129,10 @@ class OnnxReranker:
     def _load(self) -> None:
         if self._session is not None:
             return
-        try:
-            import onnxruntime as ort
-            from huggingface_hub import hf_hub_download
-            from tokenizers import Tokenizer
-        except ImportError as exc:
-            raise RuntimeError(
-                "onnx reranker dependencies missing. Install the onnx extra: "
-                "pip install 'ragdesk[onnx]'"
-            ) from exc
+        require_onnx()
+        import onnxruntime as ort
+        from huggingface_hub import hf_hub_download
+        from tokenizers import Tokenizer
 
         tokenizer = Tokenizer.from_file(hf_hub_download(self.repo, "tokenizer.json"))
         tokenizer.enable_truncation(max_length=self.max_length)

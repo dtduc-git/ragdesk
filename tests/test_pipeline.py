@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -683,3 +684,100 @@ def test_build_prompt_injects_corrections():
     assert prompt.index("after 90 minutes [1]") < prompt.index("Question: when do tokens expire")
     plain = build_prompt("when do tokens expire", [hit])
     assert "the user fixed an earlier answer" not in plain
+
+
+def test_deleted_local_files_leave_the_index(tmp_path: Path, monkeypatch):
+    store = make_store(tmp_path)
+    embedder = HashingEmbedder()
+    root = tmp_path / "docs"
+    root.mkdir()
+    keep = root / "keep.md"
+    gone = root / "gone.md"
+    keep.write_text("still here")
+    gone.write_text("about to vanish")
+
+    stats = index_paths(store, embedder, [root])
+    assert stats.indexed == 2 and stats.removed == 0
+
+    gone.unlink()
+    stats = index_paths(store, embedder, [root])
+    assert stats.removed == 1
+    assert store.doc_hash(str(gone)) is None
+    assert store.doc_hash(str(keep)) is not None
+    assert store.last_index_report()["removed"] == 1
+
+    # a missing root keeps its prefix documents: that is an absent mountpoint
+    root.rename(tmp_path / "moved")
+    stats = index_paths(store, embedder, [root])
+    assert stats.removed == 0
+    assert store.doc_hash(str(keep)) is not None
+
+    # a chosen single file IS its own root, so deleting it must prune it
+    single = tmp_path / "single.md"
+    single.write_text("one chosen file")
+    index_paths(store, embedder, [single])
+    single.unlink()
+    stats = index_paths(store, embedder, [single])
+    assert stats.removed == 1
+    assert store.doc_hash(str(single)) is None
+
+    # a relative root is never pruned: it means something else in another cwd
+    rel_dir = tmp_path / "relative"
+    rel_dir.mkdir()
+    (rel_dir / "r.md").write_text("relative")
+    monkeypatch.chdir(tmp_path)
+    index_paths(store, embedder, [Path("relative")])
+    assert store.doc_hash("relative/r.md") is not None
+    (rel_dir / "r.md").unlink()
+    stats = index_paths(store, embedder, [Path("relative")])
+    assert stats.removed == 0
+    assert store.doc_hash("relative/r.md") is not None
+
+    # a permission error is not an absence: the file stays
+    (tmp_path / "moved").rename(root)
+    locked = root / "locked.md"
+    locked.write_text("locked but present")
+    index_paths(store, embedder, [root])
+    real_lstat = os.lstat
+
+    def fake_lstat(path, *args, **kwargs):
+        if str(path) == str(locked):
+            raise PermissionError(13, "Permission denied")
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr("ragdesk.store.os.lstat", fake_lstat)
+    stats = index_paths(store, embedder, [root])
+    assert stats.removed == 0
+    assert store.doc_hash(str(locked)) is not None
+
+
+def test_connector_style_chunking_honours_settings_and_zero_overlap(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("RAGDESK_CONFIG_DIR", str(tmp_path / "config"))
+    from ragdesk import settings
+    from ragdesk.index import chunk_config
+
+    settings.save({"chunk_chars": 120, "chunk_overlap": 30})
+    store = make_store(tmp_path)
+    embedder = HashingEmbedder()
+    content = " ".join(f"word{i}" for i in range(400))
+
+    # connectors call index_document with no chunk args: settings must apply
+    index_document(store, embedder, source="web:x", path="web://x/page", content=content)
+    assert store.doc_chunk_config("web://x/page") == chunk_config(120, 30)
+
+    # an explicit zero overlap is a value, not "unset"
+    index_document(
+        store,
+        embedder,
+        source="web:x",
+        path="web://x/zero",
+        content=content,
+        chunk_chars=120,
+        chunk_overlap=0,
+    )
+    assert store.doc_chunk_config("web://x/zero") == chunk_config(120, 0)
+
+    # zero overlap in settings.json reaches connectors too
+    settings.save({"chunk_chars": 120, "chunk_overlap": 0})
+    index_document(store, embedder, source="web:x", path="web://x/zero-setting", content=content)
+    assert store.doc_chunk_config("web://x/zero-setting") == chunk_config(120, 0)

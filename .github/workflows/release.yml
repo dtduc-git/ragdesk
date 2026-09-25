@@ -17,10 +17,32 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
+      - name: Cache the embedding model
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface
+          key: hf-embeddinggemma-${{ runner.os }}-v1
       - run: uv sync --all-groups --extra onnx
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest
+      - name: Version matches the tag
+        # A forgotten bump would fail the PyPI publish while the DMG still
+        # attached under the tag's name, shipping two different versions.
+        run: |
+          version="$(uv run python -c 'import ragdesk; print(ragdesk.__version__)')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME != __version__ $version — bump src/ragdesk/__init__.py"
+            exit 1
+          fi
+      - name: Retrieval eval (fixtures, offline embedder)
+        run: |
+          uv run ragdesk --embedder hash --db .ragdesk/eval.db index fixtures/docs
+          uv run ragdesk --embedder hash --db .ragdesk/eval.db eval \
+            --golden fixtures/golden.jsonl --min-recall 0.8
+      - name: Retrieval eval (repo golden, real embedder, gated at 0.8)
+        # README says regressions fail the build; ci.yml gates this, the tag did not.
+        run: scripts/eval_ci.sh --gate
 
   build:
     needs: test
@@ -30,7 +52,22 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
+      - name: Bake connect client IDs
+        # Non-confidential OAuth client IDs from repository secrets; unset
+        # secrets bake empty strings and the UI falls back to paste-your-own.
+        run: uv run python -m ragdesk.buildenv
+        env:
+          RAGDESK_GITHUB_CLIENT_ID: ${{ secrets.RAGDESK_GITHUB_CLIENT_ID }}
+          RAGDESK_ATLASSIAN_CLIENT_ID: ${{ secrets.RAGDESK_ATLASSIAN_CLIENT_ID }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          RAGDESK_MS_CLIENT_ID: ${{ secrets.RAGDESK_MS_CLIENT_ID }}
       - run: uv build
+      - name: The wheel must carry the baked module
+        run: >
+          uv run python -c "import glob, zipfile;
+          names = zipfile.ZipFile(glob.glob('dist/*.whl')[0]).namelist();
+          assert any(n.endswith('ragdesk/_build_env.py') for n in names), names"
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -54,7 +91,7 @@ jobs:
     # without a toolchain. It is NOT notarized (that needs a paid Apple
     # Developer account), so Gatekeeper will warn on first open — the release
     # notes say so, and building from source stays the supported path.
-    needs: test
+    needs: [test, publish]
     runs-on: macos-14
     permissions:
       contents: write
@@ -74,6 +111,16 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
+      - name: Bake connect client IDs
+        # The sidecar installs the package from this tree, so the baked module
+        # must exist before `npm run tauri build` runs scripts/build_sidecar.sh.
+        run: uv run python -m ragdesk.buildenv
+        env:
+          RAGDESK_GITHUB_CLIENT_ID: ${{ secrets.RAGDESK_GITHUB_CLIENT_ID }}
+          RAGDESK_ATLASSIAN_CLIENT_ID: ${{ secrets.RAGDESK_ATLASSIAN_CLIENT_ID }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          RAGDESK_MS_CLIENT_ID: ${{ secrets.RAGDESK_MS_CLIENT_ID }}
       - run: npm ci
         working-directory: desktop
       - name: Stamp the desktop version from the tag

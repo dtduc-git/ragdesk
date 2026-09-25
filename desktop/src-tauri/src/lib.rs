@@ -92,6 +92,10 @@ fn spawn_server(resources: Option<PathBuf>) -> Option<Child> {
     for (program, program_args) in candidates {
         match Command::new(&program)
             .args(&program_args)
+            // A signed bundle must never write __pycache__ at runtime: the
+            // sidecar precompiles at build time, and this keeps a writable
+            // copy from growing or changing after signing.
+            .env("PYTHONDONTWRITEBYTECODE", "1")
             .stdout(server_log())
             .stderr(server_log())
             .spawn()

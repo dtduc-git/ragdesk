@@ -30,9 +30,20 @@ def test_write_build_env_maps_and_refuses_confidential(tmp_path: Path):
 
 def test_write_build_env_without_env_file(tmp_path: Path):
     out = tmp_path / "_build_env.py"
-    mapped = write_build_env(tmp_path / "missing.env", out)
+    mapped = write_build_env(tmp_path / "missing.env", out, environ={})
     assert all(value == "" for value in mapped.values())
     assert out.is_file()
+
+
+def test_write_build_env_reads_environment_for_ci(tmp_path: Path):
+    out = tmp_path / "_build_env.py"
+    mapped = write_build_env(
+        tmp_path / "missing.env",
+        out,
+        environ={"RAGDESK_GITHUB_CLIENT_ID": "gh-from-env"},
+    )
+    assert mapped["GITHUB_CLIENT_ID"] == "gh-from-env"
+    assert "gh-from-env" in out.read_text()
 
 
 def test_render_contains_all_constants():

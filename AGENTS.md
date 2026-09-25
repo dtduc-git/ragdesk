@@ -1,8 +1,9 @@
 # ragdesk — agent notes
 
 Personal, local-first RAG over your own sources. Core is **plain Python** with
-two runtime dependencies (numpy, pypdf); models are reached through a local
-Ollama server.
+two runtime dependencies (numpy, pypdf). The default embedder/reranker run
+in-process via ONNX (the `onnx` extra); answers come from a local Ollama
+server or MLX in-process, with an OpenAI-compatible endpoint as an opt-in.
 
 ## Layout
 
@@ -18,9 +19,17 @@ Ollama server.
   (LexicalReranker baseline; FastEmbedReranker + OnnxReranker = multilingual
   gte behind the `onnx` extra), `index` (incremental local files; `iter_files`
   prunes `SKIP_DIRS` during the walk so `target/`/`node_modules/` are never
-  traversed; `index_document` takes optional `metadata` merged over any
-  front-matter; one bad file becomes a skip with the reason, never a dead
-  watcher), `office` (PDF/DOCX/PPTX/XLSX text extraction: docx/pptx/xlsx via
+  traversed; after a pass `delete_missing_local` drops documents whose file is
+  gone under an **absolute** root — relative roots are never pruned, since a
+  relative path means something else in another working directory. A missing
+  root keeps its prefix documents (macOS unmount) unless the root was a chosen
+  single file; an existing-but-empty root (a Linux mountpoint after `umount`)
+  does drop its documents and gets them back on the next pass. `path_still_there`
+  treats an unreadable file as present — `Path.exists()` would raise (3.12) or
+  delete it (3.13+). `index_document` takes optional `metadata` merged over any
+  front-matter and resolves `chunk_chars`/`chunk_overlap` from settings when the
+  caller passes none, so connectors honour the same knobs as local files; one
+  bad file becomes a skip with the reason, never a dead watcher), `office` (PDF/DOCX/PPTX/XLSX text extraction: docx/pptx/xlsx via
   zip+XML with zero deps — sheets keep `r<row>` refs, shared + inline strings;
   PDFs via pypdf (one of the two runtime dependencies); XML with a DTD is refused;
   scanned PDFs return empty and are skipped, no OCR), `vision` (image OCR through Apple's
@@ -30,8 +39,9 @@ Ollama server.
   `msgraph` (OneDrive + SharePoint, device flow) connectors, `email_source`
   (read-only email: `index_mbox` iterates one document per message,
   `sync_imap` uses `select(readonly=True)` + `BODY.PEEK` so nothing is ever
-  marked read; headers + text body only, attachment names are listed not
-  parsed; credentials under the `email` provider), `web` (same-host
+  marked read; headers + text body only; attachment content is decoded and
+  indexed as its own document (see the Email attachments entry below), with
+  names kept in the body; credentials under the `email` provider), `web` (same-host
   HTML crawl, capped pages/depth; `save_page` = one page, failures raise),
   `archive`
   (shared repo-tarball extraction), `htmlutil` (shared HTML→text),
@@ -39,7 +49,11 @@ Ollama server.
   stream, grounding gate), `credentials` (0600 store under `~/.config/ragdesk/`),
   `envfile` (.env loader for dev), `buildenv` (bakes .env into a gitignored
   `_build_env.py` for release builds), `mcp` (stdio MCP server exposing
-  search/document/sources to Claude Code & co), `serve` (loopback JSON API:
+  search/document/sources to Claude Code & co; the Settings card's Install
+  writes a wrapper script at `~/.local/bin/ragdesk` that never replaces a
+  foreign command — it does rewrite a stale symlink from an older build and
+  its own wrapper, so a moved `sys.executable` heals on the next Install),
+  `serve` (loopback JSON API:
   status/search/ask/index/sync + connections connect/disconnect + optional
   static UI; hosts the auto-index timer), `settings` (app config in
   `~/.config/ragdesk/settings.json`, 0600: `auto_index_hours`, default 1,
@@ -88,8 +102,8 @@ Ollama server.
   exposes it.
 - Auto-index: `serve` runs a 60s timer; when `auto_index_hours` (Settings tab,
   default 1, 0 = off) has elapsed since `auto_index_last`, it re-indexes the
-  recorded local roots via `run_auto_index` (connectors stay manual until
-  their sync params are persisted).
+  recorded local roots via `run_auto_index`, then every saved `sync_jobs`
+  connector (the "Keep in sync" tick; cadence follows this same timer).
 - LLM wizard: `/api/llm/setup` {kind: mlx|ollama} starts a background download
   (`run_llm_setup`); progress + options ride on `/api/status.llm_setup`
   (job: running/progress/detail/error), the Settings tab renders them, and a
@@ -133,8 +147,9 @@ Ollama server.
   scoped golden: 600-char chunks rank better but lose recall; the multilingual
   `onnx` reranker lifts recall 0.833 → 0.917 while the English fastembed one
   drops it to 0.750; lane weights change nothing. Chunking stays 1000 chars
-  (settings `chunk_chars`/`chunk_overlap`), weights stay equal, and the quality
-  preset keeps `rerank: onnx`.
+  (settings `chunk_chars`/`chunk_overlap`; `chunk_overlap: 0` is a valid
+  explicit value, `null`/absent takes the setting), weights stay equal, and the
+  quality preset keeps `rerank: onnx`.
 - Metadata: `index.parse_front_matter` reads a flat `--- key: value ---` header
   (md/txt), `documents.metadata` stores it as JSON, `parse_filters` turns any
   unrecognised `key:value` (minus URL schemes) into `Filters.meta`, and
@@ -279,7 +294,10 @@ Ollama server.
   `POST /api/restore {path}` (`run_backup`/`restore_backup` use the SQLite
   backup API so they are safe while the app runs; a restore takes a safety
   snapshot first, and same-second snapshots get a `-N` suffix — without it the
-  safety copy silently overwrote the backup being restored).
+  safety copy silently overwrote the backup being restored. `run_backup`
+  prunes by mtime with the `-N` suffix parsed as a number and takes a
+  `protect` path: with five copies already on disk the safety snapshot's prune
+  once deleted the very backup being restored, before it was read).
 - **FTS wedge (fixed 2026-09-15, live incident):** a `chunks_fts` row whose
   chunk was gone collided with the next chunk id once ids were reused
   ("constraint failed" on insert), every re-index of that file failed, and the
@@ -344,10 +362,13 @@ Ollama server.
   or a saved client ID, `gh` login, or a pasted token); Confluence and GDrive
   connect flows validate before saving to `~/.config/ragdesk/credentials.json`
   (`0600`; override the dir with `RAGDESK_CONFIG_DIR` for tests).
-- Credentials policy: `.env` (gitignored) → `python -m ragdesk.buildenv` bakes
-  non-confidential values into `src/ragdesk/_build_env.py` (gitignored) for
-  release artifacts. The Atlassian 3LO secret is refused by the baker — it stays
-  per-user. User-facing setup guides: `docs/sources.md`.
+- Credentials policy: `.env` (gitignored) or exported env vars (CI secrets) →
+  `python -m ragdesk.buildenv` bakes non-confidential values into
+  `src/ragdesk/_build_env.py` (gitignored, but forced into wheel/sdist by
+  `[tool.hatch.build].artifacts` — without that hatchling drops ignored files
+  and the baked IDs vanish from the release) for release artifacts. The
+  Atlassian 3LO secret is refused by the baker — it stays per-user.
+  User-facing setup guides: `docs/sources.md`.
 - `fixtures/` — tiny corpus + two golden sets (fixtures, repo) for offline CI.
 - `tests/` — pytest; always uses `HashingEmbedder` (never requires Ollama or
   network). Connector tests monkeypatch HTTP.

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
+import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.parse
@@ -526,6 +529,121 @@ def test_backup_and_restore_endpoints(base_url: str, tmp_path: Path):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         request(f"{base_url}/api/restore", {"path": str(tmp_path / "nope.db")})
     assert excinfo.value.code == 400
+
+
+def test_restoring_the_oldest_backup_does_not_delete_it(base_url: str, tmp_path: Path):
+    from ragdesk.serve import backups_dir, restore_backup, run_backup
+
+    db = str(tmp_path / "index.db")
+    for _ in range(5):
+        run_backup(db)
+    backups = list(backups_dir(db).glob("index-*.db"))
+    assert len(backups) == 5
+    oldest = min(backups, key=lambda item: (item.stat().st_mtime, item.name))
+
+    result = restore_backup(db, str(oldest))
+
+    # The safety snapshot's prune used to unlink this very file mid-restore:
+    # the restore failed and the backup was gone.
+    assert Path(result["safety_backup"]).is_file()
+    assert oldest.is_file()
+    assert len(list(backups_dir(db).glob("index-*.db"))) == 6
+
+
+def test_email_sync_job_uses_the_saved_account(base_url: str, tmp_path: Path, monkeypatch):
+    from ragdesk import credentials
+    from ragdesk.index import IndexStats
+    from ragdesk.serve import AppState, run_sync_job
+
+    monkeypatch.setattr(
+        credentials,
+        "get",
+        lambda name: (
+            {
+                "host": "imap.example.com",
+                "user": "me@example.com",
+                "password": "app-password",
+                "port": 993,
+                "folder": "INBOX",
+            }
+            if name == "email"
+            else {}
+        ),
+    )
+    seen: dict = {}
+
+    def fake_sync(store, embedder, **kwargs):
+        seen.update(kwargs)
+        return IndexStats(files_scanned=1, indexed=1, chunks=1)
+
+    monkeypatch.setattr("ragdesk.serve.email_sync_imap", fake_sync)
+    state = AppState(
+        db=str(tmp_path / "email-job.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+    )
+    # The UI stores folder/limit only: host/user/password must resolve from the
+    # saved account, or every auto-sync pass dies with a KeyError.
+    result = run_sync_job(
+        state, {"provider": "email", "params": {"folder": "Archive", "limit": "5"}}
+    )
+
+    assert "error" not in result
+    assert seen["host"] == "imap.example.com" and seen["user"] == "me@example.com"
+    assert seen["password"] == "app-password"
+    assert seen["folder"] == "Archive" and seen["limit"] == 5
+
+
+def test_confluence_sync_job_resolves_the_saved_connection(
+    base_url: str, tmp_path: Path, monkeypatch
+):
+    from ragdesk import credentials
+    from ragdesk.index import IndexStats
+    from ragdesk.serve import AppState, run_sync_job
+
+    saved = {
+        "base_url": "https://site.atlassian.net",
+        "site_url": "",
+        "email": "e",
+        "token": "t",
+    }
+    monkeypatch.setattr(
+        credentials,
+        "get",
+        lambda name: saved if name == "confluence" else {},
+    )
+    monkeypatch.setattr("ragdesk.serve.resolve_oauth_credentials", lambda: None)
+    seen: dict = {}
+
+    def fake_sync(store, embedder, **kwargs):
+        seen.update(kwargs)
+        return IndexStats(files_scanned=1, indexed=1, chunks=1)
+
+    monkeypatch.setattr("ragdesk.serve.sync_confluence", fake_sync)
+    state = AppState(
+        db=str(tmp_path / "confluence-job.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+    )
+
+    result = run_sync_job(state, {"provider": "confluence", "params": {"space": "DOCS"}})
+    assert "error" not in result
+    assert seen["space"] == "DOCS"
+    assert seen["base_url"] == "https://site.atlassian.net"  # from the saved connection
+
+    # an OAuth connection has no base_url in the job params: the bearer path wins
+    monkeypatch.setattr(
+        "ragdesk.serve.resolve_oauth_credentials",
+        lambda: ("https://api.atlassian.com/ex", "bearer-1"),
+    )
+    seen.clear()
+    result = run_sync_job(state, {"provider": "confluence", "params": {"space": "DOCS"}})
+    assert "error" not in result
+    assert seen["api_base"] == "https://api.atlassian.com/ex" and seen["bearer"] == "bearer-1"
 
 
 def test_duplicates_endpoint_and_bookmarks(base_url: str, tmp_path: Path, monkeypatch):
@@ -1474,19 +1592,92 @@ def test_mcp_setup_info_and_install(base_url: str, tmp_path: Path, monkeypatch):
     assert "mcpServers" in payload["snippets"]["claude_desktop"]
     assert "[mcp_servers.ragdesk]" in payload["snippets"]["codex"]
 
-    # missing CLI -> a shim is created; already on PATH -> nothing to do
+    # missing CLI -> the snippets name the absolute shim path, Install writes it
     monkeypatch.setattr("ragdesk.serve.shutil.which", lambda name: None)
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr("ragdesk.serve.sys.argv", ["/opt/ragdesk/bin/ragdesk", "serve"])
+    _, missing = request(f"{base_url}/api/mcp")
+    shim = tmp_path / ".local" / "bin" / "ragdesk"
+    assert missing["cli_path"] == str(shim)
+    assert str(shim) in missing["snippets"]["claude_desktop"]
+
     status, installed = request(f"{base_url}/api/mcp/install", {})
     assert status == 200 and installed["installed"] is True
-    shim = tmp_path / ".local" / "bin" / "ragdesk"
-    assert shim.is_symlink()
+    # a wrapper, not a symlink: `python3 -m ragdesk` has no executable argv[0]
+    assert shim.is_file() and not shim.is_symlink()
+    assert f'exec "{sys.executable}" -m ragdesk "$@"' in shim.read_text()
+    assert "PYTHONDONTWRITEBYTECODE=1" in shim.read_text()
+    assert os.access(shim, os.X_OK)
+    if os.name == "posix":
+        check = subprocess.run(
+            [str(shim), "--help"], capture_output=True, text=True, timeout=120, check=False
+        )
+        assert check.returncode == 0
+
+    # re-Install rewrites our own wrapper (sys.executable may have changed)
+    before = shim.read_text()
+    _, again = request(f"{base_url}/api/mcp/install", {})
+    assert again["installed"] is True
+    assert shim.read_text() == before
+
+    # a foreign executable is never replaced, even if it mentions ragdesk
+    shim.unlink()
+    user_wrapper = '#!/bin/sh\nexec python -m ragdesk "$@"\n'
+    shim.write_text(user_wrapper)
+    shim.chmod(0o755)
+    _, foreign = request(f"{base_url}/api/mcp/install", {})
+    assert foreign["installed"] is False and "already exists" in foreign["reason"]
+    assert shim.read_text() == user_wrapper
+
+    # a live symlink to another executable is how uv tool / pipx install: keep it
+    shim.unlink()
+    other = tmp_path / "other-cli"
+    other.write_text("#!/bin/sh\necho other\n")
+    other.chmod(0o755)
+    shim.symlink_to(other)
+    _, linked = request(f"{base_url}/api/mcp/install", {})
+    assert linked["installed"] is False and shim.is_symlink()
+    assert shim.resolve() == other
+
+    # a dead symlink from an older build does get replaced
+    shim.unlink()
+    shim.symlink_to(tmp_path / "missing-main.py")
+    _, replaced = request(f"{base_url}/api/mcp/install", {})
+    assert replaced["installed"] is True
+    assert shim.is_file() and not shim.is_symlink()
+
+    # ... and so does a symlink at a non-executable __main__.py
+    shim.unlink()
+    main_py = tmp_path / "__main__.py"
+    main_py.write_text("print('hi')\n")
+    shim.symlink_to(main_py)
+    _, replaced = request(f"{base_url}/api/mcp/install", {})
+    assert replaced["installed"] is True
+    assert shim.is_file() and not shim.is_symlink()
 
     monkeypatch.setattr("ragdesk.serve.shutil.which", lambda name: "/usr/bin/ragdesk")
-    _, again = request(f"{base_url}/api/mcp/install", {})
-    assert again["installed"] is False
-    assert "already on PATH" in again["reason"]
+    _, on_path = request(f"{base_url}/api/mcp/install", {})
+    assert on_path["installed"] is False
+    assert "already on PATH" in on_path["reason"]
+
+
+def test_backup_prune_order_survives_same_second_names(tmp_path: Path):
+    from ragdesk.serve import _backup_sort_key
+
+    names = [
+        "index-20260101-090000.db",
+        "index-20260101-090000-2.db",
+        "index-20260101-090000-10.db",
+    ]
+    paths = []
+    for name in names:
+        path = tmp_path / name
+        path.write_bytes(b"x")
+        os.utime(path, (1_700_000_000, 1_700_000_000))  # identical mtimes
+        paths.append(path)
+
+    ordered = sorted(paths, key=_backup_sort_key, reverse=True)
+
+    assert [path.name for path in ordered] == [names[2], names[1], names[0]]
 
 
 def test_sync_gitlab_requires_project(base_url: str):
@@ -1694,3 +1885,81 @@ def test_static_ui_serving_and_traversal_guard(tmp_path: Path):
         assert status == 200 and b"ragdesk ui shell" in body
     finally:
         httpd.shutdown()
+
+
+def test_auto_index_clears_activity_when_a_pass_raises(base_url: str, tmp_path: Path, monkeypatch):
+    from ragdesk.serve import AppState, run_auto_index
+
+    docs = tmp_path / "watched"
+    docs.mkdir()
+    (docs / "a.md").write_text("hello")
+    state = AppState(
+        db=str(tmp_path / "auto.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+    )
+    with Store(state.db) as store:
+        index_paths(store, state.embedder, [docs])
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr("ragdesk.serve.index_paths", boom)
+    with pytest.raises(RuntimeError):
+        run_auto_index(state)
+
+    # without the finally the flag stays on, the watch loop skips forever and
+    # the UI shows work that is not happening
+    assert state.activity["running"] is False
+
+
+def test_notion_sync_job_is_valid_without_params(base_url: str, tmp_path: Path, monkeypatch):
+    from ragdesk.index import IndexStats
+    from ragdesk.serve import AppState, run_sync_job
+
+    # Notion's sync form has no fields of its own: keep-only params must be legal.
+    status, payload = request(f"{base_url}/api/sync-jobs", {"provider": "notion", "params": {}})
+    assert status == 200 and payload["added"] is True
+
+    seen: dict = {}
+
+    def fake_sync(store, embedder, **kwargs):
+        seen.update(kwargs)
+        return IndexStats(files_scanned=1, indexed=1, chunks=1)
+
+    monkeypatch.setattr("ragdesk.serve.sync_notion", fake_sync)
+    state = AppState(
+        db=str(tmp_path / "notion-job.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+    )
+    result = run_sync_job(state, payload["job"])
+
+    assert "error" not in result and result["indexed"] == 1
+    assert seen == {}
+
+
+def test_watch_pass_prunes_a_deleted_single_file(base_url: str, tmp_path: Path):
+    from ragdesk.serve import AppState, watch_pass
+
+    single = tmp_path / "solo.md"
+    single.write_text("one file, chosen directly")
+    state = AppState(
+        db=str(tmp_path / "watch.db"),
+        embedder=HashingEmbedder(),
+        rerank="none",
+        llm_model="",
+        llm_host="http://127.0.0.1:9",
+    )
+    with Store(state.db) as store:
+        index_paths(store, state.embedder, [single])
+
+    single.unlink()
+    with Store(state.db) as store:
+        summary = watch_pass(state)
+        assert summary is not None and summary["removed"] == 1
+        assert store.doc_hash(str(single)) is None

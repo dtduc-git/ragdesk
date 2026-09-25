@@ -329,6 +329,7 @@ def emit_stats(stats, as_json: bool, **extra) -> None:
         "scanned": stats.files_scanned,
         "indexed": stats.indexed,
         "unchanged": stats.unchanged,
+        "removed": stats.removed,
         "skipped": stats.skipped,
         "chunks": stats.chunks,
         **extra,
@@ -336,9 +337,10 @@ def emit_stats(stats, as_json: bool, **extra) -> None:
     if as_json:
         emit_json(payload)
         return
+    removed = f" removed={stats.removed}" if stats.removed else ""
     print(
         f"scanned={stats.files_scanned} indexed={stats.indexed} "
-        f"unchanged={stats.unchanged} skipped={stats.skipped} chunks={stats.chunks}"
+        f"unchanged={stats.unchanged}{removed} skipped={stats.skipped} chunks={stats.chunks}"
     )
 
 
@@ -445,7 +447,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         embedder = get_embedder(settings["embedder"])
         reranker = get_reranker(settings["rerank"])
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
+        # RuntimeError is the missing-extra message: one line, not a traceback.
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

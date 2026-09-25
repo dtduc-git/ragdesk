@@ -120,6 +120,7 @@ class IndexStats:
     skipped: int = 0
     chunks: int = 0
     attachments: int = 0  # email attachments indexed as their own documents
+    removed: int = 0  # local documents dropped because their file is gone
     skipped_samples: list = field(default_factory=list)
 
     def skip(self, path: Path, reason: str) -> None:
@@ -304,6 +305,25 @@ def _embed_with_cache(store: Store, embedder: Embedder, texts: list[str]) -> lis
     return [vector or [] for vector in vectors]
 
 
+def resolve_chunk_settings(chunk_chars: int | None, chunk_overlap: int | None) -> tuple[int, int]:
+    """Fill unset chunk knobs from settings; 0 stays 0 for the overlap.
+
+    ``None`` means unset; the previous ``0 or default`` pattern made a zero
+    overlap impossible and left every connector stuck on the built-in sizes.
+    """
+    if chunk_chars is None or chunk_overlap is None:
+        from ragdesk import settings as app_settings  # noqa: PLC0415 - optional knob
+
+        values = app_settings.load()
+        if chunk_chars is None:
+            chunk_chars = int(values.get("chunk_chars") or DEFAULT_MAX_CHARS)
+        if chunk_overlap is None:
+            stored = values.get("chunk_overlap")
+            # an explicit 0 in settings.json is a value, not "unset"
+            chunk_overlap = DEFAULT_OVERLAP if stored in (None, "") else int(stored)
+    return chunk_chars, chunk_overlap
+
+
 def index_document(
     store: Store,
     embedder: Embedder,
@@ -312,8 +332,8 @@ def index_document(
     path: str,
     content: str,
     mtime: float = 0.0,
-    chunk_chars: int = 0,
-    chunk_overlap: int = 0,
+    chunk_chars: int | None = None,
+    chunk_overlap: int | None = None,
     metadata: dict[str, str] | None = None,
 ) -> int:
     """Embed + upsert one document. Returns the chunk count, or 0 if unchanged."""
@@ -321,8 +341,7 @@ def index_document(
     if Path(path).suffix.lower() in {".md", ".markdown", ".txt", ""}:
         parsed, content = parse_front_matter(content)
     metadata = {**(metadata or {}), **parsed}
-    max_chars = chunk_chars or DEFAULT_MAX_CHARS
-    overlap = chunk_overlap or DEFAULT_OVERLAP
+    max_chars, overlap = resolve_chunk_settings(chunk_chars, chunk_overlap)
     config = chunk_config(max_chars, overlap)
     digest = hashlib.sha256(content.encode()).hexdigest()
     # A different chunker means the stored chunks are stale even when the text
@@ -357,16 +376,11 @@ def index_paths(
     embedder: Embedder,
     paths: list[Path],
     progress: Callable[[str, int, int], None] | None = None,
-    chunk_chars: int = 0,
-    chunk_overlap: int = 0,
+    chunk_chars: int | None = None,
+    chunk_overlap: int | None = None,
 ) -> IndexStats:
     store.ensure_embedder(embedder.name, embedder.dim)
-    if not chunk_chars or not chunk_overlap:
-        from ragdesk import settings as app_settings  # noqa: PLC0415 - optional knob
-
-        values = app_settings.load()
-        chunk_chars = chunk_chars or int(values.get("chunk_chars") or DEFAULT_MAX_CHARS)
-        chunk_overlap = chunk_overlap or int(values.get("chunk_overlap") or DEFAULT_OVERLAP)
+    chunk_chars, chunk_overlap = resolve_chunk_settings(chunk_chars, chunk_overlap)
     stats = IndexStats()
     patterns = never_index_patterns()
     vaults = vault_roots()
@@ -434,6 +448,9 @@ def index_paths(
         else:
             stats.unchanged += 1
     store.set_local_roots([str(path) for path in paths if path.exists()])
+    # Unfiltered: a chosen file that is gone must still be pruned (see
+    # delete_missing_local); a relative path is ignored there on purpose.
+    stats.removed = len(store.delete_missing_local([str(path) for path in paths]))
     store.record_index_report(
         {
             "at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
@@ -441,6 +458,7 @@ def index_paths(
             "files_scanned": stats.files_scanned,
             "indexed": stats.indexed,
             "unchanged": stats.unchanged,
+            "removed": stats.removed,
             "skipped": stats.skipped,
             "chunks": stats.chunks,
             "skipped_samples": list(stats.skipped_samples),

@@ -63,6 +63,12 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 path = "src/ragdesk/__init__.py"
 
+[tool.hatch.build]
+# _build_env.py is gitignored on purpose, and hatchling drops ignored files, so
+# the client IDs baked by `python -m ragdesk.buildenv` silently vanished from
+# the wheel (PyPI and the bundled sidecar both build from it). Force it in.
+artifacts = ["src/ragdesk/_build_env.py"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/ragdesk"]
 

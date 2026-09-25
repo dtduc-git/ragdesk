@@ -24,8 +24,10 @@ the Sources card removes saved credentials.
 ## Local files
 
 - **Desktop app**: `Choose folder…` / `Choose files…`, then **Index**.
-  Incremental — unchanged files are skipped by content hash; deleted files
-  stay in the index until you re-index.
+  Incremental — unchanged files are skipped by content hash; a file you delete
+  leaves the index on the next pass (watcher or auto re-index). If a whole
+  drive is unmounted, its documents drop out too and come back on the next
+  pass after it is mounted again.
 - **CLI**: `ragdesk index ~/notes ~/repos/myrepo`
 
 ## GitHub
@@ -218,7 +220,8 @@ or leave the key empty to read a public bucket.
    is not AWS (e.g. `https://<account>.r2.cloudflarestorage.com`).
 3. *Connect bucket* validates by listing before saving; *Sync bucket* then
    indexes the prefix (PDF, Office, images with OCR, text — same extractors as
-   local files). Tick **Keep in sync** to refresh it with the hourly pass.
+   local files). Tick **Keep in sync** to refresh it with the auto re-index
+   pass (Settings → Auto re-index; if that is Off, saved jobs never run).
 
 Errors say what they mean: `access denied` (key or bucket permission),
 `no such bucket` (name typo), `bad request … custom endpoint` (wrong region or

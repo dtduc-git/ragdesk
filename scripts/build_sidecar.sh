@@ -36,9 +36,11 @@ echo "==> installing ragdesk[$extras] into it (no venv: the interpreter is ours)
 # uv 0.11 marks its standalone CPythons EXTERNALLY-MANAGED; the copy is ours now.
 uv pip install --break-system-packages --python "$dest/python/bin/python3" "$root[$extras]"
 
-echo "==> pruning caches"
-find "$dest" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-find "$dest" -name '*.pyc' -delete 2>/dev/null || true
+echo "==> compiling bytecode (a signed bundle must not write __pycache__ at runtime)"
+# unchecked-hash: the bundle is replaced wholesale on update, so runtime
+# mtime validation (and its rewrites) buys nothing.
+"$dest/python/bin/python3" -m compileall -q -f --invalidation-mode unchecked-hash \
+  "$dest/python/lib/python${python_version}/site-packages" >/dev/null
 
 echo "==> smoke test: the runtime serves on its own"
 "$dest/python/bin/python3" -c "import ragdesk, sys; print('   ragdesk', ragdesk.__version__, 'on', sys.version.split()[0])"

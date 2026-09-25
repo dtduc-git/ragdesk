@@ -6,6 +6,7 @@ import array
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import unicodedata
@@ -113,6 +114,22 @@ def matches_any(path: str, patterns: list[str]) -> bool:
 
 class EmbedderMismatch(RuntimeError):
     """Raised when the configured embedder does not match the existing index."""
+
+
+def path_still_there(path: str) -> bool:
+    """True unless stat proves the path is gone.
+
+    ``Path.exists()`` swallows only a few errnos in 3.12 (and everything in
+    newer versions), so a permission error would either abort the whole pass or
+    delete a document that is still there. Unreadable is treated as present.
+    """
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return True
 
 
 class Store:
@@ -438,6 +455,45 @@ class Store:
                 if matches_any(path, patterns):
                     self._delete_doc(int(row["id"]))
                     removed.append(path)
+        return removed
+
+    def delete_missing_local(self, roots: list[str]) -> list[str]:
+        """Drop local documents whose file is gone under one of ``roots``.
+
+        Only absolute roots are considered: a relative path means something
+        different in another working directory, so pruning on one could delete
+        another project's documents. A missing root may be a chosen *file*
+        (`Choose files…`), so a document whose path equals the root is dropped;
+        prefix documents are kept. A root that still exists but is empty —
+        e.g. a Linux mountpoint after umount — drops its documents, and they
+        come back on the next pass once the filesystem is there again.
+        """
+        missing: list[str] = []
+        prefixes: list[str] = []
+        for root in roots:
+            if not os.path.isabs(root):
+                continue
+            if path_still_there(root):
+                prefixes.append(root.rstrip("/") + "/")
+            else:
+                missing.append(root)
+        removed: list[str] = []
+        with self.conn:
+            rows = self.conn.execute(
+                "SELECT id, path FROM documents WHERE source = 'local'"
+            ).fetchall()
+            for row in rows:
+                path = str(row["path"])
+                if path in missing:
+                    self._delete_doc(int(row["id"]))
+                    removed.append(path)
+                    continue
+                if not any(path.startswith(prefix) for prefix in prefixes):
+                    continue
+                if path_still_there(path):
+                    continue
+                self._delete_doc(int(row["id"]))
+                removed.append(path)
         return removed
 
     def touch_document(self, path: str, mtime: float) -> None:

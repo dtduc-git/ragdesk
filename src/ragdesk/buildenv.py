@@ -14,6 +14,8 @@ here.
 from __future__ import annotations
 
 import argparse
+import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from ragdesk.envfile import parse_env_file
@@ -48,9 +50,20 @@ def render_build_env(values: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def write_build_env(env_path: Path, out_path: Path) -> dict[str, str]:
-    """Map ``.env`` values to constants; refuses confidential values."""
+def write_build_env(
+    env_path: Path, out_path: Path, environ: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """Map ``.env`` values (then environment variables) to constants.
+
+    The environment fallback is for CI: release workflows export the client IDs
+    from repository secrets and get the same wheel a local ``.env`` build makes.
+    Confidential values are refused either way.
+    """
     raw = parse_env_file(env_path.read_text()) if env_path.is_file() else {}
+    environment = os.environ if environ is None else environ
+    for env_name in ENV_TO_CONST:
+        if not raw.get(env_name) and environment.get(env_name):
+            raw[env_name] = str(environment[env_name])
     mapped = {const: raw.get(env_name, "") for env_name, const in ENV_TO_CONST.items()}
     for const in REFUSED:
         if mapped.get(const):
@@ -69,22 +82,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=Path("src/ragdesk/_build_env.py"))
     args = parser.parse_args(argv)
 
-    if not args.env.is_file():
-        print(f"no {args.env} found — nothing baked (fine for a repo-only build)")
-        return 0
     mapped = write_build_env(args.env, args.out)
     baked = [const for const, value in mapped.items() if value]
-    refused = [
+    source = str(args.env) if args.env.is_file() else "the environment"
+    print(f"baked {args.out} from {source}: {', '.join(sorted(baked)) or 'no values'}")
+    env_values = parse_env_file(args.env.read_text()) if args.env.is_file() else {}
+    refused = sorted(
         const
-        for const in REFUSED
-        if parse_env_file(args.env.read_text()).get(
-            next(env for env, name in ENV_TO_CONST.items() if name == const), ""
-        )
-    ]
-    print(f"baked {args.out} from {args.env}: {', '.join(sorted(baked)) or 'no values'}")
+        for env_name, const in ENV_TO_CONST.items()
+        if const in REFUSED and (env_values.get(env_name) or os.environ.get(env_name))
+    )
     if refused:
         print(
-            f"refused to bake confidential values: {', '.join(sorted(refused))} "
+            f"refused to bake confidential values: {', '.join(refused)} "
             "(Atlassian 3LO secret belongs to the user, see SECURITY.md)"
         )
     return 0

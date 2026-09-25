@@ -240,6 +240,23 @@ class OllamaEmbedder:
         return None
 
 
+def require_onnx() -> None:
+    """Fail fast with the fix when the ``onnx`` extra is absent.
+
+    Called from the constructors: otherwise a plain `pip install ragdesk` gets
+    a traceback deep inside the first search (or a per-file skip during index),
+    instead of one line telling the user which extra to install.
+    """
+    try:
+        import huggingface_hub  # noqa: F401
+        import onnxruntime  # noqa: F401
+        import tokenizers  # noqa: F401
+    except ImportError as exc:
+        raise RuntimeError(
+            "onnx dependencies missing. Install the onnx extra: pip install 'ragdesk[onnx]'"
+        ) from exc
+
+
 class OnnxEmbedder:
     """EmbeddingGemma-300M via ONNX Runtime (int8 by default), CPU-only.
 
@@ -249,6 +266,7 @@ class OnnxEmbedder:
     """
 
     def __init__(self, repo: str = DEFAULT_ONNX_REPO, variant: str = "quantized") -> None:
+        require_onnx()
         self.name = f"onnx:{repo}:{variant}"
         self.repo = repo
         self.variant = variant
@@ -270,16 +288,11 @@ class OnnxEmbedder:
     def _load(self) -> None:
         if self._session is not None:
             return
-        try:
-            import numpy as np  # noqa: F401
-            import onnxruntime as ort
-            from huggingface_hub import hf_hub_download
-            from tokenizers import Tokenizer
-        except ImportError as exc:
-            raise RuntimeError(
-                "onnx embedder dependencies missing. Install the onnx extra: "
-                "pip install 'ragdesk[onnx]'"
-            ) from exc
+        require_onnx()
+        import numpy as np  # noqa: F401
+        import onnxruntime as ort
+        from huggingface_hub import hf_hub_download
+        from tokenizers import Tokenizer
 
         tokenizer = Tokenizer.from_file(hf_hub_download(self.repo, "tokenizer.json"))
         tokenizer.enable_truncation(max_length=self._max_tokens())
