@@ -42,6 +42,8 @@ So I built her the small version instead: a desktop app over one SQLite file,
 light by default, answering in plain language with citations from her own
 files.
 
+https://github.com/user-attachments/assets/9d29af26-139d-4a8f-90ab-0c9eaf75e80b
+
 ragdesk is an open-source, vendor-neutral retrieval desk for people who keep
 their knowledge in files: engineers with runbooks and repositories, analysts
 with spreadsheets and PDFs, anyone with a documents folder that has outgrown
