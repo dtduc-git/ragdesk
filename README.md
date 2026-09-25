@@ -42,7 +42,7 @@ So I built her the small version instead: a desktop app over one SQLite file,
 light by default, answering in plain language with citations from her own
 files.
 
-https://github.com/user-attachments/assets/9d29af26-139d-4a8f-90ab-0c9eaf75e80b
+https://github.com/user-attachments/assets/e6f3ff5e-719b-4de4-9f95-506edf34bd74
 
 ragdesk is an open-source, vendor-neutral retrieval desk for people who keep
 their knowledge in files: engineers with runbooks and repositories, analysts
