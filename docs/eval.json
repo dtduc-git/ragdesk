@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "retrieval recall@5",
-  "message": "0.917",
+  "message": "1.000",
   "color": "brightgreen"
 }
